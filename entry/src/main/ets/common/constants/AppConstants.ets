@@ -24,19 +24,179 @@ export class ToneSpec {
   static readonly COMMON_RATES: number[] = [8000, 16000, 22050, 32000, 44100, 48000];
 }
 
-/** 已实测通过写入的机型 */
-export interface VerifiedDevice {
-  /** 系统里显示的设备名 */
-  name: string;
+/** 兼容性等级：型号匹配只用于提示，真正的写入门槛仍是协议能力探测 */
+export enum DeviceSupportLevel {
+  /** 盒音写入实测通过 */
+  VERIFIED = 1,
+  /** 华为官方支持开盒提示音，但本应用的盒音自定义尚未实测 */
+  OFFICIAL = 2,
+  /** 未收录 */
+  UNKNOWN = 3
+}
+
+/** 支持列表条目 */
+export interface SupportedDevice {
+  /** 兼容性等级：实测通过 = 1，官方支持待实测 = 2 */
+  level: DeviceSupportLevel;
+  /** 系统里可能出现的产品名（含典藏版等变体） */
+  names: string[];
+  /** 耳机自报型号（0107 tag 15），允许同平台后缀变体 */
+  modelCodes: string[];
   /** 验证结论 / 备注 */
   detail: string;
 }
 
+/** 机型匹配结果 */
+export interface DeviceVerdict {
+  level: DeviceSupportLevel;
+  /** 命中的产品名，未命中为空串 */
+  name: string;
+  detail: string;
+}
+
 export class DeviceSupport {
-  /** 新增机型只需在这里加一行 */
-  static readonly VERIFIED: VerifiedDevice[] = [
-    { name: 'HUAWEI FreeClip 2', detail: '协议 2 · 开盒音效写入实测通过' }
+  /**
+   * 唯一支持列表：实测后只需把 level 从 OFFICIAL 改成 VERIFIED，
+   * 页面分组和写入提示会自动跟着变，不用搬数组。
+   */
+  static readonly SUPPORTED: SupportedDevice[] = [
+    {
+      level: DeviceSupportLevel.VERIFIED,
+      names: ['HUAWEI FreeClip 2', 'HUAWEI FreeClip 2 耳夹耳机', 'HUAWEI FreeClip 2 典藏版',
+        'HUAWEI FreeClip 2 典藏版 耳夹耳机', '华为 FreeClip 2', '华为 FreeClip 2 典藏版'],
+      modelCodes: ['BTFT0027'],
+      detail: '协议 2 · 盒音写入实测通过；典藏版同型号平台，未单独实测'
+    },
+    // 以下为华为官方支持充电盒开盒提示音的机型：
+    // https://consumer.huawei.com/cn/support/content/zh-cn16053049/
+    {
+      level: DeviceSupportLevel.OFFICIAL,
+      names: ['HUAWEI FreeBuds 6', 'HUAWEI FreeBuds 6 悦彰耳机', '华为 FreeBuds 6'],
+      modelCodes: ['BTFT0020'],
+      detail: '官方支持开盒提示音 · 盒音自定义待实测'
+    },
+    {
+      level: DeviceSupportLevel.OFFICIAL,
+      names: ['HUAWEI FreeBuds Pro 5', 'HUAWEI FreeBuds Pro 5 悦彰耳机',
+        'HUAWEI FreeBuds Pro 5 马年典藏款', '华为 FreeBuds Pro 5'],
+      modelCodes: ['BTFT0023'],
+      detail: '官方支持开盒提示音（含马年典藏款）· 盒音自定义待实测'
+    },
+    {
+      level: DeviceSupportLevel.OFFICIAL,
+      names: ['HUAWEI FreeBuds 7', 'HUAWEI FreeBuds 7 悦彰耳机', '华为 FreeBuds 7'],
+      modelCodes: ['BTFT0028'],
+      detail: '官方支持开盒提示音 · 盒音自定义待实测'
+    }
   ];
+
+  /** 按等级筛出页面分组，顺序沿用 SUPPORTED 的先后 */
+  static devicesOf(level: DeviceSupportLevel): SupportedDevice[] {
+    const result: SupportedDevice[] = [];
+    for (let i = 0; i < DeviceSupport.SUPPORTED.length; i++) {
+      if (DeviceSupport.SUPPORTED[i].level === level) {
+        result.push(DeviceSupport.SUPPORTED[i]);
+      }
+    }
+    return result;
+  }
+
+  static countOf(level: DeviceSupportLevel): number {
+    let count: number = 0;
+    for (let i = 0; i < DeviceSupport.SUPPORTED.length; i++) {
+      if (DeviceSupport.SUPPORTED[i].level === level) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * 优先级：耳机自报型号 > 蓝牙名；同一层级里 VERIFIED 优先。
+   * 型号来自固件，用户改名不影响；名称只在型号缺失或未收录时兜底。
+   */
+  static judge(modelCode: string, names: string[]): DeviceVerdict {
+    const matched: SupportedDevice | null =
+      DeviceSupport.findMatch(DeviceSupport.SUPPORTED, modelCode, names);
+    if (matched !== null) {
+      return { level: matched.level, name: matched.names[0], detail: matched.detail };
+    }
+    return { level: DeviceSupportLevel.UNKNOWN, name: '', detail: '' };
+  }
+
+  private static findMatch(list: SupportedDevice[], modelCode: string,
+    names: string[]): SupportedDevice | null {
+    const targetModel: string = DeviceSupport.normalizeModel(modelCode);
+    let best: SupportedDevice | null = null;
+    if (targetModel.length > 0) {
+      for (let i = 0; i < list.length; i++) {
+        for (let k = 0; k < list[i].modelCodes.length; k++) {
+          if (DeviceSupport.sameModel(list[i].modelCodes[k], targetModel)) {
+            best = DeviceSupport.better(best, list[i]);
+            break;
+          }
+        }
+      }
+      if (best !== null) {
+        return best;
+      }
+    }
+    for (let i = 0; i < list.length; i++) {
+      for (let k = 0; k < names.length; k++) {
+        if (DeviceSupport.sameName(list[i], names[k])) {
+          best = DeviceSupport.better(best, list[i]);
+          break;
+        }
+      }
+    }
+    return best;
+  }
+
+  /** 同一型号出现多条时，数值更小的等级优先（VERIFIED=1 > OFFICIAL=2） */
+  private static better(current: SupportedDevice | null,
+    candidate: SupportedDevice): SupportedDevice {
+    if (current === null || candidate.level < current.level) {
+      return candidate;
+    }
+    return current;
+  }
+
+  /** 型号统一成大写、去空格；允许 BTFT0027-000167 这类同平台后缀 */
+  private static sameModel(code: string, targetModel: string): boolean {
+    const base: string = DeviceSupport.normalizeModel(code);
+    if (base.length === 0) {
+      return false;
+    }
+    if (base === targetModel) {
+      return true;
+    }
+    return targetModel.startsWith(`${base}-`) || targetModel.startsWith(`${base}_`);
+  }
+
+  private static sameName(device: SupportedDevice, name: string): boolean {
+    const target: string = DeviceSupport.normalizeName(name);
+    if (target.length === 0) {
+      return false;
+    }
+    for (let i = 0; i < device.names.length; i++) {
+      if (DeviceSupport.normalizeName(device.names[i]) === target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static normalizeModel(model: string): string {
+    return model.trim().toUpperCase().replace(/\s+/g, '');
+  }
+
+  /** 系统蓝牙名常见写法：HUAWEI FreeClip 2 / 华为 FreeClip 2 / Huawei FreeClip2 */
+  private static normalizeName(name: string): string {
+    let text: string = name.trim().toLowerCase();
+    text = text.replace(/\s+/g, '');
+    text = text.replace('华为', 'huawei');
+    return text;
+  }
 }
 
 export class SupportInfo {
@@ -44,6 +204,45 @@ export class SupportInfo {
   static readonly EMAIL: string = 'kurasen@foxmail.com';
   /** 在线反馈开关：完成联网备案并部署后端后改为 true */
   static readonly FEEDBACK_ONLINE_ENABLED: boolean = false;
+  /** 应用市场详情页链接：上架后填入，例如 https://appgallery.huawei.com/app/detail?id=<bundleName> */
+  static readonly APP_GALLERY_URL: string = '';
+  /** 捐赠页图片（资源名或路径）：暂时留空，点击无响应 */
+  static readonly DONATION_IMAGE: string = '';
+}
+
+/** 更新日志条目 */
+export interface ChangelogEntry {
+  version: string;
+  note: string;
+  items: string[];
+}
+
+export class Changelog {
+  static readonly ENTRIES: ChangelogEntry[] = [
+    {
+      version: 'v1.1.0',
+      note: '当前版本',
+      items: [
+        '最低支持 HarmonyOS 6.1（API 23），兼容更多机型',
+        '新增外观设置：深色 / 浅色 / 跟随系统',
+        '新增中英文自动切换：按系统地区自动匹配界面语言',
+        '新增星闪连接检测：星闪连接下写入前自动提示并引导切换',
+        '优化设备连接识别体验：连接状态与设备名称刷新更及时',
+        '优化数据写入提示：进度与结果反馈更清晰',
+        '优化整体 UI 动画与布局，操作更顺滑'
+      ]
+    },
+    {
+      version: 'v1.0.0',
+      note: '首个版本',
+      items: [
+        '充电盒开盒音效制作：导入素材、内置音色、裁剪与增益调节',
+        '按 16700Hz · 16bit · 单声道无文件头规格导出',
+        '通过蓝牙串口直接写入充电盒，无需导出文件',
+        '音效库管理与诊断日志'
+      ]
+    }
+  ];
 }
 
 /**
@@ -115,6 +314,9 @@ export class AppStorageKey {
   static readonly KEY_FEEDBACK_RECORDS: string = 'feedback_records';
   static readonly KEY_DEMO_MODE: string = 'demo_mode';
   static readonly KEY_DEMO_GUIDE_SEEN: string = 'demo_guide_seen';
+  static readonly KEY_THEME_MODE: string = 'theme_mode';
+  /** AppStorage 主题纪元：切换外观时自增，触发组件重绘 */
+  static readonly THEME_EPOCH: string = 'themeEpoch';
 }
 
 export class AppPath {

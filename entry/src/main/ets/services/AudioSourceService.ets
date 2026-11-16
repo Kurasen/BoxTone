@@ -199,7 +199,8 @@ export class AudioSourceService {
 
     let decoded: DecodedAudio;
     try {
-      decoded = await decodeAudio(path, MAX_ANALYZE_SECONDS);
+      // 检查工具解析不到自定义 .so 模块签名会误报；native 侧 DecodeAudio 经 napi_create_promise 返回 Promise
+      decoded = await (decodeAudio(path, MAX_ANALYZE_SECONDS) as Promise<DecodedAudio>);
     } catch (error) {
       const businessError: BusinessError = error as BusinessError;
       Logger.exception(MODULE, `原生解码异常 ${displayName}`, businessError);

@@ -17,6 +17,10 @@
       "value": "用于搜索、配对并连接你的华为蓝牙耳机，读取耳机连接状态"
     },
     {
+      "name": "perm_nearlink_reason",
+      "value": "用于识别耳机是否通过星闪连接，避免星闪连接时误判为未连接"
+    },
+    {
       "name": "perm_internet_reason",
       "value": "用于把反馈内容和诊断日志发送给开发者"
     }

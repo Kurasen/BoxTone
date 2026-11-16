@@ -3,6 +3,7 @@ import { Palette } from '../common/constants/ThemeConstants';
 /** 胶囊标签，用于状态与规格提示 */
 @Component
 export struct StatPill {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop pillText: string = '';
   /** accent | success | warning | danger | muted */
   @Prop pillTone: string = 'muted';
@@ -37,7 +38,7 @@ export struct StatPill {
     if (this.pillTone === 'danger') {
       return Palette.DANGER_SOFT;
     }
-    return 'rgba(255, 255, 255, 0.06)';
+    return Palette.STROKE_SOFT;
   }
 
   build() {

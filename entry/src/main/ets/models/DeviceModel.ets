@@ -13,6 +13,8 @@ export interface BtDevice {
   audio: boolean;
   /** 是否处于连接状态 */
   connected: boolean;
+  /** 当前音频是否走星闪连接（系统层面，A2DP 不再报告） */
+  nearLink: boolean;
 }
 
 /** 蓝牙面板快照，供 UI 一次性渲染 */
@@ -35,6 +37,14 @@ export interface BtSnapshot {
   activeId: string;
   /** 状态提示文案 */
   statusText: string;
+  /** 系统与芯片是否支持星闪 */
+  nearLinkSupported: boolean;
+  /** 星闪开关是否打开 */
+  nearLinkEnabled: boolean;
+  /** 通过星闪连接的音频设备名，空串表示没有 */
+  nearLinkName: string;
+  /** 星闪连接设备对应的经典蓝牙地址：只有名称能匹配上已配对设备时才有值 */
+  nearLinkBtId: string;
 }
 
 export function createEmptySnapshot(): BtSnapshot {
@@ -47,7 +57,11 @@ export function createEmptySnapshot(): BtSnapshot {
     scanning: false,
     activeName: '',
     activeId: '',
-    statusText: '蓝牙未开启'
+    statusText: '蓝牙未开启',
+    nearLinkSupported: false,
+    nearLinkEnabled: false,
+    nearLinkName: '',
+    nearLinkBtId: ''
   };
   return snapshot;
 }
@@ -58,7 +72,8 @@ export function createEmptyDevice(): BtDevice {
     name: '',
     paired: false,
     audio: false,
-    connected: false
+    connected: false,
+    nearLink: false
   };
   return device;
 }

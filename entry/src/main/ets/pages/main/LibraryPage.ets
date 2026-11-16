@@ -1,24 +1,26 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DateUtils } from '../../common/utils/DateUtils';
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
+import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { EmptyView } from '../../components/EmptyView';
 import { GlassCard } from '../../components/GlassCard';
 import { ToneCard } from '../../components/ToneCard';
 import { ToneEntry } from '../../models/ToneModel';
 import { AudioPlayService } from '../../services/AudioPlayService';
 import { BluetoothService } from '../../services/BluetoothService';
-import { CaseWriteService, WriteCheck, WriteResult } from '../../services/CaseWriteService';
+import { CaseWriteService, WriteCheck, WriteCode, WriteReason, WriteResult } from '../../services/CaseWriteService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 
 const MODULE: string = 'LibraryPage';
 
 @Component
 export struct LibraryPage {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @State items: ToneEntry[] = [];
   @State totalBytes: number = 0;
   @State expandedId: string = '';
@@ -94,11 +96,15 @@ export struct LibraryPage {
     const check: WriteCheck = CaseWriteService.check(entry);
     if (!check.ok) {
       Logger.warn(MODULE, `写入前置检查未通过 code=${check.code}：${check.message}`);
-      this.toast(check.message);
+      if (check.code === WriteCode.NEARLINK_UNSUPPORTED) {
+        this.showNearLinkBlocked(check.message);
+      } else {
+        this.toast(check.message);
+      }
       return;
     }
-    const hint: string = check.warn.length > 0 ? check.warn :
-      '写入会把数据直接下发到充电盒，过程中会临时断开耳机与手机的音频连接。';
+    const baseHint: string = '写入会把数据直接下发到充电盒，过程中会临时断开耳机与手机的音频连接。';
+    const hint: string = check.warn.length > 0 ? `${check.warn}\n${baseHint}` : baseHint;
     this.getUIContext().showAlertDialog({
       title: '准备写入充电盒',
       message: `${hint}\n\n请确认双耳已放入盒内并打开盒盖，然后继续。\n\n` +
@@ -177,7 +183,40 @@ export struct LibraryPage {
     }
   }
 
+  /** 星闪连接下写入被前置拦截：给出明确的切换指引和跳转入口 */
+  private showNearLinkBlocked(message: string): void {
+    NearLinkAlert.show(this.getUIContext(), message);
+  }
+
   private showWriteFailure(result: WriteResult): void {
+    // 星闪链路失败：同样引导去系统设置切换连接方式
+    if (result.reason === WriteReason.NEARLINK) {
+      this.showNearLinkBlocked(result.message);
+      return;
+    }
+    // 不支持 / 格式被拒：把现场一键带回给开发者；其它失败保留查看日志
+    const needReport: boolean = result.reason === WriteReason.UNSUPPORTED ||
+      result.reason === WriteReason.FORMAT;
+    if (needReport) {
+      const title: string = result.reason === WriteReason.UNSUPPORTED ? '该机型暂不支持' : '音效未被耳机接受';
+      this.getUIContext().showAlertDialog({
+        title: title,
+        message: `${result.message}\n\n错误码 ${result.code}`,
+        primaryButton: {
+          value: '关闭',
+          action: (): void => {
+          }
+        },
+        secondaryButton: {
+          value: '复制诊断信息',
+          fontColor: Palette.ACCENT,
+          action: (): void => {
+            this.copyDiagnostic(result.diagnostic);
+          }
+        }
+      });
+      return;
+    }
     this.getUIContext().showAlertDialog({
       title: '写入未完成',
       message: `${result.message}\n\n错误码 ${result.code}`,
@@ -194,6 +233,21 @@ export struct LibraryPage {
         }
       }
     });
+  }
+
+  private async copyDiagnostic(text: string): Promise<void> {
+    if (text.length === 0) {
+      this.toast('没有可复制的诊断信息');
+      return;
+    }
+    try {
+      const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+      await pasteboard.getSystemPasteboard().setData(data);
+      this.toast('诊断信息已复制，可粘贴到反馈中发送');
+    } catch (error) {
+      Logger.warn(MODULE, `复制诊断信息失败 code=${(error as BusinessError).code}`);
+      this.toast('复制失败');
+    }
   }
 
   private async exportTone(entry: ToneEntry): Promise<void> {
@@ -292,7 +346,7 @@ export struct LibraryPage {
         Divider()
           .vertical(true)
           .height(28)
-          .color('rgba(255, 255, 255, 0.07)')
+          .color(Palette.FILL_SOFT)
         SummaryCell({
           cellLabel: '占用空间',
           cellValue: FormatUtils.bytes(this.totalBytes),
@@ -301,7 +355,7 @@ export struct LibraryPage {
         Divider()
           .vertical(true)
           .height(28)
-          .color('rgba(255, 255, 255, 0.07)')
+          .color(Palette.FILL_SOFT)
         SummaryCell({ cellLabel: '最近生成', cellValue: this.lastCreated(), cellUnit: '' })
       }
       .width('100%')
@@ -378,7 +432,7 @@ export struct LibraryPage {
                   .width('100%')
                   .height(3)
                   .color(Palette.ACCENT)
-                  .backgroundColor('rgba(255, 255, 255, 0.08)')
+                  .backgroundColor(Palette.FILL_SOFT)
               }
               .width('100%')
               .padding({ left: 4, right: 4, top: 2 })
@@ -392,7 +446,7 @@ export struct LibraryPage {
                   .fontSize(13)
                   .fontColor(Palette.TEXT_PRIMARY)
                   .placeholderColor(Palette.TEXT_TERTIARY)
-                  .backgroundColor('rgba(255, 255, 255, 0.05)')
+                  .backgroundColor(Palette.FILL_FAINT)
                   .borderRadius(11)
                   .onChange((value: string) => {
                     this.editingName = value;
@@ -424,6 +478,7 @@ export struct LibraryPage {
 /** 概览单元：数值变化需要刷新，@Builder 按值传参不会刷新，故独立成组件 */
 @Component
 struct SummaryCell {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop cellLabel: string = '';
   @Prop cellValue: string = '';
   @Prop cellUnit: string = '';

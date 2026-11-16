@@ -6,6 +6,7 @@ import { Palette } from '../common/constants/ThemeConstants';
  */
 @Component
 export struct WaveformView {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop @Watch('onDataChange') peaks: number[] = [];
   @Prop @Watch('onDataChange') startRatio: number = 0;
   @Prop @Watch('onDataChange') endRatio: number = 1;
@@ -42,7 +43,7 @@ export struct WaveformView {
       ctx.fillRect(selEnd - 1.5, 0, 1.5, h);
     }
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.fillStyle = 'rgba(128, 142, 160, 0.16)';
     ctx.fillRect(0, h / 2 - 0.5, w, 1);
 
     const count: number = this.peaks.length;
@@ -60,7 +61,7 @@ export struct WaveformView {
       const x: number = i * slot + (slot - barWidth) / 2;
       const center: number = i * slot + slot / 2;
       const selected: boolean = this.hasSelection && center >= selStart && center <= selEnd;
-      ctx.fillStyle = selected ? Palette.ACCENT : 'rgba(255, 255, 255, 0.20)';
+      ctx.fillStyle = selected ? Palette.ACCENT : 'rgba(128, 142, 160, 0.40)';
       ctx.fillRect(x, (h - barHeight) / 2, barWidth, barHeight);
     }
   }

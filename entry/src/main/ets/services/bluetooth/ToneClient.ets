@@ -15,6 +15,10 @@ export class ToneError extends Error {
   code: number;
   /** 用于在 catch 里识别协议层异常，避免依赖 instanceof */
   kind: string;
+  /** 失败归类（见 ToneErrorReason），空串表示未归类；上层据此给出不同结局 */
+  reason: string = '';
+  /** 结构化诊断片段（能力原始数据、耳机回包的协议结果等），用于一键复制反馈 */
+  diagnostic: string = '';
 
   constructor(message: string, code: number = 0) {
     super(message);
@@ -22,6 +26,14 @@ export class ToneError extends Error {
     this.kind = 'tone';
     this.code = code;
   }
+}
+
+/** 耳机/固件不支持盒音自定义：是终端结局，区别于值得重试的链路问题 */
+export const TONE_CODE_UNSUPPORTED: number = -96;
+
+export class ToneErrorReason {
+  static readonly UNSUPPORTED: string = 'unsupported';
+  static readonly FORMAT: string = 'format';
 }
 
 export class CancelledError extends ToneError {
@@ -98,6 +110,14 @@ export class ToneClient {
    */
   private transferring: boolean = false;
   private keepAliveTimer: number = -1;
+  /** 本次连接探测出的协议版本：0 = 未探测，1 = 2BB6 分片，2 = 09 命令族 */
+  protocolUsed: number = 0;
+  /** 耳机自报型号（0107 tag 15），未识别时为空串；不读取 SN 等其他字段 */
+  private deviceModelCode: string = '';
+  /** 型号查询窗口：0107 回包可能带 SN，这段时间不打印原始 RX */
+  private infoQueryUntil: number = 0;
+  /** 未收录品牌/机型：串口失败时不套用「智慧音频」等华为专属指引 */
+  private neutralHints: boolean = false;
 
   constructor(detail: boolean = false) {
     this.detailLog = detail;
@@ -135,6 +155,16 @@ export class ToneClient {
 
   get errorCode(): number {
     return this.lastErrorCode;
+  }
+
+  /** 耳机自报型号，空串表示未识别；型号来自固件，用户改名不影响 */
+  get deviceModel(): string {
+    return this.deviceModelCode;
+  }
+
+  /** 未收录机型用中性失败提示，避免把非华为耳机误判成智慧音频占用 */
+  setNeutralHints(neutral: boolean): void {
+    this.neutralHints = neutral;
   }
 
   static cooldownLeft(): number {
@@ -182,7 +212,7 @@ export class ToneClient {
   }
 
   /** 系统错误码翻译：这些码是实测中会稳定出现的失败原因 */
-  private static describe(error: Object | null | undefined): ToneError {
+  private static describe(error: Object | null | undefined, neutral: boolean = false): ToneError {
     if (isToneError(error)) {
       return error as ToneError;
     }
@@ -203,14 +233,20 @@ export class ToneClient {
       return new ToneError('系统未启用串口（SPP）能力', code);
     }
     if (code === 2900099) {
-      return new ToneError('耳机没有接受串口连接：通道可能被智慧音频占用，请把它从后台移除，' +
-        '再把双耳放回盒内、打开盒盖后重试', code);
+      return new ToneError(neutral
+        ? '耳机没有接受串口连接：可能被其他应用占用，或这款耳机不支持盒音自定义。' +
+          '请关闭占用连接的应用后重试；非华为耳机不支持本功能'
+        : '耳机没有接受串口连接：通道可能被智慧音频占用，请把它从后台移除，' +
+          '再把双耳放回盒内、打开盒盖后重试', code);
     }
     if (code === 2901054) {
       return new ToneError('蓝牙串口通信中断，请合盖后再开盖后重试', code);
     }
     if (code === -1) {
-      return new ToneError('耳机拒绝了这次串口连接：通道可能被智慧音频占用，请把它从后台移除后再试', code);
+      return new ToneError(neutral
+        ? '耳机拒绝了这次串口连接：可能被其他应用占用，或这款耳机不支持盒音自定义。' +
+          '请关闭占用连接的应用后重试；非华为耳机不支持本功能'
+        : '耳机拒绝了这次串口连接：通道可能被智慧音频占用，请把它从后台移除后再试', code);
     }
     if (code === 401) {
       return new ToneError('设备地址无效，请在系统蓝牙设置中取消配对后重新配对', code);
@@ -252,7 +288,7 @@ export class ToneClient {
           settled = true;
           clearTimeout(timer);
           if (error !== undefined && error !== null && error.code !== 0) {
-            reject(ToneClient.describe(error));
+            reject(ToneClient.describe(error, this.neutralHints));
             return;
           }
           resolve(id);
@@ -260,7 +296,7 @@ export class ToneClient {
       } catch (error) {
         settled = true;
         clearTimeout(timer);
-        reject(ToneClient.describe(error));
+        reject(ToneClient.describe(error, this.neutralHints));
       }
     });
   }
@@ -278,6 +314,7 @@ export class ToneClient {
     this.lastErrorCode = 0;
     this.lastIoAt = Date.now();
     this.rxCount = 0;
+    this.deviceModelCode = '';
     this.address = address;
     const startedAt: number = Date.now();
     /**
@@ -376,8 +413,10 @@ export class ToneClient {
               silentFailures++;
               if (silentFailures >= 3) {
                 this.broken = true;
-                throw new ToneError('耳机串口没有响应：请把双耳放回盒内、打开盒盖，关闭智慧生活等占用连接的应用，' +
-                  '合盖 5 秒后再开盖重试');
+                throw new ToneError(this.neutralHints
+                  ? '耳机串口没有响应：请把双耳放回盒内、打开盒盖，关闭占用连接的应用，合盖 5 秒后再开盖重试'
+                  : '耳机串口没有响应：请把双耳放回盒内、打开盒盖，关闭智慧生活等占用连接的应用，' +
+                    '合盖 5 秒后再开盖重试');
               }
               throw new ToneError('串口连上了但耳机没有响应，正在重连');
             }
@@ -387,7 +426,7 @@ export class ToneClient {
             if (isToneError(error) && (error as ToneError).code === -99) {
               throw error as ToneError;
             }
-            const failure: ToneError = ToneClient.describe(error);
+            const failure: ToneError = ToneClient.describe(error, this.neutralHints);
             this.lastErrorCode = failure.code;
             lastError = failure;
             this.trace(`CONNECT_FAILED secure=${modes[mode]} code=${failure.code} ${failure.message}`);
@@ -412,7 +451,9 @@ export class ToneClient {
     }
     this.broken = true;
     throw lastError !== null ? lastError as ToneError :
-      new ToneError('无法连接耳机：请双耳入盒并打开盒盖，合盖 5 秒后再开盖，并关闭智慧生活等占用连接的应用');
+      new ToneError(this.neutralHints
+        ? '无法连接耳机：请双耳入盒并打开盒盖，合盖 5 秒后再开盖；如果这不是华为耳机，本功能不支持'
+        : '无法连接耳机：请双耳入盒并打开盒盖，合盖 5 秒后再开盖，并关闭智慧生活等占用连接的应用');
   }
 
   /** 耳机是否又把音频通道连回来了 */
@@ -458,7 +499,10 @@ export class ToneClient {
       }
       try {
         const bytes: Uint8Array = new Uint8Array(data);
-        this.trace(`RX ${ToneClient.shortHex(bytes)}`);
+        // 0107 回包可能包含 SN：查询窗口内不记录原始 RX，只保留解析后的型号
+        if (Date.now() >= this.infoQueryUntil) {
+          this.trace(`RX ${ToneClient.shortHex(bytes)}`);
+        }
         this.assembler.feed(bytes);
       } catch (error) {
         this.trace(`RX_DECODE_ERROR ${ToneClient.messageOf(error)}`);
@@ -475,7 +519,7 @@ export class ToneClient {
       }
       this.readListener = null;
       this.clientSocket = -1;
-      throw ToneClient.describe(error);
+      throw ToneClient.describe(error, this.neutralHints);
     }
   }
 
@@ -539,7 +583,7 @@ export class ToneClient {
         // 2901054 表示这条串口已经死了，重试只会多耗时间
         const fatal: boolean = code === 2901054 || code === 2900003 || code === 2900001;
         if (attempt >= 3 || fatal) {
-          const failure: ToneError = ToneClient.describe(error);
+          const failure: ToneError = ToneClient.describe(error, this.neutralHints);
           this.lastErrorCode = failure.code;
           this.broken = true;
           this.closeSocket();
@@ -628,14 +672,19 @@ export class ToneClient {
   }
 
   private pendingText(): string {
-    if (this.received.length === 0) {
-      return 'none';
-    }
     const parts: string[] = [];
-    for (let i = 0; i < this.received.length && i < 4; i++) {
+    for (let i = 0; i < this.received.length && parts.length < 4; i++) {
+      // 设备信息回包可能带 SN，不在超时日志里回显
+      if (ToneClient.isDeviceInfoPacket(this.received[i])) {
+        continue;
+      }
       parts.push(ToneClient.shortHex(this.received[i]));
     }
-    return parts.join('|');
+    return parts.length > 0 ? parts.join('|') : 'none';
+  }
+
+  private static isDeviceInfoPacket(packet: Uint8Array): boolean {
+    return packet.length >= 2 && ByteUtils.byteAt(packet, 0) === 0x01 && ByteUtils.byteAt(packet, 1) === 0x07;
   }
 
   private async command(payload: Uint8Array, timeoutMs: number = MbbSpec.ACK_TIMEOUT_MS,
@@ -688,6 +737,54 @@ export class ToneClient {
     });
   }
 
+  /**
+   * 读取耳机自报型号（0107 的 15 号字段）。
+   *
+   * 只请求并解析型号；即使耳机把整个设备信息包回过来，SN（9/24）也直接丢弃，
+   * 不写日志、不落盘、不进诊断。超时或失败返回空串，不影响盒音写入。
+   */
+  private async readDeviceModel(): Promise<string> {
+    // 查询窗口覆盖回包到达时间：期间不打印原始 RX，避免 SN 进日志
+    this.infoQueryUntil = Date.now() + 2000;
+    try {
+      // 0107：读取设备信息；0F 00：只请求型号字段（空值）
+      const reply: Uint8Array = await this.command(ByteUtils.fromHex('01070F00'), 1200, 1);
+      const modelField: Uint8Array | undefined = MbbProtocol.tlv(reply).get(15);
+      if (modelField === undefined || modelField.length === 0 || modelField.length > 32) {
+        return '';
+      }
+      const model: string = ToneClient.asciiText(modelField);
+      if (model.length > 0) {
+        this.trace(`DEVICE_MODEL ${model}`);
+      }
+      return model;
+    } catch (error) {
+      this.trace(`DEVICE_MODEL_FAIL code=${ToneClient.codeOf(error)}`);
+      return '';
+    } finally {
+      // 会话里不留设备信息包：即使它带了 SN，也随解析结束一起丢掉
+      this.received = this.received.filter((packet: Uint8Array): boolean => {
+        return !ToneClient.isDeviceInfoPacket(packet);
+      });
+    }
+  }
+
+  /** 型号是 ASCII 短字符串；出现非可打印字节就当作没识别到 */
+  private static asciiText(bytes: Uint8Array): string {
+    let text: string = '';
+    for (let i = 0; i < bytes.length; i++) {
+      const value: number = bytes[i] & 0xFF;
+      if (value === 0) {
+        break;
+      }
+      if (value < 0x20 || value > 0x7E) {
+        return '';
+      }
+      text += String.fromCharCode(value);
+    }
+    return text.trim();
+  }
+
   /** 探测固件支持哪一版音效传输协议：2 = 09 命令族，1 = 2BB6 分片 */
   private async protocolVersion(): Promise<number> {
     const cached: number | undefined = ToneClient.protocolCache.get(this.address);
@@ -696,8 +793,10 @@ export class ToneClient {
       return cached;
     }
     const rawCaps: Uint8Array = await this.command(ByteUtils.fromHex('2bb30101010e0100150100'));
-    // 原始能力字段全量入库：其他机型兼容性只能靠这些 tag 判断，别只留解析结果
-    this.trace(`CAPS ${ByteUtils.toHex(rawCaps)}`);
+    // 原始能力字段全量入库：其他机型兼容性只能靠这些 tag 判断，别只留解析结果。
+    // 走 info 而不是 detail：这是收集未验证机型数据的关键一行
+    const capsHex: string = ByteUtils.toHex(rawCaps);
+    Logger.info(MODULE, `CAPS ${capsHex}`);
     const caps: Map<number, Uint8Array> = MbbProtocol.tlv(rawCaps);
     const supported: (tag: number) => boolean = (tag: number): boolean => {
       const value: Uint8Array | undefined = caps.get(tag);
@@ -711,7 +810,16 @@ export class ToneClient {
       ToneClient.protocolCache.set(this.address, 1);
       return 1;
     }
-    throw new ToneError('这款耳机没有报告可用的开盒音效传输能力');
+    // 有回包但两个协议 tag 都不可用，拆开两种局面：
+    // 固件明确报了能力项（值为 0）= 明确不支持；tag 缺失 = 认不出这款固件
+    const declared: boolean = caps.has(21) || caps.has(14);
+    const failure: ToneError = declared
+      ? new ToneError('这款耳机报告不支持盒音自定义，本次没有写入任何数据', TONE_CODE_UNSUPPORTED)
+      : new ToneError('无法识别这款耳机的固件能力，盒音自定义可能不兼容，本次没有写入任何数据',
+        TONE_CODE_UNSUPPORTED);
+    failure.reason = ToneErrorReason.UNSUPPORTED;
+    failure.diagnostic = `CAPS=${capsHex} declared=${declared ? 1 : 0}`;
+    throw failure;
   }
 
   private async setTone(id: number, selected: boolean, volume: number,
@@ -778,7 +886,10 @@ export class ToneClient {
     // 不预发盒内查询：FreeClip 2 经常不回包，空等还会让耳机静默关掉 RFCOMM
     const before: ToneStatus = await this.query();
     emit(0.06, '读取当前音效');
+    // 链路已证明可用后再查型号：只读 15 号字段，失败忽略，不阻塞写入
+    this.deviceModelCode = await this.readDeviceModel();
     const protocol: number = await this.protocolVersion();
+    this.protocolUsed = protocol;
     this.trace(`PROTOCOL ${protocol} PCM_BYTES ${pcm.length} PACKAGE_BYTES ${data.length}`);
 
     emit(0.08, '准备传输');
@@ -845,8 +956,13 @@ export class ToneClient {
             throw new ToneError(ToneStatusCodec.errorText(result), result);
           }
           // 这一步在任何 PCM 之前：被拒说明格式不被接受，但一个字节都没落盘
-          throw new ToneError(`该机型不接受当前音效格式（16700Hz / 16bit / ${pcm.length} 字节），` +
+          const formatError: ToneError = new ToneError(
+            `该机型不接受当前音效格式（16700Hz / 16bit / ${pcm.length} 字节），` +
             '本次没有写入任何数据。请把机型和这条日志一起反馈', result);
+          formatError.reason = ToneErrorReason.FORMAT;
+          formatError.diagnostic = `PACKAGE_BYTES=${data.length} PCM_BYTES=${pcm.length} ` +
+            `PROTOCOL=${protocol} RESULT=${result}`;
+          throw formatError;
         }
         if (protocol === 1) {
           const mcuField: Uint8Array | undefined = fields.get(3);

@@ -3,7 +3,7 @@
 > 为华为蓝牙耳机定制**充电盒开盖音效**的 HarmonyOS 应用。
 > 导入素材 → 按充电盒解码规格转换 → 导出 RAW → 在华为智慧音频 App 中替换。
 
-底部导航使用 HarmonyOS 7 官方 **HdsTabs 沉浸光感悬浮底栏**
+底部导航使用官方 **HdsTabs 沉浸光感悬浮底栏**（HDS 6.1.0 / API 23 起提供）
 （`barOverlap` + `barFloatingStyle.systemMaterialEffect`），
 参考官方文档 [沉浸光感悬浮底栏](https://developer.huawei.com/consumer/cn/doc/doccenter-advanced-features/bpta-spatiality-immersive)。
 
@@ -165,12 +165,13 @@ HarmonyOS SDK 分发（需登录华为账号并同意协议），OpenHarmony 开
 
 ### IDE 构建
 
-1. **DevEco Studio 6.0 及以上**，安装 **HarmonyOS 7 SDK（API 26）**
-   —— 沉浸光感要求 `targetAPIVersion ≥ 26.0.0`，低版本 SDK 无法编译 `@kit.UIDesignKit`
+1. **DevEco Studio 26.0 及以上**，安装 **HarmonyOS 7 SDK（API 26）**用于编译
+   —— 沉浸光感底栏依赖闭源 `@kit.UIDesignKit`，只有 HarmonyOS SDK 才有；
+   工程 `compatibleSdkVersion: "6.1.0(23)"`，产物可运行在 HarmonyOS 6.1（API 23）及以上设备
 2. 打开工程根目录 `BoxTone/`，等待 `Sync` 完成（若提示 `modelVersion` 迁移，按向导确认即可）
 3. `File → Project Structure → Signing Configs` 勾选 **Automatically generate signature**（需登录华为账号）
-4. 若 `build-profile.json5` 中的 `compatibleSdkVersion: "7.0.0(26)"` 与本机 SDK 版本号不一致，
-   在 `Project Structure → Modules` 里改选实际安装的 API 26 SDK
+4. 若 Sync 提示 SDK 版本不一致，在 `Project Structure → Modules` 里选本机安装的 API 26 SDK（编译用），
+   保持 `compatibleSdkVersion` 为 `6.1.0(23)` 不变（API 10–25 必须用 `x.y.z(n)` 格式）
 5. 连接真机（蓝牙与音频能力模拟器不可用）→ Run
 
 ### 不装 SDK 也能先验证

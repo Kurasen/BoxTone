@@ -64,6 +64,19 @@ export class SettingsService {
     SettingsService.put(AppStorageKey.KEY_AUTO_NORMALIZE, enabled);
   }
 
+  /** 外观模式：0 深色 / 1 浅色 / 2 跟随系统（默认深色，保持原有视觉） */
+  public static getThemeMode(): number {
+    const store: preferences.Preferences | undefined = SettingsService.store;
+    if (store === undefined) {
+      return 0;
+    }
+    return store.getSync(AppStorageKey.KEY_THEME_MODE, 0) as number;
+  }
+
+  public static setThemeMode(mode: number): void {
+    SettingsService.put(AppStorageKey.KEY_THEME_MODE, mode);
+  }
+
   private static put(key: string, value: number | boolean): void {
     const store: preferences.Preferences | undefined = SettingsService.store;
     if (store === undefined) {

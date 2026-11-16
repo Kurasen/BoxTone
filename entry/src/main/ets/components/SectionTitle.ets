@@ -3,6 +3,7 @@ import { Metric, Palette } from '../common/constants/ThemeConstants';
 /** 区块标题 */
 @Component
 export struct SectionTitle {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop sectionText: string = '';
   @Prop sectionHint: string = '';
 

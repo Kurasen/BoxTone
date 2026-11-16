@@ -3,6 +3,7 @@ import { Palette } from '../common/constants/ThemeConstants';
 /** 空状态占位 */
 @Component
 export struct EmptyView {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   emptyIcon: Resource = $r('app.media.ic_tab_tone');
   @Prop emptyTitle: string = '';
   @Prop emptyDesc: string = '';
@@ -13,7 +14,7 @@ export struct EmptyView {
         Circle()
           .width(64)
           .height(64)
-          .fill('rgba(255, 255, 255, 0.04)')
+          .fill(Palette.BG_INPUT)
         Image(this.emptyIcon)
           .width(26)
           .height(26)

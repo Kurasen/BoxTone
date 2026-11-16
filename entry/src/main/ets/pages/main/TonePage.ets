@@ -24,6 +24,7 @@ const MODULE: string = 'TonePage';
 
 @Component
 export struct TonePage {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @State source: SourceAudio | undefined = undefined;
   @State peaks: number[] = [];
   @State startMs: number = 0;
@@ -418,7 +419,7 @@ export struct TonePage {
       .padding({ top: 26, bottom: 26 })
       .alignItems(HorizontalAlign.Center)
       .borderRadius(Metric.CARD_RADIUS)
-      .backgroundColor('rgba(255, 255, 255, 0.03)')
+      .backgroundColor(Palette.BG_INPUT)
       .border({ width: 1, color: 'rgba(78, 216, 255, 0.24)', style: BorderStyle.Dashed })
       .onClick(() => {
         this.importAudio();
@@ -609,6 +610,8 @@ export struct TonePage {
           blockOn: this.normalize,
           onSwitch: (isOn: boolean): void => {
             this.normalize = isOn;
+            // 与音效生成入口放在一起，同时作为下次进入的默认值持久化
+            SettingsService.setAutoNormalize(isOn);
           }
         })
         ToggleBlock({
@@ -734,6 +737,7 @@ export struct TonePage {
 /** 预览按钮：播放态需要跟随状态刷新，@Builder 按值传参不会刷新，故独立成组件 */
 @Component
 struct PreviewChip {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop chipLabel: string = '';
   @Prop active: boolean = false;
   @Prop busy: boolean = false;
@@ -756,7 +760,7 @@ struct PreviewChip {
     .height(38)
     .justifyContent(FlexAlign.Center)
     .borderRadius(12)
-    .backgroundColor(this.active ? Palette.ACCENT : 'rgba(255, 255, 255, 0.05)')
+    .backgroundColor(this.active ? Palette.ACCENT : Palette.FILL_FAINT)
     .onClick(() => {
       this.onTap();
     })
@@ -766,6 +770,7 @@ struct PreviewChip {
 /** 滑块行：数值文案与滑块位置需要随状态刷新 */
 @Component
 struct SliderBlock {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop blockLabel: string = '';
   @Prop blockText: string = '';
   @Prop blockValue: number = 0;
@@ -797,7 +802,7 @@ struct SliderBlock {
         style: SliderStyle.OutSet
       })
         .width('100%')
-        .trackColor('rgba(255, 255, 255, 0.08)')
+        .trackColor(Palette.FILL_SOFT)
         .selectedColor(Palette.ACCENT)
         .blockColor('#FFFFFF')
         .onChange((next: number, mode: SliderChangeMode) => {
@@ -812,6 +817,7 @@ struct SliderBlock {
 /** 开关行：开关状态需要随状态刷新 */
 @Component
 struct ToggleBlock {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop blockLabel: string = '';
   @Prop blockOn: boolean = false;
   onSwitch: (isOn: boolean) => void = () => {

@@ -38,6 +38,14 @@
         }
       },
       {
+        "name": "ohos.permission.ACCESS_NEARLINK",
+        "reason": "$string:perm_nearlink_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
         "name": "ohos.permission.INTERNET",
         "reason": "$string:perm_internet_reason",
         "usedScene": {

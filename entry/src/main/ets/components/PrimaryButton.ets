@@ -3,6 +3,7 @@ import { Palette } from '../common/constants/ThemeConstants';
 /** 主操作按钮：品牌渐变 + 按压反馈 */
 @Component
 export struct PrimaryButton {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop btnLabel: string = '';
   @Prop btnEnabled: boolean = true;
   @Prop btnLoading: boolean = false;

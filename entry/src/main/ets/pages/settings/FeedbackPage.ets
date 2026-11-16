@@ -25,6 +25,7 @@ const MODULE: string = 'FeedbackPage';
  */
 @Component
 export struct FeedbackPage {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Link step: number;
   @Prop topInset: number = 0;
   onClose: () => void = () => {
@@ -235,7 +236,7 @@ export struct FeedbackPage {
       .backgroundColor(Palette.BG_TOP)
       .linearGradient({
         angle: 170,
-        colors: [[Palette.BG_TOP, 0.0], ['#0C1422', 1.0]]
+        colors: [[Palette.BG_TOP, 0.0], [Palette.BG_END, 1.0]]
       })
 
     }
@@ -289,7 +290,7 @@ export struct FeedbackPage {
             }
           })
           Divider()
-            .color('rgba(255, 255, 255, 0.05)')
+            .color(Palette.FILL_FAINT)
             .margin({ left: 16, right: 16 })
           FeedbackEntryRow({
             rowTitle: '我的反馈',
@@ -383,7 +384,7 @@ export struct FeedbackPage {
               .fontColor(this.typeIndex === index ? '#05080E' : Palette.TEXT_SECONDARY)
               .padding({ left: 14, right: 14, top: 7, bottom: 7 })
               .borderRadius(999)
-              .backgroundColor(this.typeIndex === index ? Palette.ACCENT : 'rgba(255, 255, 255, 0.05)')
+              .backgroundColor(this.typeIndex === index ? Palette.ACCENT : Palette.FILL_FAINT)
               .onClick(() => {
                 this.typeIndex = index;
               })
@@ -655,6 +656,7 @@ export struct FeedbackPage {
 
 @Component
 struct FeedbackEntryRow {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop rowTitle: string = '';
   @Prop rowDesc: string = '';
   rowIcon: Resource = $r('app.media.ic_feedback');

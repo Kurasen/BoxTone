@@ -1,6 +1,7 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { Logger } from '../../common/utils/Logger';
+import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { DeviceRow } from '../../components/DeviceRow';
 import { EmptyView } from '../../components/EmptyView';
 import { GhostButton } from '../../components/GhostButton';
@@ -9,23 +10,74 @@ import { SectionTitle } from '../../components/SectionTitle';
 import { StatPill } from '../../components/StatPill';
 import { BtDevice, BtSnapshot, createEmptySnapshot } from '../../models/DeviceModel';
 import { BtChangeListener, BluetoothService } from '../../services/BluetoothService';
+import { CaseWriteService } from '../../services/CaseWriteService';
 import { DemoService } from '../../services/DemoService';
+import { NearLinkService, NearLinkSnapshot } from '../../services/NearLinkService';
 
 const MODULE: string = 'DevicePage';
 
 @Component
 export struct DevicePage {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @State snapshot: BtSnapshot = createEmptySnapshot();
   @State busy: boolean = false;
   private listener: BtChangeListener | undefined = undefined;
+  private liveTimer: number = -1;
+  private pollingLive: boolean = false;
+  /** 已提醒过的星闪设备名：断开后清空，重新连上时再提醒一次 */
+  private nearLinkNotified: string = '';
 
   aboutToAppear(): void {
     const handler: BtChangeListener = (next: BtSnapshot): void => {
       this.snapshot = next;
+      this.warnNearLinkOnce();
     };
     this.listener = handler;
     BluetoothService.onChange(handler);
+    this.startLiveRefresh();
     this.bootstrap();
+  }
+
+  /**
+   * 星闪连接没有可订阅的系统事件：页面存活期间高频轻量轮询。
+   * 只查星闪状态（约几十毫秒），连接状态变化时才做一次完整刷新，
+   * 把「合盖断开 / 再次连上」的界面延迟压到 1.5 秒级。
+   */
+  private startLiveRefresh(): void {
+    if (this.liveTimer >= 0) {
+      return;
+    }
+    this.liveTimer = setInterval(() => {
+      if (this.busy) {
+        return;
+      }
+      if (!this.snapshot.nearLinkSupported || !this.snapshot.nearLinkEnabled) {
+        return;
+      }
+      this.pollNearLink();
+    }, 2000);
+  }
+
+  private stopLiveRefresh(): void {
+    if (this.liveTimer >= 0) {
+      clearInterval(this.liveTimer);
+      this.liveTimer = -1;
+    }
+  }
+
+  private async pollNearLink(): Promise<void> {
+    if (this.pollingLive) {
+      return;
+    }
+    this.pollingLive = true;
+    try {
+      const near: NearLinkSnapshot = await NearLinkService.refresh();
+      if (near.connectedName !== this.snapshot.nearLinkName) {
+        await this.load();
+      }
+    } finally {
+      this.pollingLive = false;
+    }
   }
 
   /** 首次进入：未授权则发起一次授权，再拉取状态 */
@@ -43,6 +95,7 @@ export struct DevicePage {
   }
 
   aboutToDisappear(): void {
+    this.stopLiveRefresh();
     if (this.listener !== undefined) {
       BluetoothService.offChange(this.listener);
       this.listener = undefined;
@@ -52,9 +105,28 @@ export struct DevicePage {
   private async load(): Promise<void> {
     try {
       this.snapshot = await BluetoothService.refresh();
+      this.warnNearLinkOnce();
     } catch (error) {
       Logger.exception(MODULE, '刷新失败', error as BusinessError);
     }
+  }
+
+  /** 检测到音频走星闪时提醒一次：每次（重新）连上只弹一次，断开后复位 */
+  private warnNearLinkOnce(): void {
+    if (DemoService.isActive()) {
+      return;
+    }
+    const name: string = this.snapshot.nearLinkName;
+    if (name.length === 0) {
+      this.nearLinkNotified = '';
+      return;
+    }
+    if (this.nearLinkNotified === name) {
+      return;
+    }
+    this.nearLinkNotified = name;
+    Logger.info(MODULE, `检测到星闪连接「${name}」，弹出写入限制提醒`);
+    NearLinkAlert.show(this.getUIContext(), CaseWriteService.nearLinkHint(name));
   }
 
   /** 演示模式只是模拟设备，任何真实蓝牙操作都拦在这里 */
@@ -172,7 +244,8 @@ export struct DevicePage {
       name: device.name,
       paired: device.paired,
       audio: device.audio,
-      connected: this.isConnected(device)
+      connected: this.isConnected(device),
+      nearLink: device.nearLink
     };
     return row;
   }
@@ -230,7 +303,7 @@ export struct DevicePage {
           Circle()
             .width(44)
             .height(44)
-            .fill(this.snapshot.activeName.length > 0 ? Palette.ACCENT_SOFT : 'rgba(255, 255, 255, 0.05)')
+            .fill(this.snapshot.activeName.length > 0 ? Palette.ACCENT_SOFT : Palette.FILL_FAINT)
           Image($r('app.media.ic_tab_device'))
             .width(20)
             .height(20)
@@ -256,14 +329,16 @@ export struct DevicePage {
       .width('100%')
 
       Divider()
-        .color('rgba(255, 255, 255, 0.07)')
+        .color(Palette.FILL_SOFT)
         .margin({ top: 16, bottom: 14 })
 
       Row() {
         MetricCell({
           cellLabel: '音频通道',
-          cellValue: this.snapshot.activeName.length > 0 ? '已连接' : '未连接',
-          cellColor: this.snapshot.activeName.length > 0 ? Palette.SUCCESS : Palette.TEXT_SECONDARY
+          cellValue: this.snapshot.nearLinkName.length > 0 ? '星闪' :
+            (this.snapshot.activeName.length > 0 ? '已连接' : '未连接'),
+          cellColor: this.snapshot.nearLinkName.length > 0 ? Palette.ACCENT :
+            (this.snapshot.activeName.length > 0 ? Palette.SUCCESS : Palette.TEXT_SECONDARY)
         })
         MetricCell({
           cellLabel: '已配对',
@@ -356,12 +431,13 @@ export struct DevicePage {
             })
             if (index < this.snapshot.pairedDevices.length - 1) {
               Divider()
-                .color('rgba(255, 255, 255, 0.05)')
+                .color(Palette.FILL_FAINT)
                 .margin({ left: 50 })
             }
           }
           .width('100%')
-        }, (device: BtDevice) => `${device.deviceId}-${this.isConnected(device) ? 'on' : 'off'}`)
+        }, (device: BtDevice) =>
+          `${device.deviceId}-${device.name}-${this.isConnected(device) ? 'on' : 'off'}`)
       }
     }
   }
@@ -414,12 +490,12 @@ export struct DevicePage {
             })
             if (index < this.snapshot.nearbyDevices.length - 1) {
               Divider()
-                .color('rgba(255, 255, 255, 0.05)')
+                .color(Palette.FILL_FAINT)
                 .margin({ left: 50 })
             }
           }
           .width('100%')
-        }, (device: BtDevice) => device.deviceId)
+        }, (device: BtDevice) => `${device.deviceId}-${device.name}`)
       }
     }
   }
@@ -472,16 +548,18 @@ export struct DevicePage {
  */
 @Component
 struct MetricCell {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop cellLabel: string = '';
   @Prop cellValue: string = '';
-  @Prop cellColor: string = Palette.TEXT_PRIMARY;
+  /** 留空时按当前外观取默认值 */
+  @Prop cellColor: string = '';
 
   build() {
     Column({ space: 5 }) {
       Text(this.cellValue)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.cellColor)
+        .fontColor(this.cellColor.length > 0 ? this.cellColor : Palette.TEXT_PRIMARY)
       Text(this.cellLabel)
         .fontSize(10)
         .fontColor(Palette.TEXT_TERTIARY)

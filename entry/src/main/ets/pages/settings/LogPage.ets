@@ -13,6 +13,7 @@ const MODULE: string = 'LogPage';
  */
 @Component
 export struct LogPage {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   onClose: () => void = () => {
   };
   topInset: number = 0;
@@ -123,7 +124,7 @@ export struct LogPage {
     .backgroundColor(Palette.BG_TOP)
     .linearGradient({
       angle: 170,
-      colors: [[Palette.BG_TOP, 0.0], ['#0C1422', 1.0]]
+      colors: [[Palette.BG_TOP, 0.0], [Palette.BG_END, 1.0]]
     })
   }
 
@@ -164,7 +165,7 @@ export struct LogPage {
           .fontColor(this.filterKey === option.key ? '#05080E' : Palette.TEXT_SECONDARY)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(999)
-          .backgroundColor(this.filterKey === option.key ? Palette.ACCENT : 'rgba(255, 255, 255, 0.05)')
+          .backgroundColor(this.filterKey === option.key ? Palette.ACCENT : Palette.FILL_FAINT)
           .onClick(() => {
             this.filterKey = option.key;
           })
@@ -255,7 +256,7 @@ export struct LogPage {
     .height(44)
     .justifyContent(FlexAlign.Center)
     .borderRadius(14)
-    .backgroundColor('rgba(255, 255, 255, 0.05)')
+    .backgroundColor(Palette.FILL_FAINT)
     .border({ width: 1, color: Palette.STROKE })
     .onClick(() => {
       handler();

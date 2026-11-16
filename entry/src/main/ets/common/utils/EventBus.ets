@@ -19,6 +19,10 @@ export class AppEvent {
   static readonly BUSY_CHANGED: number = 3005;
   /** 托管隐私弹窗已签署同意，业务服务完成初始化 */
   static readonly PRIVACY_READY: number = 3007;
+  /** 打开支持机型页 */
+  static readonly OPEN_DEVICE_SUPPORT: number = 3008;
+  /** 打开更新日志 */
+  static readonly OPEN_CHANGELOG: number = 3009;
 }
 
 export type SimpleHandler = (payload: number) => void;

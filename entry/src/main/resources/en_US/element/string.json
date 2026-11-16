@@ -15,6 +15,14 @@
     {
       "name": "perm_bluetooth_reason",
       "value": "Used to discover, pair and connect your HUAWEI Bluetooth earbuds and read their connection state"
+    },
+    {
+      "name": "perm_nearlink_reason",
+      "value": "Used to detect whether the earbuds are connected via NearLink, so a NearLink link is not mistaken for a disconnected device"
+    },
+    {
+      "name": "perm_internet_reason",
+      "value": "Used to send feedback and diagnostic logs to the developer"
     }
   ]
 }

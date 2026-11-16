@@ -6,6 +6,7 @@ import { createEmptyTone, ToneEntry } from '../models/ToneModel';
 /** 音效库条目卡片，点击展开操作区 */
 @Component
 export struct ToneCard {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop entry: ToneEntry = createEmptyTone();
   @Prop expanded: boolean = false;
   @Prop playing: boolean = false;
@@ -33,7 +34,7 @@ export struct ToneCard {
           Circle()
             .width(40)
             .height(40)
-            .fill(this.playing ? Palette.ACCENT_SOFT : 'rgba(255, 255, 255, 0.05)')
+            .fill(this.playing ? Palette.ACCENT_SOFT : Palette.FILL_FAINT)
           Image(this.playing ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
             .width(16)
             .height(16)
@@ -119,6 +120,7 @@ export struct ToneCard {
 /** 写入耳机盒：主操作，强调色；写入进行中或被他条占用时置灰 */
 @Component
 struct WriteChip {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop chipText: string = '写入';
   @Prop chipBusy: boolean = false;
   @Prop chipLocked: boolean = false;
@@ -136,11 +138,11 @@ struct WriteChip {
       .height(34)
       .textAlign(TextAlign.Center)
       .borderRadius(11)
-      .backgroundColor(this.chipLocked ? 'rgba(255, 255, 255, 0.02)' :
-        (this.chipBusy ? 'rgba(255, 255, 255, 0.05)' : Palette.ACCENT_SOFT))
+      .backgroundColor(this.chipLocked ? Palette.BG_INPUT :
+        (this.chipBusy ? Palette.FILL_FAINT : Palette.ACCENT_SOFT))
       .border({
         width: 1,
-        color: this.chipLocked ? 'rgba(255, 255, 255, 0.03)' :
+        color: this.chipLocked ? Palette.BG_INPUT :
           (this.chipBusy ? Palette.STROKE_SOFT : 'rgba(78, 216, 255, 0.32)')
       })
       .opacity(this.chipLocked ? 0.55 : 1)
@@ -156,20 +158,22 @@ struct WriteChip {
 /** 次级操作 */
 @Component
 struct ActionChip {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop chipText: string = '';
-  @Prop chipColor: string = Palette.TEXT_SECONDARY;
+  /** 留空时按当前外观取默认值 */
+  @Prop chipColor: string = '';
   onTap: () => void = () => {
   };
 
   build() {
     Text(this.chipText)
       .fontSize(12)
-      .fontColor(this.chipColor)
+      .fontColor(this.chipColor.length > 0 ? this.chipColor : Palette.TEXT_SECONDARY)
       .layoutWeight(1)
       .height(34)
       .textAlign(TextAlign.Center)
       .borderRadius(11)
-      .backgroundColor('rgba(255, 255, 255, 0.05)')
+      .backgroundColor(Palette.FILL_FAINT)
       .onClick(() => {
         this.onTap();
       })

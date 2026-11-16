@@ -12,9 +12,11 @@ import { BtDevice, BtSnapshot, createEmptySnapshot } from '../models/DeviceModel
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
 import { DemoService } from './DemoService';
+import { NearLinkService, NearLinkSnapshot } from './NearLinkService';
 
 const MODULE: string = 'Bluetooth';
 const PERMISSION_BLUETOOTH: Permissions = 'ohos.permission.ACCESS_BLUETOOTH';
+const PERMISSION_NEARLINK: Permissions = 'ohos.permission.ACCESS_NEARLINK';
 /** 扫描自动停止时间 */
 const SCAN_TIMEOUT_MS: number = 15000;
 
@@ -32,6 +34,8 @@ export class BluetoothService {
   private static context?: common.UIAbilityContext;
   private static initialized: boolean = false;
   private static hiddenDevices: string[] = [];
+  /** 按地址缓存耳机自报型号：SPP 会话里查到一次后供界面与前置检查复用 */
+  private static modelCache: Map<string, string> = new Map<string, string>();
   // 未授权时订阅事件会抛 201，因此每个监听单独记录状态，授权后补注册
   private static listenedState: boolean = false;
   private static listenedFind: boolean = false;
@@ -45,6 +49,10 @@ export class BluetoothService {
     BluetoothService.context = context;
     BluetoothService.initialized = true;
     BluetoothService.registerListeners();
+    // 星闪开关变化也要刷新快照：星闪连着耳机时它才是连接状态的唯一来源
+    NearLinkService.init(context, (): void => {
+      BluetoothService.refresh();
+    });
   }
 
   private static registerListeners(): void {
@@ -111,6 +119,23 @@ export class BluetoothService {
     return BluetoothService.snapshot;
   }
 
+  /** 记录耳机自报型号：写入链路查到后供后续前置检查与日志复用 */
+  public static noteDeviceModel(deviceId: string, model: string): void {
+    if (deviceId.length === 0 || model.length === 0) {
+      return;
+    }
+    BluetoothService.modelCache.set(deviceId.toUpperCase(), model);
+  }
+
+  /** 读取缓存的耳机自报型号，未识别时为空串 */
+  public static deviceModelOf(deviceId: string): string {
+    if (deviceId.length === 0) {
+      return '';
+    }
+    const model: string | undefined = BluetoothService.modelCache.get(deviceId.toUpperCase());
+    return model !== undefined ? model : '';
+  }
+
   /** 演示模式下的模拟设备：状态卡、写入前置检查都读这里的一致性快照 */
   private static demoSnapshot(): BtSnapshot {
     const device: BtDevice = {
@@ -118,7 +143,8 @@ export class BluetoothService {
       name: '演示耳机 BoxTone',
       paired: true,
       audio: true,
-      connected: true
+      connected: true,
+      nearLink: false
     };
     const snapshot: BtSnapshot = {
       supported: true,
@@ -129,7 +155,11 @@ export class BluetoothService {
       scanning: false,
       activeName: device.name,
       activeId: device.deviceId,
-      statusText: '演示模式：模拟耳机已连接'
+      statusText: '演示模式：模拟耳机已连接',
+      nearLinkSupported: false,
+      nearLinkEnabled: false,
+      nearLinkName: '',
+      nearLinkBtId: ''
     };
     return snapshot;
   }
@@ -163,12 +193,22 @@ export class BluetoothService {
     if (BluetoothService.hasPermission()) {
       BluetoothService.snapshot.authorized = true;
       BluetoothService.registerListeners();
+      // 蓝牙早已授权时也必须补问星闪权限：否则星闪连接检测永远是"未授权"，
+      // 表现为耳机明明连着，应用却显示未连接
+      if (NearLinkService.isSupported() && !NearLinkService.hasPermission()) {
+        await NearLinkService.ensurePermission();
+      }
       return true;
     }
     try {
+      const permissions: Permissions[] = [PERMISSION_BLUETOOTH];
+      // 星闪是可选能力：仅在设备支持且未授权时一并申请，拒绝与否不影响蓝牙主流程
+      if (NearLinkService.isSupported() && !NearLinkService.hasPermission()) {
+        permissions.push(PERMISSION_NEARLINK);
+      }
       const manager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
       const result: PermissionRequestResult =
-        await manager.requestPermissionsFromUser(context, [PERMISSION_BLUETOOTH]);
+        await manager.requestPermissionsFromUser(context, permissions);
       const granted: boolean = result.authResults.length > 0 &&
         result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
       BluetoothService.snapshot.authorized = granted;
@@ -347,9 +387,48 @@ export class BluetoothService {
         snapshot.activeId = paired[activeIndex].deviceId;
       }
 
+      // 星闪补位：音频走星闪时 A2DP 不报告连接，用星闪配对表 + 连接状态还原真实情况。
+      // 名称匹配只用于把星闪设备对应回经典蓝牙地址（写入仍走经典 SPP），匹配不上就只展示状态
+      let viaNearLink: boolean = false;
+      try {
+        const near: NearLinkSnapshot = await NearLinkService.refresh();
+        snapshot.nearLinkSupported = near.supported;
+        snapshot.nearLinkEnabled = near.enabled;
+        snapshot.nearLinkName = near.connectedName;
+        if (near.connectedName.length > 0) {
+          const nameLower: string = near.connectedName.toLowerCase();
+          let matched: number = -1;
+          for (let i = 0; i < paired.length; i++) {
+            if (paired[i].audio && paired[i].name.toLowerCase() === nameLower) {
+              matched = i;
+              break;
+            }
+          }
+          if (matched >= 0) {
+            paired[matched].nearLink = true;
+            snapshot.nearLinkBtId = paired[matched].deviceId;
+            if (activeIndex < 0) {
+              paired[matched].connected = true;
+              snapshot.activeName = paired[matched].name;
+              snapshot.activeId = paired[matched].deviceId;
+              viaNearLink = true;
+            }
+          } else if (activeIndex < 0) {
+            snapshot.activeName = near.connectedName;
+            snapshot.activeId = '';
+            viaNearLink = true;
+          }
+        }
+      } catch (error) {
+        Logger.warn(MODULE, `融合星闪状态失败 code=${(error as BusinessError).code}`);
+      }
+
       snapshot.pairedDevices = paired;
       if (activeIndex >= 0) {
-        snapshot.statusText = '音频通道已连接';
+        snapshot.statusText = viaNearLink ? '星闪已连接' : '音频通道已连接';
+      } else if (viaNearLink) {
+        snapshot.statusText = snapshot.nearLinkBtId.length > 0 ?
+          '星闪已连接' : '星闪已连接（未配对经典蓝牙）';
       } else if (connectedIds.length > 0) {
         // 连上了但归不到配对列表里的地址（系统虚拟化地址）：仍要把名字显示出来，
         // 否则会出现「状态卡说未连接、却又标记已连接音频设备」的自相矛盾
@@ -432,7 +511,8 @@ export class BluetoothService {
       name: name,
       paired: paired,
       audio: isAudio,
-      connected: false
+      connected: false,
+      nearLink: false
     };
     return device;
   }

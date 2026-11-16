@@ -5,6 +5,7 @@ import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { Palette } from '../common/constants/ThemeConstants';
 import { AppEvent, EventBus, SimpleHandler, TextHandler } from '../common/utils/EventBus';
 import { Logger } from '../common/utils/Logger';
+import { AppBackdrop } from '../components/AppBackdrop';
 import { GhostButton } from '../components/GhostButton';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { BluetoothService } from '../services/BluetoothService';
@@ -15,13 +16,15 @@ import { TonePage } from './main/TonePage';
 import { FeedbackPage } from './settings/FeedbackPage';
 import { LogPage } from './settings/LogPage';
 import { ProfilePage } from './settings/ProfilePage';
+import { SupportedDevicesPage } from './settings/SupportedDevicesPage';
+import { ChangelogPage } from './settings/ChangelogPage';
 
 const MODULE: string = 'Index';
 
 /**
  * 主框架
  *
- * 底部导航使用 HarmonyOS 7（API 26）官方 HdsTabs 的沉浸光感悬浮底栏：
+ * 底部导航使用官方 HdsTabs 的沉浸光感悬浮底栏（HDS 6.1.0 / API 23 起提供）：
  * barOverlap(true) 让页签栏悬浮于内容之上，
  * 背景用 barBackgroundColor + barBackgroundEffect 自行指定深色玻璃，
  * 避免 systemMaterialEffect 的 ADAPTIVE 材质跟随系统浅色策略把胶囊刷白。
@@ -31,11 +34,14 @@ const MODULE: string = 'Index';
 @Entry
 @Component
 struct Index {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @State activeIndex: number = 0;
   @State topInset: number = 0;
   @State naviIndicatorHeight: number = 0;
   @State showLog: boolean = false;
   @State showFeedback: boolean = false;
+  @State showDeviceSupport: boolean = false;
+  @State showChangelog: boolean = false;
   @State feedbackStep: number = 0;
   @State busyText: string = '';
   @State demoActive: boolean = false;
@@ -43,6 +49,8 @@ struct Index {
   private tabsController: HdsTabsController = new HdsTabsController();
   private logHandler: SimpleHandler | undefined = undefined;
   private feedbackHandler: SimpleHandler | undefined = undefined;
+  private supportHandler: SimpleHandler | undefined = undefined;
+  private changelogHandler: SimpleHandler | undefined = undefined;
   private busyHandler: TextHandler | undefined = undefined;
   private privacyHandler: SimpleHandler | undefined = undefined;
 
@@ -59,6 +67,14 @@ struct Index {
       this.showFeedback = true;
     };
     EventBus.on(AppEvent.OPEN_FEEDBACK, this.feedbackHandler);
+    this.supportHandler = (): void => {
+      this.showDeviceSupport = true;
+    };
+    EventBus.on(AppEvent.OPEN_DEVICE_SUPPORT, this.supportHandler);
+    this.changelogHandler = (): void => {
+      this.showChangelog = true;
+    };
+    EventBus.on(AppEvent.OPEN_CHANGELOG, this.changelogHandler);
     this.busyHandler = (text: string): void => {
       this.busyText = text;
     };
@@ -80,6 +96,14 @@ struct Index {
       EventBus.off(AppEvent.OPEN_FEEDBACK);
       this.feedbackHandler = undefined;
     }
+    if (this.supportHandler !== undefined) {
+      EventBus.off(AppEvent.OPEN_DEVICE_SUPPORT);
+      this.supportHandler = undefined;
+    }
+    if (this.changelogHandler !== undefined) {
+      EventBus.off(AppEvent.OPEN_CHANGELOG);
+      this.changelogHandler = undefined;
+    }
     if (this.busyHandler !== undefined) {
       EventBus.off(AppEvent.BUSY_CHANGED);
       this.busyHandler = undefined;
@@ -100,6 +124,10 @@ struct Index {
     if (this.busyText.length > 0) {
       return true;
     }
+    if (this.showChangelog) {
+      this.showChangelog = false;
+      return true;
+    }
     if (this.showFeedback) {
       if (this.feedbackStep !== 0) {
         this.feedbackStep = 0;
@@ -110,6 +138,10 @@ struct Index {
     }
     if (this.showLog) {
       this.showLog = false;
+      return true;
+    }
+    if (this.showDeviceSupport) {
+      this.showDeviceSupport = false;
       return true;
     }
     return false;
@@ -135,7 +167,7 @@ struct Index {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      this.buildBackdrop()
+      AppBackdrop()
 
       Column() {
         HdsTabs({ controller: this.tabsController }) {
@@ -170,6 +202,10 @@ struct Index {
         })
         .onChange((index: number) => {
           this.activeIndex = index;
+          // 切回设备页时补拉一次：星闪连接变化没有系统回调
+          if (index === 0) {
+            BluetoothService.refresh();
+          }
         })
         .animationDuration(220)
         .onAttach(() => {
@@ -208,7 +244,9 @@ struct Index {
         })
           .width('100%')
           .height('100%')
-          .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut }))
+          .transition(TransitionEffect.move(TransitionEdge.END)
+            .combine(TransitionEffect.OPACITY)
+            .animation({ duration: 280, curve: Curve.Friction }))
       }
 
       if (this.showFeedback) {
@@ -221,7 +259,37 @@ struct Index {
         })
           .width('100%')
           .height('100%')
-          .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut }))
+          .transition(TransitionEffect.move(TransitionEdge.END)
+            .combine(TransitionEffect.OPACITY)
+            .animation({ duration: 280, curve: Curve.Friction }))
+      }
+
+      if (this.showDeviceSupport) {
+        SupportedDevicesPage({
+          topInset: this.topInset,
+          onClose: (): void => {
+            this.showDeviceSupport = false;
+          }
+        })
+          .width('100%')
+          .height('100%')
+          .transition(TransitionEffect.move(TransitionEdge.END)
+            .combine(TransitionEffect.OPACITY)
+            .animation({ duration: 280, curve: Curve.Friction }))
+      }
+
+      if (this.showChangelog) {
+        ChangelogPage({
+          topInset: this.topInset,
+          onClose: (): void => {
+            this.showChangelog = false;
+          }
+        })
+          .width('100%')
+          .height('100%')
+          .transition(TransitionEffect.move(TransitionEdge.END)
+            .combine(TransitionEffect.OPACITY)
+            .animation({ duration: 280, curve: Curve.Friction }))
       }
 
       // 全屏遮罩放在所有页面与浮层之后，才能连状态栏一起压暗；
@@ -376,55 +444,13 @@ struct Index {
       .width('100%')
       .padding({ left: 20, right: 20, top: 20, bottom: 28 })
       .borderRadius({ topLeft: 24, topRight: 24 })
-      .backgroundColor('#0B1220')
+      .backgroundColor(Palette.BG_END)
       .border({ width: 1, color: Palette.STROKE })
     }
     .width('100%')
     .height('100%')
   }
 
-  /** 底色 + 三处径向光斑，为悬浮底栏提供可折射的内容层次（用径向渐变而非模糊圆，避免出现矩形硬边） */
-  @Builder
-  buildBackdrop() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .linearGradient({
-          angle: 165,
-          colors: [[Palette.BG_TOP, 0.0], [Palette.BG_BOTTOM, 0.62], ['#0A1120', 1.0]]
-        })
-
-      Column()
-        .width('100%')
-        .height('100%')
-        .radialGradient({
-          center: ['10%', '4%'],
-          radius: 360,
-          colors: [['rgba(78, 216, 255, 0.22)', 0.0], ['rgba(78, 216, 255, 0.0)', 1.0]]
-        })
-
-      Column()
-        .width('100%')
-        .height('100%')
-        .radialGradient({
-          center: ['88%', '16%'],
-          radius: 320,
-          colors: [['rgba(155, 123, 255, 0.18)', 0.0], ['rgba(155, 123, 255, 0.0)', 1.0]]
-        })
-
-      Column()
-        .width('100%')
-        .height('100%')
-        .radialGradient({
-          center: ['4%', '74%'],
-          radius: 380,
-          colors: [['rgba(31, 168, 216, 0.16)', 0.0], ['rgba(31, 168, 216, 0.0)', 1.0]]
-        })
-    }
-    .width('100%')
-    .height('100%')
-  }
 
   @Builder
   tabItem(index: number, tabLabel: string, tabIcon: Resource) {

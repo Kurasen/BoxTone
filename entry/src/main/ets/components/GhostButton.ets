@@ -3,6 +3,7 @@ import { Palette } from '../common/constants/ThemeConstants';
 /** 次级按钮：描边 + 透明底 */
 @Component
 export struct GhostButton {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop ghostLabel: string = '';
   @Prop ghostEnabled: boolean = true;
   ghostIcon: Resource | undefined = undefined;
@@ -25,7 +26,7 @@ export struct GhostButton {
     .height(46)
     .justifyContent(FlexAlign.Center)
     .borderRadius(15)
-    .backgroundColor('rgba(255, 255, 255, 0.05)')
+    .backgroundColor(Palette.FILL_FAINT)
     .border({ width: 1, color: Palette.STROKE })
     .enabled(this.ghostEnabled)
     .onClick(() => {

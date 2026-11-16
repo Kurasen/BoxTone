@@ -6,11 +6,13 @@ import { Metric, Palette } from '../common/constants/ThemeConstants';
  */
 @Component
 export struct GlassCard {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @BuilderParam content: () => void = this.emptyBuilder;
   @Prop cardRadius: number = Metric.CARD_RADIUS;
   @Prop cardPadding: number = Metric.CARD_PADDING;
-  @Prop cardBg: string = Palette.BG_CARD;
-  @Prop cardStroke: string = Palette.STROKE_SOFT;
+  /** 留空时按当前外观取默认值：字段默认值只在构造时求值，切换外观不会刷新 */
+  @Prop cardBg: string = '';
+  @Prop cardStroke: string = '';
 
   @Builder
   emptyBuilder() {
@@ -24,7 +26,7 @@ export struct GlassCard {
     .alignItems(HorizontalAlign.Start)
     .padding(this.cardPadding)
     .borderRadius(this.cardRadius)
-    .backgroundColor(this.cardBg)
-    .border({ width: 1, color: this.cardStroke })
+    .backgroundColor(this.cardBg.length > 0 ? this.cardBg : Palette.BG_CARD)
+    .border({ width: 1, color: this.cardStroke.length > 0 ? this.cardStroke : Palette.STROKE_SOFT })
   }
 }

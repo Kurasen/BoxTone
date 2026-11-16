@@ -5,6 +5,7 @@ import { BtDevice, createEmptyDevice } from '../models/DeviceModel';
 /** 蓝牙设备行 */
 @Component
 export struct DeviceRow {
+  @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop device: BtDevice = createEmptyDevice();
   @Prop actionLabel: string = '';
   @Prop showAction: boolean = true;
@@ -17,7 +18,7 @@ export struct DeviceRow {
         Circle()
           .width(38)
           .height(38)
-          .fill(this.device.audio ? Palette.ACCENT_SOFT : 'rgba(255, 255, 255, 0.05)')
+          .fill(this.device.audio ? Palette.ACCENT_SOFT : Palette.FILL_FAINT)
         Image($r('app.media.ic_tab_device'))
           .width(18)
           .height(18)
@@ -66,6 +67,9 @@ export struct DeviceRow {
 
   private subtitle(): string {
     const address: string = FormatUtils.maskAddress(this.device.deviceId);
+    if (this.device.nearLink && this.device.connected) {
+      return `星闪连接 · ${address}`;
+    }
     if (this.device.connected) {
       return `已连接 · ${address}`;
     }
