@@ -6,23 +6,49 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * release 签名密码不写进 build-profile.json5。
+ * 签名密码不写进 build-profile.json5。
  *
- * hvigor 只接受 DevEco 用本机密钥材料加密后的密码串（明文会报
- * "Invalid initialization vector"），所以这里做同样的事：
- * 读 signing/keystore-password.txt，用 signing/material 里的密钥材料
- * 按 AES-128-GCM 加密，再把密文注入内存中的构建配置。
+ * hvigor 只接受用本机密钥材料加密后的密码串（明文会报
+ * "Invalid initialization vector"，空串则报 00303116 长度不足），
+ * 所以这里做同样的事：读本地密码文件，用对应 material 按 AES-128-GCM
+ * 加密后注入内存中的构建配置，仓库里只留空字段。
  *
- * 算法对齐 hvigor-ohos-plugin/src/utils/decipher-util.js。
+ * 算法与 material 位置对齐 hvigor-ohos-plugin/src/utils/decipher-util.js：
+ * 解密用的 material 固定取 storeFile 同级的 material/ 目录。
  */
-const PASSWORD_FILE: string = 'signing/keystore-password.txt';
-const MATERIAL_DIR: string = 'signing/material';
+interface SignProfile {
+  /** build-profile.json5 里的 signingConfigs[].name */
+  configName: string;
+  /** 明文密码文件，相对工程根目录；同名 .enc 则视为已加密密文 */
+  passwordFile: string;
+}
+
+interface LoadedPassword {
+  value: string;
+  /** true 表示读到的已是 hvigor 可解密的密文，直接注入即可 */
+  encrypted: boolean;
+}
+
+const RELEASE_PROFILE: SignProfile = {
+  configName: 'release',
+  passwordFile: 'signing/keystore-password.txt'
+};
+const DEBUG_PROFILE: SignProfile = {
+  configName: 'debug',
+  passwordFile: 'signing/debug-password.txt'
+};
+
 /** hvigor 解密时异或用的固定组件 */
 const COMPONENT: number[] = [49, 243, 9, 115, 214, 175, 91, 184, 211, 190, 177, 88, 101, 131, 192, 119];
 
 interface SigningMaterial {
+  storeFile: string;
   storePassword: string;
   keyPassword: string;
+  keyAlias: string;
+  signAlg: string;
+  profile: string;
+  certpath: string;
   [key: string]: string;
 }
 
@@ -81,13 +107,12 @@ function aesGcmDecrypt(key: Buffer, payload: Buffer): Buffer {
   ]);
 }
 
-/** 由 signing/material 推导出加密用的工作密钥 */
-function loadWorkKey(projectPath: string): Buffer {
-  const base: string = path.resolve(projectPath, MATERIAL_DIR);
+/** 由 material 目录推导出加密用的工作密钥 */
+function loadWorkKey(materialDir: string): Buffer {
   const fdParts: Buffer[] = ['0', '1', '2'].map((name: string) =>
-    readSingleFile(path.join(base, 'fd', name)));
-  const salt: Buffer = readSingleFile(path.join(base, 'ac'));
-  const workMaterial: Buffer = readSingleFile(path.join(base, 'ce'));
+    readSingleFile(path.join(materialDir, 'fd', name)));
+  const salt: Buffer = readSingleFile(path.join(materialDir, 'ac'));
+  const workMaterial: Buffer = readSingleFile(path.join(materialDir, 'ce'));
   const rootKey: Buffer = crypto.pbkdf2Sync(
     xorAll([...fdParts, Buffer.from(COMPONENT)]).toString(), salt, 10000, 16, 'sha256');
   return aesGcmDecrypt(rootKey, workMaterial);
@@ -103,80 +128,103 @@ function encryptPassword(workKey: Buffer, plain: string): string {
   return Buffer.concat([header, iv, body, tag]).toString('hex');
 }
 
-function readPassword(projectPath: string): string | undefined {
-  const file: string = path.resolve(projectPath, PASSWORD_FILE);
-  if (!fs.existsSync(file)) {
-    return undefined;
+function readPassword(file: string): LoadedPassword | undefined {
+  if (fs.existsSync(file)) {
+    const password: string = fs.readFileSync(file, 'utf8').split(/\r?\n/)[0].trim();
+    if (password.length > 0) {
+      return { value: password, encrypted: false };
+    }
   }
-  const password: string = fs.readFileSync(file, 'utf8').split(/\r?\n/)[0].trim();
-  return password.length > 0 ? password : undefined;
+  // 备用通道：DevEco 生成的密文原样注入，不需要知道明文
+  const encoded: string = file.replace(/\.txt$/, '.enc');
+  if (encoded !== file && fs.existsSync(encoded)) {
+    const cipher: string = fs.readFileSync(encoded, 'utf8').split(/\r?\n/)[0].trim();
+    if (cipher.length > 0) {
+      return { value: cipher, encrypted: true };
+    }
+  }
+  return undefined;
 }
 
-function releaseSigningPlugin(): HvigorPlugin {
+function selectProfile(buildMode: string): SignProfile {
+  return buildMode === 'release' ? RELEASE_PROFILE : DEBUG_PROFILE;
+}
+
+function signingPlugin(): HvigorPlugin {
   return {
-    pluginId: 'boxtoneReleaseSigning',
+    pluginId: 'boxtoneSigning',
     apply(node: HvigorNode): void {
       const context: OhosAppContext | undefined =
         node.getContext(OhosPluginId.OHOS_APP_PLUGIN) as OhosAppContext | undefined;
       if (context === undefined) {
         return;
       }
-      let buildMode: string;
+
+      let buildMode: string = 'debug';
       try {
         buildMode = context.getBuildMode();
       } catch (error) {
-        console.warn('[signing] 无法读取 buildMode，跳过签名密码注入');
-        return;
-      }
-      if (buildMode !== 'release') {
-        return;
+        console.warn('[signing] 无法读取 buildMode，按 debug 处理');
       }
 
+      const target: SignProfile = selectProfile(buildMode);
       const projectPath: string = context.getProjectPath();
-      const password: string | undefined = readPassword(projectPath);
+      const passwordFile: string = path.resolve(projectPath, target.passwordFile);
+      const password: LoadedPassword | undefined = readPassword(passwordFile);
       if (password === undefined) {
-        console.warn(`[signing] 未找到 ${PASSWORD_FILE} 或内容为空，release 构建会因签名失败而中止`);
-        return;
-      }
-      if (!fs.existsSync(path.resolve(projectPath, MATERIAL_DIR))) {
-        console.warn('[signing] 缺少 signing/material（DevEco 加密密码用的本机密钥材料），' +
-          '请在 DevEco 签名配置里应用一次以生成');
+        console.warn(`[signing] 未找到 ${target.passwordFile}（或其 .enc 密文），${buildMode} 构建会因签名失败而中止`);
         return;
       }
 
       const profile: BuildProfile = context.getBuildProfileOpt() as BuildProfile;
       const signingConfigs: SigningConfig[] = profile.app.signingConfigs ?? [];
-      const release: SigningConfig | undefined =
-        signingConfigs.find((item: SigningConfig) => item.name === 'release');
-      if (release === undefined) {
-        console.warn('[signing] build-profile.json5 里没有名为 release 的签名配置');
+      const config: SigningConfig | undefined =
+        signingConfigs.find((item: SigningConfig) => item.name === target.configName);
+      if (config === undefined) {
+        console.warn(`[signing] build-profile.json5 里没有名为 ${target.configName} 的签名配置`);
         return;
       }
 
-      const missing: string[] = [release.material.storeFile, release.material.profile, release.material.certpath]
-        .filter((file: string) => !fs.existsSync(path.resolve(projectPath, file)));
-      if (missing.length > 0) {
-        console.warn(`[signing] 缺少签名材料：${missing.join('、')}`);
+      // hvigor 的解密 material 固定取 storeFile 同级的 material/ 目录
+      const materialDir: string =
+        path.resolve(projectPath, path.dirname(config.material.storeFile), 'material');
+      if (!fs.existsSync(materialDir)) {
+        console.warn(`[signing] 缺少密钥材料目录 ${path.relative(projectPath, materialDir)}，` +
+          '请在 DevEco 的签名配置里应用一次以生成');
+        return;
       }
 
-      const encrypted: string = encryptPassword(loadWorkKey(projectPath), password);
-      release.material.storePassword = encrypted;
-      release.material.keyPassword = encrypted;
+      const missing: string[] = [config.material.storeFile, config.material.profile, config.material.certpath]
+        .filter((file: string) => !fs.existsSync(path.resolve(projectPath, file)));
+      if (missing.length > 0) {
+        console.warn(`[signing] 缺少签名文件：${missing.join('、')}`);
+      }
+
+      try {
+        const encrypted: string = password.encrypted
+          ? password.value
+          : encryptPassword(loadWorkKey(materialDir), password.value);
+        config.material.storePassword = encrypted;
+        config.material.keyPassword = encrypted;
+      } catch (error) {
+        console.warn(`[signing] 密码加密失败（material 与密钥库可能不匹配）：${(error as Error).message}`);
+        return;
+      }
 
       const productName: string = context.getCurrentProduct().getProductName();
       const product: ProductConfig | undefined = (profile.app.products ?? [])
         .find((item: ProductConfig) => item.name === productName);
       if (product !== undefined) {
-        product.signingConfig = 'release';
+        product.signingConfig = target.configName;
       }
 
       context.setBuildProfileOpt(profile);
-      console.log('[signing] 已用本地密钥材料加密 release 签名密码');
+      console.log(`[signing] ${buildMode} 构建使用 ${target.configName} 签名，密码已用本地材料加密注入`);
     }
   };
 }
 
 export default {
   system: appTasks,
-  plugins: [releaseSigningPlugin()]
+  plugins: [signingPlugin()]
 }

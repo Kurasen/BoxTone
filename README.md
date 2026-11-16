@@ -219,7 +219,14 @@ HarmonyOS SDK 分发（需登录华为账号并同意协议），OpenHarmony 开
 
 - `.env`、`signing/`、`.pem`、`.p12`、`.jks`、`.keystore` 等本地文件和目录不会进入 Git。
 - `server/.env.example` 只保留占位值；真实 SMTP 授权码和反馈 Token 放在本地 `server/.env` 或服务器环境变量中。
-- `build-profile.json5` 不保存签名密码；release 构建由 `hvigorfile.ts` 从本地 `signing/keystore-password.txt` 读取并注入。
+- `build-profile.json5` 不保存签名密码，两套签名配置的密码字段都为空，由 `hvigorfile.ts` 在构建时注入：
+  - debug：`signing/debug-password.txt`（备用通道 `signing/debug-password.enc`，可直接放 DevEco 生成的密文）
+  - release：`signing/keystore-password.txt`
+- 签名材料全部在本地 `signing/` 下，路径相对工程根目录，不含机器绝对路径：
+  - `signing/debug/`：`boxtone-debug.p12`、`boxtone-debug_cer.cer`、`boxtone_profileDebug.p7b`、`material/`
+  - `signing/`：`boxtone-release.p12`、`boxtone-release_cer.cer`、`boxtone_profileRelease.p7b`、`material/`
+- **material 必须与 `.p12` 同级**：hvigor 解密密码时固定取 `storeFile` 同目录下的 `material/`（见 `hvigor-ohos-plugin/src/utils/decipher-util.js`），所以调试与发布的材料不能混用。
+- 若在 DevEco 里重新生成过调试签名，密钥库密码会变，需把新密码补回 `signing/debug-password.txt`；否则签名密码为空，构建报 `00303116`（长度小于 32）。
 - 启用本地 pre-commit 检查：
 
 ```bash
