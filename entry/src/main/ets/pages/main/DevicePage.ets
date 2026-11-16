@@ -1,4 +1,5 @@
 import { BusinessError } from '@kit.BasicServicesKit';
+import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { Logger } from '../../common/utils/Logger';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
@@ -134,15 +135,15 @@ export struct DevicePage {
     if (!DemoService.isActive()) {
       return false;
     }
-    this.toast('演示模式不操作真实蓝牙');
+    this.toast(I18n.t('device.demoGuard'));
     return true;
   }
 
   private statusActionLabel(): string {
     if (DemoService.isActive()) {
-      return '演示模式（不操作真实蓝牙）';
+      return I18n.t('device.demoStatus');
     }
-    return this.snapshot.enabled ? '打开系统蓝牙设置' : '开启蓝牙';
+    return this.snapshot.enabled ? I18n.t('device.openSettings') : I18n.t('device.enableBt');
   }
 
   private async requestPermission(): Promise<void> {
@@ -152,9 +153,9 @@ export struct DevicePage {
     const granted: boolean = await BluetoothService.ensurePermission();
     if (granted) {
       await this.load();
-      this.toast('蓝牙权限已开启');
+      this.toast(I18n.t('device.permGranted'));
     } else {
-      this.toast('未授予蓝牙权限，无法搜索耳机');
+      this.toast(I18n.t('device.permDenied'));
     }
   }
 
@@ -165,7 +166,7 @@ export struct DevicePage {
     try {
       await BluetoothService.openSystemBluetoothSettings();
     } catch (error) {
-      this.toast('无法打开系统蓝牙设置');
+      this.toast(I18n.t('device.openSettingsFailed'));
     }
   }
 
@@ -176,7 +177,7 @@ export struct DevicePage {
     try {
       await BluetoothService.requestEnable();
     } catch (error) {
-      this.toast('请手动在系统设置中开启蓝牙');
+      this.toast(I18n.t('device.enableManual'));
     }
   }
 
@@ -187,9 +188,9 @@ export struct DevicePage {
     this.busy = true;
     try {
       await BluetoothService.connect(device.deviceId);
-      this.toast(`正在连接 ${device.name}`);
+      this.toast(I18n.f('device.connecting', [device.name]));
     } catch (error) {
-      this.toast('连接失败，请在系统蓝牙设置中操作');
+      this.toast(I18n.t('device.connectFailed'));
     } finally {
       this.busy = false;
     }
@@ -202,9 +203,9 @@ export struct DevicePage {
     this.busy = true;
     try {
       await BluetoothService.disconnect(device.deviceId);
-      this.toast(`已断开 ${device.name}`);
+      this.toast(I18n.f('device.disconnected', [device.name]));
     } catch (error) {
-      this.toast('断开失败，请在系统蓝牙设置中操作');
+      this.toast(I18n.t('device.disconnectFailed'));
     } finally {
       this.busy = false;
     }
@@ -217,9 +218,9 @@ export struct DevicePage {
     this.busy = true;
     try {
       await BluetoothService.pair(device.deviceId);
-      this.toast(`正在配对 ${device.name}`);
+      this.toast(I18n.f('device.pairing', [device.name]));
     } catch (error) {
-      this.toast('配对失败，请在系统设置中操作');
+      this.toast(I18n.t('device.pairFailed'));
     } finally {
       this.busy = false;
     }
@@ -282,11 +283,11 @@ export struct DevicePage {
   @Builder
   buildHeader() {
     Column({ space: 6 }) {
-      Text('设备')
+      Text(I18n.t('device.title'))
         .fontSize(Metric.TITLE_SIZE)
         .fontWeight(FontWeight.Bold)
         .fontColor(Palette.TEXT_PRIMARY)
-      Text('连接你的华为耳机，准备写入开盖音效')
+      Text(I18n.t('device.subtitle'))
         .fontSize(12)
         .fontColor(Palette.TEXT_SECONDARY)
     }
@@ -311,7 +312,7 @@ export struct DevicePage {
         }
 
         Column({ space: 7 }) {
-          Text(this.snapshot.activeName.length > 0 ? this.snapshot.activeName : '未连接耳机')
+          Text(this.snapshot.activeName.length > 0 ? this.snapshot.activeName : I18n.t('device.notConnected'))
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor(Palette.TEXT_PRIMARY)
@@ -334,18 +335,22 @@ export struct DevicePage {
 
       Row() {
         MetricCell({
-          cellLabel: '音频通道',
-          cellValue: this.snapshot.nearLinkName.length > 0 ? '星闪' :
-            (this.snapshot.activeName.length > 0 ? '已连接' : '未连接'),
+          cellLabel: I18n.t('device.channel'),
+          cellValue: this.snapshot.nearLinkName.length > 0 ? I18n.t('device.nearLink') :
+            (this.snapshot.activeName.length > 0 ? I18n.t('device.connected') : I18n.t('device.disconnectedShort')),
           cellColor: this.snapshot.nearLinkName.length > 0 ? Palette.ACCENT :
             (this.snapshot.activeName.length > 0 ? Palette.SUCCESS : Palette.TEXT_SECONDARY)
         })
         MetricCell({
-          cellLabel: '已配对',
-          cellValue: `${this.snapshot.pairedDevices.length} 台`,
+          cellLabel: I18n.t('device.paired'),
+          cellValue: I18n.f('device.pairedCount', [`${this.snapshot.pairedDevices.length}`]),
           cellColor: Palette.TEXT_PRIMARY
         })
-        MetricCell({ cellLabel: '写入方式', cellValue: '文件替换', cellColor: Palette.TEXT_PRIMARY })
+        MetricCell({
+          cellLabel: I18n.t('device.writeMode'),
+          cellValue: I18n.t('device.btDirect'),
+          cellColor: Palette.TEXT_PRIMARY
+        })
       }
       .width('100%')
 
@@ -372,11 +377,11 @@ export struct DevicePage {
           .height(18)
           .fillColor(Palette.WARNING)
         Column({ space: 4 }) {
-          Text('需要蓝牙权限')
+          Text(I18n.t('device.needPermission'))
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor(Palette.TEXT_PRIMARY)
-          Text('用于搜索、配对耳机并读取连接状态，仅在本机使用')
+          Text(I18n.t('device.permissionDesc'))
             .fontSize(11)
             .fontColor(Palette.TEXT_SECONDARY)
         }
@@ -385,7 +390,7 @@ export struct DevicePage {
       }
       .width('100%')
 
-      Text('去授权')
+      Text(I18n.t('device.grant'))
         .fontSize(13)
         .fontColor('#10151F')
         .fontWeight(FontWeight.Medium)
@@ -404,15 +409,16 @@ export struct DevicePage {
   @Builder
   buildPairedSection() {
     SectionTitle({
-      sectionText: '已配对设备',
-      sectionHint: this.snapshot.scanning ? '正在扫描…' : `${this.snapshot.pairedDevices.length} 台`
+      sectionText: I18n.t('device.pairedDevices'),
+      sectionHint: this.snapshot.scanning ? I18n.t('device.scanning') :
+        I18n.f('device.pairedCount', [`${this.snapshot.pairedDevices.length}`])
     })
 
     GlassCard({ cardPadding: 8 }) {
       if (this.snapshot.pairedDevices.length === 0) {
         EmptyView({
-          emptyTitle: '还没有配对设备',
-          emptyDesc: '打开充电盒盖，在系统蓝牙设置中完成首次配对后回到这里'
+          emptyTitle: I18n.t('device.noPaired'),
+          emptyDesc: I18n.t('device.noPairedDesc')
         })
       } else {
         ForEach(this.snapshot.pairedDevices, (device: BtDevice, index: number) => {
@@ -420,7 +426,8 @@ export struct DevicePage {
             DeviceRow({
               // 连接状态只认快照里的 activeId，避免行数据自身残留旧值
               device: this.rowDevice(device),
-              actionLabel: this.busy ? '处理中' : (this.isConnected(device) ? '断开' : '去连接'),
+              actionLabel: this.busy ? I18n.t('device.busy') :
+                (this.isConnected(device) ? I18n.t('device.disconnect') : I18n.t('device.connect')),
               onAction: (): void => {
                 if (this.isConnected(device)) {
                   this.disconnectDevice(device);
@@ -445,12 +452,12 @@ export struct DevicePage {
   @Builder
   buildNearbySection() {
     Row() {
-      Text('附近设备')
+      Text(I18n.t('device.nearby'))
         .fontSize(Metric.SECTION_SIZE)
         .fontWeight(FontWeight.Medium)
         .fontColor(Palette.TEXT_PRIMARY)
         .layoutWeight(1)
-      Text(this.snapshot.scanning ? '停止' : '扫描')
+      Text(this.snapshot.scanning ? I18n.t('device.stopScan') : I18n.t('device.scan'))
         .fontSize(12)
         .fontColor(this.snapshot.scanning ? Palette.DANGER : Palette.ACCENT)
         .padding({ left: 12, right: 12, top: 5, bottom: 5 })
@@ -474,15 +481,15 @@ export struct DevicePage {
       if (this.snapshot.nearbyDevices.length === 0) {
         EmptyView({
           emptyIcon: $r('app.media.ic_add'),
-          emptyTitle: this.snapshot.scanning ? '正在搜索附近设备…' : '尚未扫描',
-          emptyDesc: this.snapshot.scanning ? '请保持充电盒开盖并靠近手机' : '点击右上角「扫描」发现附近设备'
+          emptyTitle: this.snapshot.scanning ? I18n.t('device.searching') : I18n.t('device.notScanned'),
+          emptyDesc: this.snapshot.scanning ? I18n.t('device.keepLidOpen') : I18n.t('device.tapScan')
         })
       } else {
         ForEach(this.snapshot.nearbyDevices, (device: BtDevice, index: number) => {
           Column() {
             DeviceRow({
               device: device,
-              actionLabel: this.busy ? '处理中' : '配对',
+              actionLabel: this.busy ? I18n.t('device.busy') : I18n.t('device.pair'),
               showAction: !device.paired,
               onAction: (): void => {
                 this.pairDevice(device);
@@ -502,12 +509,12 @@ export struct DevicePage {
 
   @Builder
   buildGuideCard() {
-    SectionTitle({ sectionText: '写入流程' })
+    SectionTitle({ sectionText: I18n.t('device.flow') })
 
     GlassCard({ cardPadding: 16 }) {
-      this.stepItem('1', '连接与配对', '在本页完成配对，配对成功后会自动连接音频通道')
-      this.stepItem('2', '制作音效', '在「音效」页导入素材或使用内置音色，按 16700Hz 规格生成')
-      this.stepItem('3', '写入充电盒', '双耳放入盒内、打开盒盖，在「音效库」点写入即可直接下发')
+      this.stepItem('1', I18n.t('device.step1Title'), I18n.t('device.step1Desc'))
+      this.stepItem('2', I18n.t('device.step2Title'), I18n.t('device.step2Desc'))
+      this.stepItem('3', I18n.t('device.step3Title'), I18n.t('device.step3Desc'))
     }
   }
 

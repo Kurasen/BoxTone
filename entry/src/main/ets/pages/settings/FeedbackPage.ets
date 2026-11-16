@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { I18n } from '../../common/i18n/I18n';
 import { SupportInfo } from '../../common/constants/AppConstants';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DateUtils } from '../../common/utils/DateUtils';
@@ -42,6 +43,12 @@ export struct FeedbackPage {
     this.records = FeedbackService.list();
   }
 
+  aboutToDisappear(): void {
+    // 页面销毁时把未提交的截图副本一起清掉，避免长期占着 cacheDir
+    FeedbackService.discardImages(this.imagePaths);
+    this.imagePaths = [];
+  }
+
   private toast(message: string): void {
     this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 });
   }
@@ -51,7 +58,7 @@ export struct FeedbackPage {
       this.getUIContext().getHostContext() as common.UIAbilityContext;
     PrivacyLinkService.open(context).then((opened: boolean) => {
       if (!opened) {
-        this.toast('隐私政策链接暂不可用，请稍后重试');
+        this.toast(I18n.t('profile.privacyUnavailable'));
       }
     });
   }
@@ -62,24 +69,24 @@ export struct FeedbackPage {
 
   private headerTitle(): string {
     if (this.step === 1) {
-      return '提交反馈';
+      return I18n.t('fb.submitTitle');
     }
     if (this.step === 2) {
-      return '我的反馈';
+      return I18n.t('fb.mineTitle');
     }
-    return '反馈与建议';
+    return I18n.t('fb.title');
   }
 
   private headerSub(): string {
     if (this.step === 1) {
-      return '自动附带限制大小的诊断日志';
+      return I18n.t('fb.submitSub');
     }
     if (this.step === 2) {
-      return '本机提交记录与发送状态';
+      return I18n.t('fb.mineSub');
     }
     return SupportInfo.FEEDBACK_ONLINE_ENABLED
-      ? '遇到问题，或有想改进的地方？直接告诉我'
-      : '在线反馈暂未开放，可通过邮箱联系';
+      ? I18n.t('fb.hubSubOnline')
+      : I18n.t('fb.hubSubOffline');
   }
 
   private async copyEmail(): Promise<void> {
@@ -87,16 +94,16 @@ export struct FeedbackPage {
       const data: pasteboard.PasteData =
         pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, SupportInfo.EMAIL);
       await pasteboard.getSystemPasteboard().setData(data);
-      this.toast('邮箱已复制');
+      this.toast(I18n.t('fb.emailCopied'));
     } catch (error) {
       Logger.exception(MODULE, '复制邮箱失败', error as BusinessError);
-      this.toast('复制失败');
+      this.toast(I18n.t('common.copyFailed'));
     }
   }
 
   private async pickImages(): Promise<void> {
     if (this.imagePaths.length >= MAX_IMAGES) {
-      this.toast(`最多添加 ${MAX_IMAGES} 张截图`);
+      this.toast(I18n.f('fb.maxImages', [`${MAX_IMAGES}`]));
       return;
     }
     try {
@@ -108,7 +115,7 @@ export struct FeedbackPage {
       this.copyImages(result.photoUris);
     } catch (error) {
       Logger.exception(MODULE, '选择截图失败', error as BusinessError);
-      this.toast('选择截图失败');
+      this.toast(I18n.t('fb.pickFailed'));
     }
   }
 
@@ -127,7 +134,7 @@ export struct FeedbackPage {
         try {
           const size: number = fs.statSync(source.fd).size;
           if (size > IMAGE_MAX_BYTES) {
-            this.toast('有截图超过 4MB，已跳过');
+            this.toast(I18n.t('fb.imageTooLarge'));
             continue;
           }
           const buffer: ArrayBuffer = new ArrayBuffer(size);
@@ -145,7 +152,7 @@ export struct FeedbackPage {
         next.push(path);
       } catch (error) {
         Logger.exception(MODULE, '复制截图失败', error as BusinessError);
-        this.toast('添加截图失败');
+        this.toast(I18n.t('fb.addImageFailed'));
       }
     }
     this.imagePaths = next;
@@ -158,10 +165,14 @@ export struct FeedbackPage {
         next.push(this.imagePaths[i]);
       }
     }
+    if (index >= 0 && index < this.imagePaths.length) {
+      FeedbackService.discardImages([this.imagePaths[index]]);
+    }
     this.imagePaths = next;
   }
 
   private resetForm(): void {
+    FeedbackService.discardImages(this.imagePaths);
     this.typeIndex = 0;
     this.description = '';
     this.contact = '';
@@ -174,14 +185,14 @@ export struct FeedbackPage {
     }
     const text: string = this.description.trim();
     if (text.length === 0) {
-      this.toast('请先描述遇到的问题或建议');
+      this.toast(I18n.t('fb.describeFirst'));
       return;
     }
     this.sending = true;
-    EventBus.emitText(AppEvent.BUSY_CHANGED, '正在发送反馈…');
+    EventBus.emitText(AppEvent.BUSY_CHANGED, I18n.t('fb.sending'));
     try {
       const draft: FeedbackDraft = {
-        typeLabel: FEEDBACK_TYPES[this.typeIndex].label,
+        typeLabel: I18n.t(FEEDBACK_TYPES[this.typeIndex].labelKey),
         description: text,
         contact: this.contact.trim(),
         imagePaths: this.imagePaths
@@ -192,20 +203,20 @@ export struct FeedbackPage {
         this.records = FeedbackService.list();
         this.step = 2;
         this.getUIContext().showAlertDialog({
-          title: '反馈已提交',
+          title: I18n.t('fb.submitted'),
           message: outcome.message,
           confirm: {
-            value: '知道了',
+            value: I18n.t('common.ok'),
             action: (): void => {
             }
           }
         });
       } else {
         this.getUIContext().showAlertDialog({
-          title: '提交失败',
+          title: I18n.t('fb.submitFailed'),
           message: outcome.message,
           confirm: {
-            value: '知道了',
+            value: I18n.t('common.ok'),
             action: (): void => {
             }
           }
@@ -282,8 +293,8 @@ export struct FeedbackPage {
       if (SupportInfo.FEEDBACK_ONLINE_ENABLED) {
         GlassCard({ cardPadding: 4 }) {
           FeedbackEntryRow({
-            rowTitle: '提交反馈',
-            rowDesc: '无需登录，可附截图与诊断日志',
+            rowTitle: I18n.t('fb.entrySubmit'),
+            rowDesc: I18n.t('fb.entrySubmitDesc'),
             rowIcon: $r('app.media.ic_feedback'),
             onTap: (): void => {
               this.step = 1;
@@ -293,8 +304,8 @@ export struct FeedbackPage {
             .color(Palette.FILL_FAINT)
             .margin({ left: 16, right: 16 })
           FeedbackEntryRow({
-            rowTitle: '我的反馈',
-            rowDesc: '查看本机提交记录和发送状态',
+            rowTitle: I18n.t('fb.entryMine'),
+            rowDesc: I18n.t('fb.entryMineDesc'),
             rowIcon: $r('app.media.ic_clock'),
             onTap: (): void => {
               this.records = FeedbackService.list();
@@ -308,7 +319,7 @@ export struct FeedbackPage {
             .width(12)
             .height(12)
             .fillColor(Palette.TEXT_TERTIARY)
-          Text('反馈会附带当前机型的诊断日志（txt，≤512KB），请先确认内容不含隐私信息。')
+          Text(I18n.t('fb.logNotice'))
             .fontSize(10)
             .fontColor(Palette.TEXT_TERTIARY)
             .lineHeight(16)
@@ -325,15 +336,14 @@ export struct FeedbackPage {
                 .width(16)
                 .height(16)
                 .fillColor(Palette.WARNING)
-              Text('在线反馈暂未开放')
+              Text(I18n.t('fb.offlineTitle'))
                 .fontSize(14)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(Palette.TEXT_PRIMARY)
             }
             .width('100%')
 
-            Text('在线反馈会在完成联网备案后开放。现在可以直接发邮件给开发者，' +
-              '附上问题描述、机型和截图即可。')
+            Text(I18n.t('fb.offlineBody'))
               .fontSize(11)
               .fontColor(Palette.TEXT_SECONDARY)
               .lineHeight(18)
@@ -344,7 +354,7 @@ export struct FeedbackPage {
                 .fontSize(13)
                 .fontColor(Palette.ACCENT)
                 .layoutWeight(1)
-              Text('复制邮箱')
+              Text(I18n.t('fb.copyEmail'))
                 .fontSize(11)
                 .fontColor(Palette.ACCENT)
                 .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -372,14 +382,14 @@ export struct FeedbackPage {
   buildSubmit() {
     Scroll() {
       Column({ space: 12 }) {
-        Text('反馈类型')
+        Text(I18n.t('fb.type'))
           .fontSize(13)
           .fontColor(Palette.TEXT_PRIMARY)
           .width('100%')
 
         Row({ space: 8 }) {
           ForEach(FEEDBACK_TYPES, (option: FeedbackTypeOption, index: number) => {
-            Text(option.label)
+            Text(I18n.t(option.labelKey))
               .fontSize(12)
               .fontColor(this.typeIndex === index ? '#05080E' : Palette.TEXT_SECONDARY)
               .padding({ left: 14, right: 14, top: 7, bottom: 7 })
@@ -392,7 +402,7 @@ export struct FeedbackPage {
         }
         .width('100%')
 
-        Text('请描述一下')
+        Text(I18n.t('fb.describe'))
           .fontSize(13)
           .fontColor(Palette.TEXT_PRIMARY)
           .width('100%')
@@ -400,7 +410,7 @@ export struct FeedbackPage {
 
         TextArea({
           text: this.description,
-          placeholder: '遇到问题：在哪个页面、如何触发、实际结果。\n提出建议：使用场景、希望怎样改进。'
+          placeholder: I18n.t('fb.describePlaceholder')
         })
           .width('100%')
           .height(150)
@@ -422,10 +432,10 @@ export struct FeedbackPage {
           .textAlign(TextAlign.End)
 
         Row({ space: 6 }) {
-          Text('添加截图')
+          Text(I18n.t('fb.addScreenshots'))
             .fontSize(13)
             .fontColor(Palette.TEXT_PRIMARY)
-          Text(`选填 · 最多 ${MAX_IMAGES} 张`)
+          Text(I18n.f('fb.optionalImages', [`${MAX_IMAGES}`]))
             .fontSize(10)
             .fontColor(Palette.TEXT_TERTIARY)
         }
@@ -464,10 +474,10 @@ export struct FeedbackPage {
               .fillColor(Palette.TEXT_SECONDARY)
 
             Column({ space: 3 }) {
-              Text('诊断日志')
+              Text(I18n.t('fb.diagnosticLog'))
                 .fontSize(13)
                 .fontColor(Palette.TEXT_PRIMARY)
-              Text('提交时自动附带最近日志（txt，≤512KB）')
+              Text(I18n.t('fb.diagnosticDesc'))
                 .fontSize(10)
                 .fontColor(Palette.TEXT_TERTIARY)
                 .maxLines(1)
@@ -476,7 +486,7 @@ export struct FeedbackPage {
             .layoutWeight(1)
             .alignItems(HorizontalAlign.Start)
 
-            Text('自动附带')
+            Text(I18n.t('fb.attached'))
               .fontSize(11)
               .fontColor(Palette.SUCCESS)
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -486,13 +496,13 @@ export struct FeedbackPage {
           .width('100%')
         }
 
-        Text('联系方式')
+        Text(I18n.t('fb.contact'))
           .fontSize(13)
           .fontColor(Palette.TEXT_PRIMARY)
           .width('100%')
           .margin({ top: 6 })
 
-        TextInput({ text: this.contact, placeholder: 'QQ / 邮箱，仅用于需要补充信息时联系' })
+        TextInput({ text: this.contact, placeholder: I18n.t('fb.contactPlaceholder') })
           .width('100%')
           .height(46)
           .fontSize(13)
@@ -514,10 +524,10 @@ export struct FeedbackPage {
             .onChange((checked: boolean) => {
               this.policyAgreed = checked;
             })
-          Text('我已阅读并同意')
+          Text(I18n.t('fb.agree'))
             .fontSize(11)
             .fontColor(Palette.TEXT_SECONDARY)
-          Text('《隐私政策》')
+          Text(I18n.t('fb.privacyDoc'))
             .fontSize(11)
             .fontColor(Palette.ACCENT)
             .onClick(() => {
@@ -529,7 +539,7 @@ export struct FeedbackPage {
         .margin({ top: 10 })
 
         PrimaryButton({
-          btnLabel: '提交反馈',
+          btnLabel: I18n.t('fb.send'),
           btnEnabled: this.description.trim().length > 0 && this.policyAgreed,
           btnLoading: this.sending,
           onTap: (): void => {
@@ -587,12 +597,12 @@ export struct FeedbackPage {
       Column({ space: 16 }) {
         EmptyView({
           emptyIcon: $r('app.media.ic_clock'),
-          emptyTitle: '还没有提交过反馈',
-          emptyDesc: '提交后可以在这里查看发送状态。'
+          emptyTitle: I18n.t('fb.empty'),
+          emptyDesc: I18n.t('fb.emptyDesc')
         })
         Row() {
           GhostButton({
-            ghostLabel: '去提交反馈',
+            ghostLabel: I18n.t('fb.goSubmit'),
             onTap: (): void => {
               this.step = 1;
             }

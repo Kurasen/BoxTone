@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { ToneSpec } from '../../common/constants/AppConstants';
 import { FormatUtils } from '../../common/utils/FormatUtils';
@@ -14,6 +15,7 @@ import { StatPill } from '../../components/StatPill';
 import { WaveformView } from '../../components/WaveformView';
 import { ConvertOptions, ConvertResult, SourceAudio, SynthPreset, ToneEntry } from '../../models/ToneModel';
 import { AudioConvertService } from '../../services/AudioConvertService';
+import { AudioConvertTaskService } from '../../services/audio/ConvertTask';
 import { AudioPlayService } from '../../services/AudioPlayService';
 import { AudioSourceService } from '../../services/AudioSourceService';
 import { AppSettings, SettingsService } from '../../services/SettingsService';
@@ -104,7 +106,7 @@ export struct TonePage {
       return;
     }
     this.busy = true;
-    this.setBusy(true, '正在导入音频…');
+    this.setBusy(true, I18n.t('tone.importing'));
     // 先让遮罩画出来，选完文件后的复制 / 探测 / 解码可能要几秒
     await TonePage.yieldToUi();
     try {
@@ -116,14 +118,14 @@ export struct TonePage {
       await AudioPlayService.stop();
       this.applySource(imported);
       if (imported.truncated) {
-        this.toast(`已导入 ${imported.name}，文件较长，只载入了开头一段`);
+        this.toast(I18n.f('tone.importedTruncated', [imported.name]));
       } else {
-        this.toast(`已导入 ${imported.name}`);
+        this.toast(I18n.f('tone.imported', [imported.name]));
       }
     } catch (error) {
       const businessError: BusinessError = error as BusinessError;
       Logger.exception(MODULE, '导入失败', businessError);
-      this.toast(businessError.message !== undefined ? businessError.message : '导入失败');
+      this.toast(businessError.message !== undefined ? businessError.message : I18n.t('tone.importFailed'));
     } finally {
       this.setBusy(false);
       this.busy = false;
@@ -150,7 +152,7 @@ export struct TonePage {
       const pcm = ToneSynthesizerService.generate(preset.id);
       const synthSource: SourceAudio = {
         path: '',
-        name: `${preset.name}（内置音色）`,
+        name: `${I18n.t(preset.nameKey)}${I18n.t('tone.builtinSuffix')}`,
         format: 'SYNTH / 48kHz',
         sampleRate: pcm.sampleRate,
         channels: pcm.channels,
@@ -160,10 +162,10 @@ export struct TonePage {
       };
       await AudioPlayService.stop();
       this.applySource(synthSource);
-      this.toast(`${preset.name} 已就绪`);
+      this.toast(I18n.f('tone.ready', [I18n.t(preset.nameKey)]));
     } catch (error) {
       Logger.exception(MODULE, '合成失败', error as BusinessError);
-      this.toast('生成音色失败');
+      this.toast(I18n.t('tone.synthFailed'));
     } finally {
       this.busy = false;
     }
@@ -192,7 +194,7 @@ export struct TonePage {
       });
     } catch (error) {
       this.playingSource = false;
-      this.toast('试听失败');
+      this.toast(I18n.t('tone.previewFailed'));
     }
   }
 
@@ -204,7 +206,7 @@ export struct TonePage {
     }
     const current: SourceAudio | undefined = this.source;
     if (current === undefined) {
-      this.toast('请先导入音频或选择内置音色');
+      this.toast(I18n.t('tone.pickFirst'));
       return;
     }
     this.playingTone = true;
@@ -214,9 +216,9 @@ export struct TonePage {
       let result: ConvertResult | undefined = this.cachedResult(current);
       if (result === undefined) {
         // 先让界面把"处理中"画出来，再执行这次耗时 1 秒以上的重采样
-        this.setBusy(true, '正在生成盒音…');
+        this.setBusy(true, I18n.t('tone.generatingTone'));
         await TonePage.yieldToUi();
-        result = this.convertAndCache(current);
+        result = await this.convertAndCache(current);
         this.setBusy(false);
       }
       if (!this.playingTone) {
@@ -230,7 +232,7 @@ export struct TonePage {
       this.setBusy(false);
       this.playingTone = false;
       Logger.exception(MODULE, '盒音试听失败', error as BusinessError);
-      this.toast('试听失败');
+      this.toast(I18n.t('tone.previewFailed'));
     }
   }
 
@@ -255,8 +257,8 @@ export struct TonePage {
     return undefined;
   }
 
-  private convertAndCache(current: SourceAudio): ConvertResult {
-    const result: ConvertResult = AudioConvertService.convert(current.pcm, this.options());
+  private async convertAndCache(current: SourceAudio): Promise<ConvertResult> {
+    const result: ConvertResult = await AudioConvertTaskService.convertAsync(current.pcm, this.options());
     this.cacheKey = this.cacheSignature(current);
     this.cached = result;
     return result;
@@ -277,10 +279,10 @@ export struct TonePage {
   private currentName(): string {
     const current: SourceAudio | undefined = this.source;
     if (current === undefined) {
-      return '开盖音效';
+      return I18n.t('tone.defaultName');
     }
     const base: string = current.name.replace(/\.[^.]+$/, '');
-    return base.length > 0 ? base : '开盖音效';
+    return base.length > 0 ? base : I18n.t('tone.defaultName');
   }
 
   // ---------------- 生成 ----------------
@@ -292,14 +294,14 @@ export struct TonePage {
     }
     this.busy = true;
     try {
-      const result: ConvertResult = await this.prepareResult(current, '正在生成…');
+      const result: ConvertResult = await this.prepareResult(current, I18n.t('tone.generating'));
       const entry: ToneEntry = ToneRepositoryService.save(this.currentName(), result, current.name);
       this.savedName = entry.name;
       EventBus.emit(AppEvent.TONE_CHANGED, 1);
-      this.toast(`已保存「${entry.name}」${FormatUtils.bytes(result.byteLength)}`);
+      this.toast(I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]));
     } catch (error) {
       Logger.exception(MODULE, '生成失败', error as BusinessError);
-      this.toast('生成失败，请查看日志');
+      this.toast(I18n.t('tone.generateFailed'));
     } finally {
       this.setBusy(false);
       this.busy = false;
@@ -313,15 +315,15 @@ export struct TonePage {
     }
     this.busy = true;
     try {
-      const result: ConvertResult = await this.prepareResult(current, '正在生成…');
+      const result: ConvertResult = await this.prepareResult(current, I18n.t('tone.generating'));
       const fileName: string = await ToneRepositoryService.exportBuffer(result.buffer,
         `${this.currentName()}-16k7`);
       if (fileName.length > 0) {
-        this.toast(`已导出 ${fileName}`);
+        this.toast(I18n.f('tone.exported', [fileName]));
       }
     } catch (error) {
       Logger.exception(MODULE, '导出失败', error as BusinessError);
-      this.toast('导出失败，请查看日志');
+      this.toast(I18n.t('tone.exportFailed'));
     } finally {
       this.setBusy(false);
       this.busy = false;
@@ -336,7 +338,7 @@ export struct TonePage {
     }
     this.setBusy(true, text);
     await TonePage.yieldToUi();
-    const result: ConvertResult = this.convertAndCache(current);
+    const result: ConvertResult = await this.convertAndCache(current);
     this.setBusy(false);
     return result;
   }
@@ -378,11 +380,11 @@ export struct TonePage {
   @Builder
   buildHeader() {
     Column({ space: 6 }) {
-      Text('音效')
+      Text(I18n.t('tone.title'))
         .fontSize(Metric.TITLE_SIZE)
         .fontWeight(FontWeight.Bold)
         .fontColor(Palette.TEXT_PRIMARY)
-      Text('按充电盒解码规格生成无文件头原始波形')
+      Text(I18n.t('tone.subtitle'))
         .fontSize(12)
         .fontColor(Palette.TEXT_SECONDARY)
     }
@@ -405,11 +407,11 @@ export struct TonePage {
             .height(24)
             .fillColor(Palette.ACCENT)
         }
-        Text('导入音频素材')
+        Text(I18n.t('tone.importTitle'))
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.TEXT_PRIMARY)
-        Text('支持 MP3 / M4A / AAC / FLAC / OGG / WAV 等主流格式\n导入后自动转成 16700Hz 单声道，只需截取其中一段')
+        Text(I18n.t('tone.importDesc'))
           .fontSize(11)
           .fontColor(Palette.TEXT_TERTIARY)
           .textAlign(TextAlign.Center)
@@ -455,7 +457,7 @@ export struct TonePage {
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
 
-          Text('更换')
+          Text(I18n.t('tone.replace'))
             .fontSize(11)
             .fontColor(Palette.ACCENT)
             .padding({ left: 10, right: 10, top: 5, bottom: 5 })
@@ -469,14 +471,14 @@ export struct TonePage {
 
         Row({ space: 10 }) {
           PreviewChip({
-            chipLabel: '原声',
+            chipLabel: I18n.t('tone.original'),
             active: this.playingSource,
             onTap: (): void => {
               this.playSource();
             }
           })
           PreviewChip({
-            chipLabel: '盒音 16.7kHz',
+            chipLabel: I18n.t('tone.caseTone'),
             active: this.playingTone,
             busy: this.preparing,
             onTap: (): void => {
@@ -492,17 +494,17 @@ export struct TonePage {
 
   @Builder
   buildPresetSection() {
-    SectionTitle({ sectionText: '内置音色', sectionHint: '点选即可生成' })
+    SectionTitle({ sectionText: I18n.t('tone.presets'), sectionHint: I18n.t('tone.presetsHint') })
 
     Scroll() {
       Row({ space: 8 }) {
         ForEach(ToneSynthesizerService.PRESETS, (preset: SynthPreset) => {
           Column({ space: 3 }) {
-            Text(preset.name)
+            Text(I18n.t(preset.nameKey))
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
               .fontColor(Palette.TEXT_PRIMARY)
-            Text(preset.desc)
+            Text(I18n.t(preset.descKey))
               .fontSize(9)
               .fontColor(Palette.TEXT_TERTIARY)
               .maxLines(1)
@@ -526,7 +528,7 @@ export struct TonePage {
   buildWaveCard() {
     GlassCard({ cardPadding: 16 }) {
       Row() {
-        Text(this.source === undefined ? '尚未导入音频' : '波形与裁剪区间')
+        Text(this.source === undefined ? I18n.t('tone.noSource') : I18n.t('tone.waveTitle'))
           .fontSize(12)
           .fontColor(Palette.TEXT_SECONDARY)
           .layoutWeight(1)
@@ -567,7 +569,7 @@ export struct TonePage {
   buildParamCard() {
     GlassCard({ cardPadding: 16 }) {
       SliderBlock({
-        blockLabel: '起始位置',
+        blockLabel: I18n.t('tone.start'),
         blockText: FormatUtils.seconds(this.startMs),
         blockValue: this.startMs,
         blockMax: this.maxStartMs(),
@@ -582,7 +584,7 @@ export struct TonePage {
       })
 
       SliderBlock({
-        blockLabel: '时长',
+        blockLabel: I18n.t('tone.duration'),
         blockText: FormatUtils.seconds(this.durationMs),
         blockValue: this.durationMs,
         blockMin: ToneSpec.MIN_SECONDS * 1000,
@@ -593,7 +595,7 @@ export struct TonePage {
       })
 
       SliderBlock({
-        blockLabel: '增益',
+        blockLabel: I18n.t('tone.gain'),
         blockText: FormatUtils.gain(this.gainDb),
         blockValue: this.gainDb,
         blockMin: -12,
@@ -606,7 +608,7 @@ export struct TonePage {
 
       Row({ space: 24 }) {
         ToggleBlock({
-          blockLabel: '峰值归一化',
+          blockLabel: I18n.t('tone.normalize'),
           blockOn: this.normalize,
           onSwitch: (isOn: boolean): void => {
             this.normalize = isOn;
@@ -615,7 +617,7 @@ export struct TonePage {
           }
         })
         ToggleBlock({
-          blockLabel: '首尾淡入淡出',
+          blockLabel: I18n.t('tone.fade'),
           blockOn: this.fadeInMs > 0,
           onSwitch: (isOn: boolean): void => {
             this.fadeInMs = isOn ? 40 : 0;
@@ -632,13 +634,13 @@ export struct TonePage {
   buildSpecCard() {
     GlassCard({ cardPadding: 18 }) {
       Row() {
-        Text('输出规格')
+        Text(I18n.t('tone.outputSpec'))
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.TEXT_PRIMARY)
           .layoutWeight(1)
         StatPill({
-          pillText: this.isCompliant() ? '符合盒端规格' : '超出限制',
+          pillText: this.isCompliant() ? I18n.t('tone.compliant') : I18n.t('tone.overLimit'),
           pillTone: this.isCompliant() ? 'success' : 'danger',
           compact: true
         })
@@ -646,18 +648,18 @@ export struct TonePage {
       .width('100%')
       .margin({ bottom: 6 })
 
-      SpecRow({ specLabel: '编码', specValue: 'Signed 16-bit PCM', showDivider: true })
-      SpecRow({ specLabel: '声道', specValue: 'Mono 单通道', showDivider: true })
-      SpecRow({ specLabel: '采样率', specValue: '16700 Hz', showDivider: true })
-      SpecRow({ specLabel: '文件格式', specValue: 'RAW 无文件头', showDivider: true })
+      SpecRow({ specLabel: I18n.t('tone.codec'), specValue: 'Signed 16-bit PCM', showDivider: true })
+      SpecRow({ specLabel: I18n.t('tone.channels'), specValue: I18n.t('tone.channelsValue'), showDivider: true })
+      SpecRow({ specLabel: I18n.t('tone.sampleRate'), specValue: '16700 Hz', showDivider: true })
+      SpecRow({ specLabel: I18n.t('tone.fileFormat'), specValue: I18n.t('tone.fileFormatValue'), showDivider: true })
       SpecRow({
-        specLabel: '输出大小',
-        specValue: `${AudioConvertService.estimateBytes(this.durationMs)} 字节`,
+        specLabel: I18n.t('tone.outputSize'),
+        specValue: I18n.f('tone.byteCount', [`${AudioConvertService.estimateBytes(this.durationMs)}`]),
         valueColor: Palette.ACCENT
       })
 
-      Text(`1 秒 = ${ToneSpec.BYTES_PER_SECOND} 字节，上限 ${ToneSpec.MAX_SECONDS} 秒 / ` +
-        `${ToneSpec.MAX_BYTES} 字节`)
+      Text(I18n.f('tone.sizeRule', [`${ToneSpec.BYTES_PER_SECOND}`, `${ToneSpec.MAX_SECONDS}`,
+        `${ToneSpec.MAX_BYTES}`]))
         .fontSize(10)
         .fontColor(Palette.TEXT_TERTIARY)
         .margin({ top: 8 })
@@ -668,7 +670,7 @@ export struct TonePage {
   buildActions() {
     Column({ space: 10 }) {
       PrimaryButton({
-        btnLabel: '生成并保存到音效库',
+        btnLabel: I18n.t('tone.saveButton'),
         btnEnabled: this.source !== undefined,
         btnLoading: this.busy,
         btnIcon: $r('app.media.ic_check'),
@@ -678,7 +680,7 @@ export struct TonePage {
       })
 
       GhostButton({
-        ghostLabel: '导出 RAW 文件',
+        ghostLabel: I18n.t('tone.exportButton'),
         ghostEnabled: this.source !== undefined,
         ghostIcon: $r('app.media.ic_upload'),
         onTap: (): void => {
@@ -686,7 +688,7 @@ export struct TonePage {
         }
       })
 
-      Text('写入只需在「音效库」点写入：双耳入盒开盖，通过蓝牙直接下发到充电盒')
+      Text(I18n.t('tone.writeHint'))
         .fontSize(10)
         .fontColor(Palette.TEXT_TERTIARY)
         .width('100%')
@@ -750,7 +752,7 @@ struct PreviewChip {
         .width(11)
         .height(11)
         .fillColor(this.active ? '#05080E' : Palette.TEXT_SECONDARY)
-      Text(this.busy ? '处理中…' : this.chipLabel)
+      Text(this.busy ? I18n.t('common.processing') : this.chipLabel)
         .fontSize(12)
         .fontColor(this.active ? '#05080E' : Palette.TEXT_SECONDARY)
         .maxLines(1)

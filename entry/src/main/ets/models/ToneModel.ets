@@ -82,8 +82,8 @@ export interface WavePeaks {
 /** 内置合成音色定义 */
 export interface SynthPreset {
   id: string;
-  name: string;
-  desc: string;
+  nameKey: string;
+  descKey: string;
 }
 
 export function createEmptyTone(): ToneEntry {

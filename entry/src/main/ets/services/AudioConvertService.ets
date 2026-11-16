@@ -1,4 +1,5 @@
 import { ToneSpec } from '../common/constants/AppConstants';
+import { I18n } from '../common/i18n/I18n';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
 import { ConvertOptions, ConvertResult, PcmAudio, WavePeaks } from '../models/ToneModel';
@@ -172,7 +173,7 @@ export class AudioConvertService {
    */
   public static convert(source: PcmAudio, options: ConvertOptions): ConvertResult {
     if (source.frameCount === 0) {
-      throw new Error('源音频为空，无法转换');
+      throw new Error(I18n.t('audio.emptySource'));
     }
     const started: number = Date.now();
 

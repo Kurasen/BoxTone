@@ -1,4 +1,5 @@
 import { LogLevel } from '../common/constants/AppConstants';
+import { I18n } from '../common/i18n/I18n';
 
 export interface LogEntry {
   id: string;
@@ -11,15 +12,15 @@ export interface LogEntry {
 
 export interface LogFilterOption {
   key: string;
-  label: string;
+  labelKey: string;
   /** 需要显示的级别，空数组表示全部 */
   levels: string[];
 }
 
 export const LOG_FILTERS: LogFilterOption[] = [
-  { key: 'all', label: '全部', levels: [] },
-  { key: 'warn', label: '警告及以上', levels: [LogLevel.WARN, LogLevel.ERROR] },
-  { key: 'error', label: '仅错误', levels: [LogLevel.ERROR] }
+  { key: 'all', labelKey: 'log.all', levels: [] },
+  { key: 'warn', labelKey: 'log.warnPlus', levels: [LogLevel.WARN, LogLevel.ERROR] },
+  { key: 'error', labelKey: 'log.errorOnly', levels: [LogLevel.ERROR] }
 ];
 
 export class LogLevelStyle {
@@ -38,14 +39,14 @@ export class LogLevelStyle {
 
   public static labelOf(level: string): string {
     if (level === LogLevel.ERROR) {
-      return '错误';
+      return I18n.t('log.level.error');
     }
     if (level === LogLevel.WARN) {
-      return '警告';
+      return I18n.t('log.level.warn');
     }
     if (level === LogLevel.INFO) {
-      return '信息';
+      return I18n.t('log.level.info');
     }
-    return '调试';
+    return I18n.t('log.level.debug');
   }
 }

@@ -1,3 +1,4 @@
+import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { Changelog, ChangelogEntry } from '../../common/constants/AppConstants';
 import { GlassCard } from '../../components/GlassCard';
@@ -23,7 +24,7 @@ export struct ChangelogPage {
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(Palette.TEXT_PRIMARY)
-                Text(entry.note)
+                Text(I18n.t(entry.noteKey))
                   .fontSize(10)
                   .fontColor(Palette.TEXT_TERTIARY)
                   .layoutWeight(1)
@@ -31,14 +32,14 @@ export struct ChangelogPage {
               .width('100%')
               .margin({ bottom: 10 })
 
-              ForEach(entry.items, (item: string) => {
+              ForEach(entry.itemKeys, (itemKey: string) => {
                 Row({ space: 8 }) {
                   Circle()
                     .width(4)
                     .height(4)
                     .fill(Palette.ACCENT)
                     .margin({ top: 6 })
-                  Text(item)
+                  Text(I18n.t(itemKey))
                     .fontSize(11)
                     .fontColor(Palette.TEXT_SECONDARY)
                     .lineHeight(18)
@@ -47,7 +48,7 @@ export struct ChangelogPage {
                 .width('100%')
                 .alignItems(VerticalAlign.Top)
                 .margin({ bottom: 6 })
-              }, (item: string) => item)
+              }, (itemKey: string) => itemKey)
             }
           }, (entry: ChangelogEntry) => entry.version)
         }
@@ -88,11 +89,11 @@ export struct ChangelogPage {
         })
 
       Column({ space: 3 }) {
-        Text('更新日志')
+        Text(I18n.t('changelog.title'))
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.TEXT_PRIMARY)
-        Text('版本更新记录')
+        Text(I18n.t('changelog.subtitle'))
           .fontSize(10)
           .fontColor(Palette.TEXT_TERTIARY)
       }

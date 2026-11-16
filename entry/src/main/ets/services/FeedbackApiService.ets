@@ -1,4 +1,5 @@
 import { http } from '@kit.NetworkKit';
+import { I18n } from '../common/i18n/I18n';
 import { Logger } from '../common/utils/Logger';
 
 const MODULE: string = 'FeedbackApi';
@@ -47,7 +48,7 @@ export class FeedbackApiService {
 
   public static async submit(payload: FeedbackPayload): Promise<void> {
     if (!FeedbackApiService.isConfigured()) {
-      throw new Error('反馈服务未配置');
+      throw new Error(I18n.t('fb.apiNotConfigured'));
     }
     const request: http.HttpRequest = http.createHttp();
     try {
@@ -65,7 +66,7 @@ export class FeedbackApiService {
       };
       const response: http.HttpResponse = await request.request(FeedbackApiConfig.ENDPOINT, options);
       if (response.responseCode < 200 || response.responseCode >= 300) {
-        throw new Error(`反馈服务返回 ${response.responseCode}`);
+        throw new Error(I18n.f('fb.apiStatus', [`${response.responseCode}`]));
       }
       Logger.info(MODULE, `反馈已提交 状态=${response.responseCode}`);
     } finally {

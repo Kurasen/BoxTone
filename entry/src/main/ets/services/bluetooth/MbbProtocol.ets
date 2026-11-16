@@ -1,4 +1,5 @@
 import { MbbSpec, ToneSpec } from '../../common/constants/AppConstants';
+import { I18n } from '../../common/i18n/I18n';
 import { ByteUtils } from '../../common/utils/ByteUtils';
 import { Sha256Utils } from '../../common/utils/Sha256Utils';
 
@@ -74,7 +75,7 @@ export class MbbProtocol {
     let at: number = start;
     while (at < data.length) {
       if (at + 2 > data.length) {
-        throw new Error('耳机返回的数据不完整');
+        throw new Error(I18n.t('protocol.incomplete'));
       }
       const tag: number = data[at] & 0xFF;
       at++;
@@ -82,13 +83,13 @@ export class MbbProtocol {
       at++;
       if ((length & 0x80) !== 0) {
         if (at >= data.length) {
-          throw new Error('耳机返回的数据不完整');
+          throw new Error(I18n.t('protocol.incomplete'));
         }
         length = ((length & 0x7F) << 7) + (data[at] & 0x7F);
         at++;
       }
       if (at + length > data.length) {
-        throw new Error('耳机返回的字段长度不正确');
+        throw new Error(I18n.t('protocol.badFieldLength'));
       }
       result.set(tag, data.slice(at, at + length));
       at += length;
@@ -99,7 +100,7 @@ export class MbbProtocol {
   /** 组装一个 TLV 字段，长度 ≥128 时使用两字节扩展长度 */
   static field(tag: number, bytes: Uint8Array): Uint8Array {
     if (bytes.length > 16383) {
-      throw new Error('单条指令过长');
+      throw new Error(I18n.t('protocol.tooLong'));
     }
     let header: Uint8Array;
     if (bytes.length < 128) {
@@ -117,10 +118,10 @@ export class MbbProtocol {
   static tonePackage(pcm: Uint8Array, name: string = 'Whistle',
     mcu: Uint8Array = new Uint8Array(4)): Uint8Array {
     if (pcm.length === 0 || pcm.length % 2 !== 0 || pcm.length > ToneSpec.MAX_BYTES) {
-      throw new Error(`开盒音效必须在 ${ToneSpec.MAX_SECONDS} 秒以内且为偶数字节`);
+      throw new Error(I18n.f('protocol.toneTooLong', [`${ToneSpec.MAX_SECONDS}`]));
     }
     if (mcu.length !== 4) {
-      throw new Error('耳机返回的音效格式不正确');
+      throw new Error(I18n.t('protocol.toneFormat'));
     }
     const nameBytes: Uint8Array = ByteUtils.utf8(name);
     const nameField: Uint8Array = new Uint8Array(MbbSpec.TONE_NAME_MAX);
@@ -147,14 +148,14 @@ export class MbbProtocol {
     const values: Map<number, Uint8Array> = MbbProtocol.tlv(payload);
     const marker: Uint8Array | undefined = values.get(1);
     if (marker === undefined || marker.length !== 1 || (marker[0] & 0xFF) !== 16) {
-      throw new Error('耳机没有返回开盒音效状态');
+      throw new Error(I18n.t('protocol.noStatus'));
     }
     const value: Uint8Array | undefined = values.get(2);
     if (value === undefined) {
-      throw new Error('耳机没有返回开盒音效设置');
+      throw new Error(I18n.t('protocol.noSetting'));
     }
     if (value.length !== 12) {
-      throw new Error('耳机返回的开盒音效设置长度不正确');
+      throw new Error(I18n.t('protocol.badSettingLength'));
     }
     return new ToneStatus((value[0] & 0xFF) === 1, (value[1] & 0xFF) === 1, value[2] & 0xFF,
       ((value[9] & 0xFF) << 8) | (value[10] & 0xFF), (value[11] & 0xFF) === 1);
@@ -222,7 +223,7 @@ export class PacketAssembler {
       const packet: Uint8Array = this.buffer.slice(0, size);
       this.buffer = this.buffer.slice(size);
       if (MbbProtocol.crc(packet) !== 0) {
-        this.onError('收到校验失败的蓝牙数据');
+        this.onError(I18n.t('protocol.crcError'));
         this.fragments = null;
         continue;
       }
@@ -285,20 +286,20 @@ export class ToneStatusCodec {
 
   static errorText(code: number): string {
     if (code === 100010 || code === 109012) {
-      return '请将两只耳机放入充电盒后重试';
+      return I18n.t('status.putBoth');
     }
     if (code === 100011 || code === 109002 || code === 109024) {
-      return '充电盒电量不足，请充电后重试';
+      return I18n.t('status.lowBattery');
     }
     if (code === 100012 || code === 109006) {
-      return '耳机正在更新，请等待更新完成';
+      return I18n.t('status.updating');
     }
     if (code === 100013) {
-      return '耳机正在传输其他数据，请稍后重试';
+      return I18n.t('status.busy');
     }
     if (code === 109022) {
-      return '耳机正在录音，请结束录音后重试';
+      return I18n.t('status.recording');
     }
-    return `耳机拒绝了音效传输（${code}）`;
+    return I18n.f('status.rejected', [`${code}`]);
   }
 }

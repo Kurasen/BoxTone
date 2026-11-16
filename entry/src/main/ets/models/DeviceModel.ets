@@ -1,3 +1,5 @@
+import { I18n } from '../common/i18n/I18n';
+
 /**
  * 蓝牙设备模型
  */
@@ -57,7 +59,7 @@ export function createEmptySnapshot(): BtSnapshot {
     scanning: false,
     activeName: '',
     activeId: '',
-    statusText: '蓝牙未开启',
+    statusText: I18n.t('bt.off'),
     nearLinkSupported: false,
     nearLinkEnabled: false,
     nearLinkName: '',

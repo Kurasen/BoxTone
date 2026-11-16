@@ -1,3 +1,4 @@
+import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { BtDevice, createEmptyDevice } from '../models/DeviceModel';
@@ -68,14 +69,14 @@ export struct DeviceRow {
   private subtitle(): string {
     const address: string = FormatUtils.maskAddress(this.device.deviceId);
     if (this.device.nearLink && this.device.connected) {
-      return `星闪连接 · ${address}`;
+      return I18n.f('row.nearLink', [address]);
     }
     if (this.device.connected) {
-      return `已连接 · ${address}`;
+      return I18n.f('row.connected', [address]);
     }
     if (this.device.paired) {
-      return `已配对 · ${address}`;
+      return I18n.f('row.paired', [address]);
     }
-    return this.device.audio ? `音频设备 · ${address}` : address;
+    return this.device.audio ? I18n.f('row.audio', [address]) : address;
   }
 }

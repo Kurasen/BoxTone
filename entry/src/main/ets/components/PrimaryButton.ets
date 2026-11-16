@@ -1,3 +1,4 @@
+import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
 
 /** 主操作按钮：品牌渐变 + 按压反馈 */
@@ -19,7 +20,7 @@ export struct PrimaryButton {
           .height(16)
           .fillColor(this.btnEnabled ? '#05080E' : Palette.TEXT_TERTIARY)
       }
-      Text(this.btnLoading ? '处理中…' : this.btnLabel)
+      Text(this.btnLoading ? I18n.t('common.processing') : this.btnLabel)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.btnEnabled ? '#05080E' : Palette.TEXT_TERTIARY)

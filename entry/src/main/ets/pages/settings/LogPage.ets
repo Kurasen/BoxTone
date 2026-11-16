@@ -1,4 +1,5 @@
 import { LogLevel } from '../../common/constants/AppConstants';
+import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DateUtils } from '../../common/utils/DateUtils';
 import { EmptyView } from '../../components/EmptyView';
@@ -70,19 +71,19 @@ export struct LogPage {
     try {
       const fileName: string = await LogService.getInstance().exportToFile();
       if (fileName.length > 0) {
-        this.toast(`已导出 ${fileName}`);
+        this.toast(I18n.f('log.exported', [fileName]));
       }
     } catch (error) {
-      this.toast('导出失败');
+      this.toast(I18n.t('log.exportFailed'));
     }
   }
 
   private async copyLog(): Promise<void> {
     try {
       await LogService.getInstance().copyToClipboard();
-      this.toast('日志已复制到剪贴板');
+      this.toast(I18n.t('log.copied'));
     } catch (error) {
-      this.toast('复制失败');
+      this.toast(I18n.t('common.copyFailed'));
     }
   }
 
@@ -95,8 +96,8 @@ export struct LogPage {
         Column() {
           EmptyView({
             emptyIcon: $r('app.media.ic_log'),
-            emptyTitle: '暂无日志',
-            emptyDesc: this.filterKey === 'all' ? '应用运行过程中的关键事件会记录在这里' : '当前筛选条件下没有记录'
+            emptyTitle: I18n.t('log.empty'),
+            emptyDesc: this.filterKey === 'all' ? I18n.t('log.emptyDescAll') : I18n.t('log.emptyDescFiltered')
           })
         }
         .layoutWeight(1)
@@ -141,11 +142,12 @@ export struct LogPage {
         })
 
       Column({ space: 3 }) {
-        Text('日志中心')
+        Text(I18n.t('log.title'))
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.TEXT_PRIMARY)
-        Text(`${this.entries.length} 条记录 · 错误 ${LogService.getInstance().countOf(LogLevel.ERROR)} 条`)
+        Text(I18n.f('log.summary',
+          [`${this.entries.length}`, `${LogService.getInstance().countOf(LogLevel.ERROR)}`]))
           .fontSize(10)
           .fontColor(Palette.TEXT_TERTIARY)
       }
@@ -160,7 +162,7 @@ export struct LogPage {
   buildFilters() {
     Row({ space: 8 }) {
       ForEach(LOG_FILTERS, (option: LogFilterOption) => {
-        Text(option.label)
+        Text(I18n.t(option.labelKey))
           .fontSize(12)
           .fontColor(this.filterKey === option.key ? '#05080E' : Palette.TEXT_SECONDARY)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
@@ -220,16 +222,16 @@ export struct LogPage {
   @Builder
   buildBottomBar() {
     Row({ space: 10 }) {
-      this.bottomButton('复制', $r('app.media.ic_log'), (): void => {
+      this.bottomButton(I18n.t('log.copy'), $r('app.media.ic_log'), (): void => {
         this.copyLog();
       })
-      this.bottomButton('导出文件', $r('app.media.ic_upload'), (): void => {
+      this.bottomButton(I18n.t('log.export'), $r('app.media.ic_upload'), (): void => {
         this.exportLog();
       })
-      this.bottomButton('清空', $r('app.media.ic_trash'), (): void => {
+      this.bottomButton(I18n.t('log.clear'), $r('app.media.ic_trash'), (): void => {
         LogService.getInstance().clear();
         this.entries = LogService.getInstance().getEntries();
-        this.toast('日志已清空');
+        this.toast(I18n.t('log.cleared'));
       })
     }
     .width('100%')

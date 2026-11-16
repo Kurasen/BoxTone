@@ -1,3 +1,4 @@
+import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
 import { DateUtils } from '../common/utils/DateUtils';
 import { FormatUtils } from '../common/utils/FormatUtils';
@@ -11,7 +12,7 @@ export struct ToneCard {
   @Prop expanded: boolean = false;
   @Prop playing: boolean = false;
   @Prop writing: boolean = false;
-  @Prop writingText: string = '写入中…';
+  @Prop writingText: string = I18n.t('lib.writing');
   /** 有其他音效正在写入：本条的写入入口置灰锁定 */
   @Prop writeLocked: boolean = false;
   onToggle: () => void = () => {
@@ -76,7 +77,8 @@ export struct ToneCard {
       if (this.expanded) {
         Row({ space: 8 }) {
           WriteChip({
-            chipText: this.writing ? this.writingText : (this.writeLocked ? '暂不可写' : '写入'),
+            chipText: this.writing ? this.writingText :
+              (this.writeLocked ? I18n.t('card.unavailable') : I18n.t('card.write')),
             chipBusy: this.writing,
             chipLocked: this.writeLocked,
             onTap: (): void => {
@@ -84,21 +86,21 @@ export struct ToneCard {
             }
           })
           ActionChip({
-            chipText: '导出',
+            chipText: I18n.t('card.export'),
             chipColor: Palette.TEXT_SECONDARY,
             onTap: (): void => {
               this.onExport();
             }
           })
           ActionChip({
-            chipText: '重命名',
+            chipText: I18n.t('card.rename'),
             chipColor: Palette.TEXT_SECONDARY,
             onTap: (): void => {
               this.onRename();
             }
           })
           ActionChip({
-            chipText: '删除',
+            chipText: I18n.t('card.delete'),
             chipColor: Palette.DANGER,
             onTap: (): void => {
               this.onDelete();
@@ -121,7 +123,7 @@ export struct ToneCard {
 @Component
 struct WriteChip {
   @StorageProp('themeEpoch') themeEpoch: number = 0;
-  @Prop chipText: string = '写入';
+  @Prop chipText: string = I18n.t('card.write');
   @Prop chipBusy: boolean = false;
   @Prop chipLocked: boolean = false;
   onTap: () => void = () => {

@@ -1,7 +1,7 @@
 # 盒音工坊 · BoxTone
 
-> 为华为蓝牙耳机定制**充电盒开盖音效**的 HarmonyOS 应用。
-> 导入素材 → 按充电盒解码规格转换 → 导出 RAW → 在华为智慧音频 App 中替换。
+> 为华为蓝牙耳机定制**充电盒开盖音效**的 HarmonyOS 应用（当前版本 v1.1.1，中英文界面）。
+> 连接耳机 → 导入素材 → 按充电盒解码规格转换 → 通过蓝牙 SPP **直接写入充电盒**。
 
 底部导航使用官方 **HdsTabs 沉浸光感悬浮底栏**（HDS 6.1.0 / API 23 起提供）
 （`barOverlap` + `barFloatingStyle.systemMaterialEffect`），
@@ -13,11 +13,11 @@
 
 | 页面 | 能力 |
 |:--|:--|
-| **设备** | 蓝牙开关/权限状态、已配对设备（自动识别音频类设备）、附近设备扫描与配对、跳转系统蓝牙设置 |
-| **音效** | 导入 WAV、6 种内置音色合成、波形可视化与选区、起始/时长/增益调节、峰值归一化、淡入淡出、**原声 / 盒音双引擎试听**、规格实时校验、生成入库或直接导出 |
-| **音效库** | 音效列表、试听、导出、重命名、删除，统计总数/占用/最近生成 |
-| **我的** | 盒端规格说明与技术原理、偏好设置、日志中心入口、一键导出/清空日志 |
-| **日志中心** | 全量诊断日志、按级别筛选、复制到剪贴板、导出 txt 报告 |
+| **设备** | 蓝牙开关/权限状态、已配对设备（自动识别音频类设备）、附近设备扫描与配对、A2DP 与星闪连接状态、星闪连接时写入前拦截、机型支持列表、演示模式 |
+| **音效** | 导入 MP3 / M4A / AAC / FLAC / OGG / WAV、6 种内置音色合成、波形可视化与选区、起始/时长/增益调节、峰值归一化、淡入淡出、**原声 / 盒音双引擎试听**、规格实时校验、生成入库或直接导出 |
+| **音效库** | 音效列表、试听、**蓝牙直写**、**恢复默认开盒音**、导出、重命名、删除，按时间或名称排序，统计总数/占用/最近生成 |
+| **我的** | 外观设置（深色/浅色/跟随系统）、中英文自动切换（按系统地区）、盒端规格说明与技术原理、机型支持、反馈入口、更新日志、日志中心 |
+| **日志中心** | 全量诊断日志、按级别筛选、复制到剪贴板、导出 txt 报告；启动时自动清理历史日志 |
 
 ---
 
@@ -43,29 +43,48 @@
 BoxTone/
 ├── AppScope/                     应用级配置与图标
 ├── entry/src/main/
-│   ├── module.json5              模块配置（含蓝牙权限声明）
+│   ├── module.json5              模块配置（蓝牙 / 星闪 / 网络权限声明）
+│   ├── cpp/                      原生音频解码（NDK AVSource + AudioCodec）
+│   │   ├── audiodec.cpp
+│   │   └── CMakeLists.txt
 │   ├── ets/
 │   │   ├── entryability/EntryAbility.ets      启动、沉浸式布局、服务初始化
 │   │   ├── common/
-│   │   │   ├── constants/        AppConstants（音频规格）/ ThemeConstants（设计令牌）
-│   │   │   └── utils/            Logger / DateUtils / FormatUtils / EventBus
+│   │   │   ├── constants/        AppConstants（音频规格/机型库）/ ThemeConstants（设计令牌）
+│   │   │   ├── i18n/             I18n 服务与中英双语文案表
+│   │   │   └── utils/            Logger / DateUtils / FormatUtils / EventBus / ByteUtils / NearLinkAlert
 │   │   ├── models/               DeviceModel / ToneModel / LogModel
 │   │   ├── services/
-│   │   │   ├── AudioSourceService.ets      WAV 解析（PCM 8/16/24/32、Float32、EXTENSIBLE）
+│   │   │   ├── AudioSourceService.ets      WAV 解析 + 系统解码器（MP3/AAC/FLAC/OGG…）
 │   │   │   ├── AudioConvertService.ets     DSP 核心：下混/裁剪/归一化/重采样/增益/量化
-│   │   │   ├── ToneSynthesizerService.ets  内置音色合成
+│   │   │   ├── audio/ConvertTask.ets       TaskPool 工作线程入口与异步转换
 │   │   │   ├── AudioPlayService.ets        AVPlayer 原声 + AudioRenderer 盒音
-│   │   │   ├── ToneRepositoryService.ets   音效库持久化与导出
-│   │   │   ├── BluetoothService.ets        设备发现/配对/连接状态
-│   │   │   ├── LogService.ets              日志收集/落盘/导出
-│   │   │   └── SettingsService.ets         偏好设置
-│   │   ├── components/           GlassCard / WaveformView / ToneCard / DeviceRow 等 9 个复用组件
+│   │   │   ├── ToneSynthesizerService.ets  内置音色合成
+│   │   │   ├── ToneRepositoryService.ets   音效库持久化、原子索引、导出
+│   │   │   ├── CaseWriteService.ets        写入/恢复默认的检查、重试与诊断
+│   │   │   ├── bluetooth/
+│   │   │   │   ├── ToneClient.ets          SPP 会话、协议探测、分包上传、冷却与重试
+│   │   │   │   └── MbbProtocol.ets         MBB 帧 / TLV / 状态与错误码
+│   │   │   ├── BluetoothService.ets        设备发现/配对/连接状态（事件去抖）
+│   │   │   ├── NearLinkService.ets         星闪能力探测与连接识别
+│   │   │   ├── DemoService.ets             演示耳机
+│   │   │   ├── LogService.ets              日志收集/落盘/清理/导出
+│   │   │   ├── SettingsService.ets         偏好设置
+│   │   │   ├── ThemeService.ets            深浅色与系统栏
+│   │   │   ├── LanguageService.ets         应用语言（系统文案）
+│   │   │   ├── FeedbackService.ets         反馈整理/分享/本机记录
+│   │   │   ├── FeedbackApiService.ets      在线反馈客户端（当前未启用）
+│   │   │   ├── PrivacyConsentService.ets   AGC 隐私托管与启动开关
+│   │   │   └── AppBootstrap.ets            服务启动入口
+│   │   ├── components/           11 个复用组件（GlassCard / ToneCard / DeviceRow / WaveformView 等）
 │   │   └── pages/
-│   │       ├── Index.ets         HdsTabs 沉浸光感悬浮底栏 + 日志浮层
+│   │       ├── Index.ets         HdsTabs 沉浸光感悬浮底栏 + 全局浮层
 │   │       ├── main/             DevicePage / TonePage / LibraryPage
-│   │       └── settings/         ProfilePage / LogPage
-│   └── resources/                图标（SVG）、配色、字符串（中/英）
+│   │       └── settings/         ProfilePage / LogPage / FeedbackPage / SupportedDevicesPage / ChangelogPage
+│   └── resources/                图标（SVG）、配色、字符串（中/英系统文案）
+├── server/                       反馈转发服务（当前 App 侧停用）
 ├── tools/format-lab.html         格式验证台（浏览器直接打开，跑同一套 DSP）
+├── tools/check-sensitive-staged.ps1  提交前敏感信息扫描
 ├── build.sh                      构建辅助：环境预检 + 触发 hvigor 构建
 └── design-preview.html           界面预览（浏览器直接打开）
 ```
@@ -102,14 +121,12 @@ HdsTabs({ controller: this.tabsController }) { /* 4 个 TabContent */ }
 
 处理链：**下混单声道 → 时间裁剪 → 峰值归一化 → 窗口化 sinc 重采样 → 增益与淡入淡出 → 16bit 量化**
 
-重采样采用 Blackman 窗加权 sinc 插值（单边 12 taps），降采样时把截止频率收紧到 `ratio × 0.9`：
-
-- **10kHz 混叠抑制 -78dB**（理想核截止点正好压在 8350Hz 上，不留过渡带余量时只有 -57dB；
-  留 10% 余量后截止落在 7515Hz，而提示音内容几乎都在 5kHz 内，通带零代价）
+- 重采样采用 Blackman 窗加权 sinc 插值（单边 12 taps），降采样时把截止频率收紧到 `ratio × 0.9`：
+  10kHz 混叠抑制约 -78dB，6kHz 以下无衰减
 - 频率保持精确：8k/16k/22.05k/32k/44.1k/48k → 16700Hz，1kHz 正弦输出仍是 1kHz
-- 三角函数与窗函数改为查表插值（误差 < 1e-7），单次 5 秒立体声转换 **约 81ms**
-- 已用等价 JS 实现做过程序化验证：**26 条断言全部通过**（长度 / 字节数 / 音高 / 幅度 /
-  抗混叠 / 通带 / 下混 / WAV 往返 / 5 秒截断 / 8bit 与 24bit 解析）
+- 三角函数与窗函数改为查表插值（误差 < 1e-7）；**转换整体在 TaskPool 工作线程执行**，
+  只把当前时间窗口的采样复制过去，主线程不再被 1 秒以上的计算冻住；TaskPool 不可用时自动回退同步实现
+- 转换结果按参数签名缓存，参数不变时重复试听/生成直接复用
 
 ### 3. 双引擎试听
 
@@ -121,18 +138,38 @@ HdsTabs({ controller: this.tabsController }) { /* 4 个 TabContent */ }
 > 升采样到 48kHz 播放而不是直接以 16700Hz 渲染，既保证音高与写入后一致，
 > 又避开 `AudioSamplingRate` 枚举不含 16700 的类型限制。
 
-### 4. 蓝牙
+### 4. 蓝牙与直写
 
-- `ohos.permission.ACCESS_BLUETOOTH`（user_grant），页面内按需申请，拒绝时给出恢复入口
-- `classOfDevice` 的 major class 位判断音频类设备（`(cod >> 8) & 0x1F === 4`），不依赖枚举命名
-- 已配对 / 附近设备 / 配对 / A2DP 通道状态全覆盖
-- **说明**：HarmonyOS 未开放"程序化连接指定 A2DP 设备"的接口，配对由应用发起，音频通道的建立与切换跳转系统蓝牙设置完成（页面有明确入口）
+- 权限：`ohos.permission.ACCESS_BLUETOOTH`（user_grant）与 `ohos.permission.ACCESS_NEARLINK`；
+  星闪权限仅作连接识别，拒绝不影响经典蓝牙主流程
+- 设备识别：`classOfDevice` major class 位判断音频类设备，不依赖枚举命名；
+  A2DP 连接状态作为“音频通道”的唯一判据，星闪状态用于补位
+- 写入链路：建立 RFCOMM/SPP 会话 → 读取当前音效状态 → 探测固件协议（两套）→ 按耳机给出的大小分包传输 →
+  等待闪存擦写 → 选中自定义槽位
+- 可靠性：链路中断自动重试；数据已完整落盘但“选中”失败时只补发选中命令，不重传整包；
+  写入后耳机闪存需要收尾，应用会等待冷却并延迟恢复音频通道
+- 星闪连接下没有对三方开放的串口通道：写入前直接拦截，并给出切换到经典蓝牙的指引
+- 恢复默认：只发查询与“选中默认”两条命令，不重新上传音频
+- 机型判断：优先使用耳机自报型号（0107 tag 15），名称仅作兜底；未收录机型只提醒不拦截，
+  真正的门槛是协议能力探测；每次写入记录 `DEVICE_MATRIX` 便于后续验证
+- 状态刷新：系统蓝牙/星闪事件成组到达时合并成一次刷新；写入前后仍强制读取最新快照
 
-### 5. 日志与导出
+### 5. 日志与反馈
 
 - `Logger` 统一出口（hilog + 内存日志中心），所有 `catch` 都记录 `code` / `message`
 - 日志按天落盘 `files/logs/boxtone-yyyyMMdd.log`，内存保留最近 600 条
+- 启动时自动清理：仅保留最近 7 天、总量不超过 2MB；“清空日志”会删除全部历史文件
+- 设备地址在日志与诊断信息中统一打码，不读取、不记录设备 SN
 - 导出报告把**错误条目置顶**，再用 `DocumentViewPicker` 让用户选择保存位置；也支持复制到剪贴板
+- 在线反馈当前未启用，提交走系统分享（自带诊断日志附件）；截图副本在提交/删除/退出后立即清理
+
+### 6. 界面语言
+
+- 启动时按系统地区选择语言：CN / HK / MO / TW → 简体中文，其余地区 → English
+- 全部用户可见文案集中在 `common/i18n/Strings.ets`，通过 `I18n.t(key)` / `I18n.f(key, args)` 取值，
+  支持 `{0}` 插值；数据类内容（机型、音色、反馈类型等）存 key，展示时再按当前语言解析
+- 依赖中文文案做逻辑判断的地方已改为错误码 / `ToneErrorReason`，切换语言不会影响重试与补发选中
+- 旧版本保存的音效名称与反馈记录属于用户数据，不做回写翻译；诊断日志正文保持中文，便于排查
 
 ---
 
@@ -183,12 +220,12 @@ HarmonyOS SDK 分发（需登录华为账号并同意协议），OpenHarmony 开
 - 转换后显示字节数、帧数、时长、峰值，并用十六进制确认**没有 RIFF 文件头**
 - 试听原声与「盒音」（16700Hz 升采样到 48kHz 播放，音高与写入耳机后一致）
 - 导出 `.pcm`（交付格式，与 App 输出同一串字节）和 `.wav`（仅供播放器核对）
-- 一键跑 9 条内置自检，结果直接打印在页面上
+- 一键跑内置自检，结果直接打印在页面上
 
 > 它验证的是**字节流是否合规**这件最容易出错的事；界面本身仍需真机看。
 
-**首次使用**：设备页授予蓝牙权限 → 配对耳机 → 音效页导入 WAV 或选内置音色 → 生成并导出 →
-在华为智慧音频 App 中替换提示音。
+**首次使用**：设备页授予蓝牙权限 → 配对耳机 → 双耳入盒开盖 → 音效页导入素材或选择内置音色 →
+生成后在「音效库」点写入；不满意可在音效库一键**恢复默认开盒音**。
 
 ---
 
@@ -196,12 +233,15 @@ HarmonyOS SDK 分发（需登录华为账号并同意协议），OpenHarmony 开
 
 | 限制 | 说明 |
 |:--|:--|
-| 仅支持 WAV 导入 | 目标格式是无损 RAW，导入环节要求无损源；MP3/AAC 等有损容器需先转 WAV（应用会给出明确提示）。AVCodec 解码路径可在 `AudioSourceService` 中扩展 |
+| 自定义音效 ≤2 秒 | 实测 5 秒包能完整传到耳机，但盒端擦写闪存会停在半途、播放只剩约 1 秒；2 秒是当前固件下的安全上限 |
+| 仅经典蓝牙可写 | 星闪链路没有对三方开放的串口通道；星闪连接时应用会识别并提示切换到经典蓝牙 |
+| 机型覆盖有限 | FreeClip 2（BTFT0027）已实测通过；FreeBuds 6 / Pro 5 / 7 属于官方支持开盒提示音的机型，盒音自定义仍待实测 |
+| 依赖固件协议 | 私有协议可能随固件升级变化；应用会做能力探测，失败时给出诊断信息而不是盲目写入 |
+| 界面语言 | 完整界面按系统地区自动切换中英文；旧版本保存的音效名称与反馈记录保持原文，不自动翻译 |
+| 在线反馈未启用 | 联网备案与后端启用前，反馈走系统分享；应用内不保存 SMTP 凭据 |
+| 无法读取耳机当前音效与电量 | 私有协议未公开读取接口；恢复默认通过“选中默认槽位”完成 |
 | 单次分析上限 60 秒 | 控制内存占用，音效本身只需 ≤2 秒素材 |
-| 自定义音效 ≤2 秒 | 实测 5 秒包能完整传到耳机，但盒端擦写闪存会停在半途、播放只剩约 1 秒，2 秒是当前固件下的安全上限 |
-| 无法程序化连接 A2DP | 系统未开放该接口，需跳转系统蓝牙设置 |
-| 无法直接写入充电盒 | 写入走华为智慧音频 App 的文件替换流程，本应用负责生成合规文件并导出 |
-| 电量不显示 | 耳机私有协议未公开 |
+| 仅 arm64-v8a | 原生解码与目标机型均为 64 位 ARM |
 
 ---
 
@@ -213,13 +253,19 @@ HarmonyOS SDK 分发（需登录华为账号并同意协议），OpenHarmony 开
 - 所有组件参数名避开与基类链式方法冲突（`cardPadding` / `waveHeight` / `btnLabel` 等）
 - 每个 `catch` 都做类型收窄并记录日志；资源（播放器、文件句柄、渲染器）在 `aboutToDisappear` 中释放
 - 长列表使用 `ForEach` + 稳定 key，`ListItem` 设 `cachedCount`
-- 无障碍与深色模式：全局暗色主题，正文对比度 ≥ 4.5:1；中英文资源分离（`base` / `en_US`）
+- 重计算任务使用 `TaskPool`，并保留同步回退路径
+- 无障碍与深色模式：全局主题，正文对比度 ≥ 4.5:1；中英文界面使用集中式双语字典，系统文案由 `base` / `en_US` 资源提供
+- 音效索引采用临时文件 + rename 原子写，进程中断后可自动恢复索引外的音频文件
+
 ---
 
 ## 八、敏感信息与提交检查
 
 - `.env`、`signing/`、`.pem`、`.p12`、`.jks`、`.keystore` 等本地文件和目录不会进入 Git。
 - `server/.env.example` 只保留占位值；真实 SMTP 授权码和反馈 Token 放在本地 `server/.env` 或服务器环境变量中。
+- 应用内不保存 SMTP 凭据；当前 `FeedbackApiConfig.ENDPOINT` 与 `TOKEN` 均为空，反馈走系统分享。
+- 客户端内嵌的 Bearer Token 可以被反编译提取，只能当弱门禁使用：
+  启用在线反馈前，必须在服务端做限流（按来源 IP / 时间窗）、请求体上限与 token 轮换，不能只依赖 Token。
 - `build-profile.json5` 不保存签名密码，两套签名配置的密码字段都为空，由 `hvigorfile.ts` 在构建时注入：
   - debug：`signing/debug-password.txt`（备用通道 `signing/debug-password.enc`，可直接放 DevEco 生成的密文）
   - release：`signing/keystore-password.txt`
@@ -228,6 +274,7 @@ HarmonyOS SDK 分发（需登录华为账号并同意协议），OpenHarmony 开
   - `signing/`：`boxtone-release.p12`、`boxtone-release_cer.cer`、`boxtone_profileRelease.p7b`、`material/`
 - **material 必须与 `.p12` 同级**：hvigor 解密密码时固定取 `storeFile` 同目录下的 `material/`（见 `hvigor-ohos-plugin/src/utils/decipher-util.js`），所以调试与发布的材料不能混用。
 - 若在 DevEco 里重新生成过调试签名，密钥库密码会变，需把新密码补回 `signing/debug-password.txt`；否则签名密码为空，构建报 `00303116`（长度小于 32）。
+- 隐私：不读取设备 SN；日志中的蓝牙地址统一打码；反馈内容由用户在提交前确认。
 - 启用本地 pre-commit 检查：
 
 ```bash

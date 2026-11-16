@@ -1,3 +1,4 @@
+import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DeviceSupport, DeviceSupportLevel, SupportedDevice } from '../../common/constants/AppConstants';
 import { GlassCard } from '../../components/GlassCard';
@@ -18,8 +19,8 @@ export struct SupportedDevicesPage {
       Scroll() {
         Column({ space: 16 }) {
           SectionTitle({
-            sectionText: '实测通过机型',
-            sectionHint: `${DeviceSupport.countOf(DeviceSupportLevel.VERIFIED)} 款`
+            sectionText: I18n.t('support.verified'),
+            sectionHint: I18n.f('support.count', [`${DeviceSupport.countOf(DeviceSupportLevel.VERIFIED)}`])
           })
 
           GlassCard({ cardPadding: 16 }) {
@@ -32,8 +33,8 @@ export struct SupportedDevicesPage {
           // 全部机型转为已验证后这一栏没有内容，直接隐藏
           if (DeviceSupport.countOf(DeviceSupportLevel.OFFICIAL) > 0) {
             SectionTitle({
-              sectionText: '官方支持开盒提示音',
-              sectionHint: `${DeviceSupport.countOf(DeviceSupportLevel.OFFICIAL)} 款`
+              sectionText: I18n.t('support.official'),
+              sectionHint: I18n.f('support.count', [`${DeviceSupport.countOf(DeviceSupportLevel.OFFICIAL)}`])
             })
 
             GlassCard({ cardPadding: 16 }) {
@@ -44,14 +45,14 @@ export struct SupportedDevicesPage {
             }
           }
 
-          SectionTitle({ sectionText: '兼容性如何判断' })
+          SectionTitle({ sectionText: I18n.t('support.how') })
 
           GlassCard({ cardPadding: 16 }) {
-            this.buildNote('写入前会先通过耳机私有协议读取自报型号：只解析型号字段，不读取 SN；型号来自固件，用户改名不受影响。')
-            this.buildNote('型号优先匹配；型号未识别时回退蓝牙名。典藏版、同平台变体按基础型号前缀匹配。')
-            this.buildNote('“官方支持开盒提示音”只说明该机型具备官方功能，盒音自定义仍需协议能力探测和格式确认。')
-            this.buildNote('格式确认发生在第一个数据包之前：耳机不接受 16700Hz / 16bit 音效格式时会直接拒绝，本次不会写入任何数据，也不会损坏设备。')
-            this.buildNote('其他品牌或未适配耳机：能力查询无响应或拒绝格式时，应用会明确提示并停止写入。')
+            this.buildNote(I18n.t('support.note1'))
+            this.buildNote(I18n.t('support.note2'))
+            this.buildNote(I18n.t('support.note3'))
+            this.buildNote(I18n.t('support.note4'))
+            this.buildNote(I18n.t('support.note5'))
           }
         }
         .width('100%')
@@ -101,17 +102,18 @@ export struct SupportedDevicesPage {
         Text(device.names[0])
           .fontSize(14)
           .fontColor(Palette.TEXT_PRIMARY)
-        Text(device.detail)
+        Text(I18n.t(device.detailKey))
           .fontSize(10)
           .fontColor(Palette.TEXT_TERTIARY)
-        Text(device.modelCodes.length > 0 ? `型号 ${device.modelCodes.join(' / ')}` : '型号代码待实测回传')
+        Text(device.modelCodes.length > 0 ? I18n.f('support.model', [device.modelCodes.join(' / ')]) :
+          I18n.t('support.modelUnknown'))
           .fontSize(10)
           .fontColor(Palette.TEXT_TERTIARY)
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
 
-      Text(verified ? '已验证' : '待实测')
+      Text(verified ? I18n.t('support.verifiedTag') : I18n.t('support.pendingTag'))
         .fontSize(10)
         .fontColor(verified ? Palette.SUCCESS : Palette.WARNING)
     }
@@ -131,11 +133,11 @@ export struct SupportedDevicesPage {
         })
 
       Column({ space: 3 }) {
-        Text('支持机型')
+        Text(I18n.t('support.title'))
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
           .fontColor(Palette.TEXT_PRIMARY)
-        Text('型号识别 + 协议探测，列表供参考')
+        Text(I18n.t('support.subtitle'))
           .fontSize(10)
           .fontColor(Palette.TEXT_TERTIARY)
       }

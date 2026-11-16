@@ -9,6 +9,7 @@ import {
 import { a2dp, access, baseProfile, connection, constant } from '@kit.ConnectivityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { BtDevice, BtSnapshot, createEmptySnapshot } from '../models/DeviceModel';
+import { I18n } from '../common/i18n/I18n';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
 import { DemoService } from './DemoService';
@@ -41,6 +42,8 @@ export class BluetoothService {
   private static listenedFind: boolean = false;
   private static listenedBond: boolean = false;
   private static listenedConn: boolean = false;
+  /** 事件回调去抖计时器：系统事件经常成组到达，合并成一次刷新 */
+  private static refreshTimer: number = -1;
 
   public static init(context: common.UIAbilityContext): void {
     if (BluetoothService.initialized) {
@@ -51,7 +54,7 @@ export class BluetoothService {
     BluetoothService.registerListeners();
     // 星闪开关变化也要刷新快照：星闪连着耳机时它才是连接状态的唯一来源
     NearLinkService.init(context, (): void => {
-      BluetoothService.refresh();
+      BluetoothService.refreshDebounced();
     });
   }
 
@@ -60,7 +63,7 @@ export class BluetoothService {
       try {
         access.on('stateChange', (state: access.BluetoothState) => {
           Logger.info(MODULE, `蓝牙开关状态变化：${state}`);
-          BluetoothService.refresh();
+          BluetoothService.refreshDebounced();
         });
         BluetoothService.listenedState = true;
       } catch (error) {
@@ -87,9 +90,7 @@ export class BluetoothService {
           if (data.state === connection.BondState.BOND_STATE_BONDED) {
             BluetoothService.connectQuietly(data.deviceId);
           }
-          setTimeout(() => {
-            BluetoothService.refresh();
-          }, 900);
+          BluetoothService.refreshDebounced(900);
         });
         BluetoothService.listenedBond = true;
       } catch (error) {
@@ -103,7 +104,7 @@ export class BluetoothService {
         profile.on('connectionStateChange', (data: baseProfile.StateChangeParam) => {
           Logger.info(MODULE,
             `A2DP 连接状态变化 ${FormatUtils.maskAddress(data.deviceId)} state=${data.state}`);
-          BluetoothService.refresh();
+          BluetoothService.refreshDebounced();
         });
         BluetoothService.listenedConn = true;
       } catch (error) {
@@ -140,7 +141,7 @@ export class BluetoothService {
   private static demoSnapshot(): BtSnapshot {
     const device: BtDevice = {
       deviceId: 'AA:BB:CC:DD:EE:FF',
-      name: '演示耳机 BoxTone',
+      name: I18n.t('bt.demoDeviceName'),
       paired: true,
       audio: true,
       connected: true,
@@ -155,7 +156,7 @@ export class BluetoothService {
       scanning: false,
       activeName: device.name,
       activeId: device.deviceId,
-      statusText: '演示模式：模拟耳机已连接',
+      statusText: I18n.t('bt.demoConnected'),
       nearLinkSupported: false,
       nearLinkEnabled: false,
       nearLinkName: '',
@@ -324,6 +325,20 @@ export class BluetoothService {
     return FormatUtils.maskAddress(deviceId);
   }
 
+  /**
+   * 事件驱动的刷新入口：短时间内多次状态变化只跑最后一次。
+   * 用户操作（页签切换、写入前后）仍走 refresh()，保证能拿到最新快照。
+   */
+  public static refreshDebounced(delayMs: number = 250): void {
+    if (BluetoothService.refreshTimer >= 0) {
+      clearTimeout(BluetoothService.refreshTimer);
+    }
+    BluetoothService.refreshTimer = setTimeout(() => {
+      BluetoothService.refreshTimer = -1;
+      BluetoothService.refresh();
+    }, delayMs);
+  }
+
   /** 刷新蓝牙状态与设备列表 */
   public static async refresh(): Promise<BtSnapshot> {
     if (DemoService.isActive()) {
@@ -336,7 +351,7 @@ export class BluetoothService {
     try {
       snapshot.authorized = BluetoothService.hasPermission();
       if (!snapshot.authorized) {
-        snapshot.statusText = '需要蓝牙权限';
+        snapshot.statusText = I18n.t('bt.needPermission');
         BluetoothService.commit(snapshot);
         return snapshot;
       }
@@ -346,7 +361,7 @@ export class BluetoothService {
       const state: access.BluetoothState = access.getState();
       snapshot.enabled = state === access.BluetoothState.STATE_ON;
       if (!snapshot.enabled) {
-        snapshot.statusText = '蓝牙未开启';
+        snapshot.statusText = I18n.t('bt.off');
         BluetoothService.commit(snapshot);
         return snapshot;
       }
@@ -425,20 +440,20 @@ export class BluetoothService {
 
       snapshot.pairedDevices = paired;
       if (activeIndex >= 0) {
-        snapshot.statusText = viaNearLink ? '星闪已连接' : '音频通道已连接';
+        snapshot.statusText = viaNearLink ? I18n.t('bt.nearLinkConnected') : I18n.t('bt.audioConnected');
       } else if (viaNearLink) {
         snapshot.statusText = snapshot.nearLinkBtId.length > 0 ?
-          '星闪已连接' : '星闪已连接（未配对经典蓝牙）';
+          I18n.t('bt.nearLinkConnected') : I18n.t('bt.nearLinkConnectedNoBt');
       } else if (connectedIds.length > 0) {
         // 连上了但归不到配对列表里的地址（系统虚拟化地址）：仍要把名字显示出来，
         // 否则会出现「状态卡说未连接、却又标记已连接音频设备」的自相矛盾
         snapshot.activeId = connectedIds[0];
         snapshot.activeName = BluetoothService.displayNameOf(connectedIds[0]);
-        snapshot.statusText = '音频通道已连接';
+        snapshot.statusText = I18n.t('bt.audioConnected');
       } else if (paired.length > 0) {
-        snapshot.statusText = '已配对，未连接';
+        snapshot.statusText = I18n.t('bt.pairedNotConnected');
       } else {
-        snapshot.statusText = '尚未配对耳机';
+        snapshot.statusText = I18n.t('bt.notPaired');
       }
 
       snapshot.nearbyDevices = BluetoothService.snapshot.nearbyDevices;
@@ -451,14 +466,14 @@ export class BluetoothService {
       if (businessError.code === 201) {
         // 201：缺少 ohos.permission.ACCESS_BLUETOOTH
         snapshot.authorized = false;
-        snapshot.statusText = '需要蓝牙权限';
+        snapshot.statusText = I18n.t('bt.needPermission');
       } else if (businessError.code === 801) {
         snapshot.supported = false;
-        snapshot.statusText = '当前设备不支持蓝牙接口';
+        snapshot.statusText = I18n.t('bt.unsupported');
       } else if (businessError.code === 2900003) {
-        snapshot.statusText = '蓝牙未开启';
+        snapshot.statusText = I18n.t('bt.off');
       } else {
-        snapshot.statusText = `蓝牙状态读取失败（${businessError.code}）`;
+        snapshot.statusText = I18n.f('bt.readFailed', [`${businessError.code}`]);
       }
       BluetoothService.commit(snapshot);
       return snapshot;

@@ -15,12 +15,12 @@ interface PartialWave {
  */
 export class ToneSynthesizerService {
   public static readonly PRESETS: SynthPreset[] = [
-    { id: 'dawn', name: '晨曦', desc: '清亮钟琴，最接近原厂提示音' },
-    { id: 'drop', name: '水滴', desc: '下坠滑音，干净利落' },
-    { id: 'pulse', name: '脉冲', desc: '双击短促，适合安静场景' },
-    { id: 'rise', name: '上升', desc: '音高上扬，开盖更有仪式感' },
-    { id: 'wood', name: '木质', desc: '马林巴质感，温暖厚实' },
-    { id: 'glass', name: '琉璃', desc: '长尾泛音，空间感强' }
+    { id: 'dawn', nameKey: 'preset.dawn.name', descKey: 'preset.dawn.desc' },
+    { id: 'drop', nameKey: 'preset.drop.name', descKey: 'preset.drop.desc' },
+    { id: 'pulse', nameKey: 'preset.pulse.name', descKey: 'preset.pulse.desc' },
+    { id: 'rise', nameKey: 'preset.rise.name', descKey: 'preset.rise.desc' },
+    { id: 'wood', nameKey: 'preset.wood.name', descKey: 'preset.wood.desc' },
+    { id: 'glass', nameKey: 'preset.glass.name', descKey: 'preset.glass.desc' }
   ];
 
   public static generate(presetId: string): PcmAudio {

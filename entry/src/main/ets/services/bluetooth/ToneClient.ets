@@ -1,6 +1,7 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { connection, constant, socket } from '@kit.ConnectivityKit';
 import { MbbSpec } from '../../common/constants/AppConstants';
+import { I18n } from '../../common/i18n/I18n';
 import { ByteUtils } from '../../common/utils/ByteUtils';
 import { Logger } from '../../common/utils/Logger';
 import { MbbProtocol, PacketAssembler, ToneStatus, ToneStatusCodec } from './MbbProtocol';
@@ -34,20 +35,27 @@ export const TONE_CODE_UNSUPPORTED: number = -96;
 export class ToneErrorReason {
   static readonly UNSUPPORTED: string = 'unsupported';
   static readonly FORMAT: string = 'format';
+  static readonly LINK: string = 'link';
+  static readonly ACK_TIMEOUT: string = 'ackTimeout';
+  static readonly FLUSH_TIMEOUT: string = 'flushTimeout';
+  static readonly DATA_WRITTEN: string = 'dataWritten';
+  static readonly CANCELLED: string = 'cancelled';
 }
 
 export class CancelledError extends ToneError {
   constructor() {
-    super('已取消', -99);
+    super(I18n.t('toneErr.cancelled'), -99);
     this.name = 'CancelledError';
+    this.reason = ToneErrorReason.CANCELLED;
   }
 }
 
 /** 回执超时：命令可能刚发出去就被耳机忽略，值得原样重发一次 */
 export class AckTimeoutError extends ToneError {
   constructor() {
-    super('等待耳机回执超时，请保持双耳入盒、盒盖打开后重试', -98);
+    super(I18n.t('toneErr.ackTimeout'), -98);
     this.name = 'AckTimeoutError';
+    this.reason = ToneErrorReason.ACK_TIMEOUT;
   }
 }
 
@@ -218,41 +226,39 @@ export class ToneClient {
     }
     const code: number = ToneClient.codeOf(error);
     if (code === 201) {
-      return new ToneError('缺少「附近设备」权限，请在系统设置中允许后重试', code);
+      return new ToneError(I18n.t('toneErr.perm'), code);
     }
     if (code === 801) {
-      return new ToneError('当前设备或系统版本不支持蓝牙串口连接', code);
+      return new ToneError(I18n.t('toneErr.unsupportedBt'), code);
     }
     if (code === 2900001) {
-      return new ToneError('蓝牙服务未就绪，请关闭再打开手机蓝牙后重试', code);
+      return new ToneError(I18n.t('toneErr.serviceNotReady'), code);
     }
     if (code === 2900003) {
-      return new ToneError('请先开启手机蓝牙', code);
+      return new ToneError(I18n.t('toneErr.btOff'), code);
     }
     if (code === 2900004) {
-      return new ToneError('系统未启用串口（SPP）能力', code);
+      return new ToneError(I18n.t('toneErr.noSpp'), code);
     }
     if (code === 2900099) {
       return new ToneError(neutral
-        ? '耳机没有接受串口连接：可能被其他应用占用，或这款耳机不支持盒音自定义。' +
-          '请关闭占用连接的应用后重试；非华为耳机不支持本功能'
-        : '耳机没有接受串口连接：通道可能被智慧音频占用，请把它从后台移除，' +
-          '再把双耳放回盒内、打开盒盖后重试', code);
+        ? I18n.t('toneErr.notAcceptedNeutral')
+        : I18n.t('toneErr.notAccepted'), code);
     }
     if (code === 2901054) {
-      return new ToneError('蓝牙串口通信中断，请合盖后再开盖后重试', code);
+      return new ToneError(I18n.t('toneErr.linkLost'), code);
     }
     if (code === -1) {
       return new ToneError(neutral
-        ? '耳机拒绝了这次串口连接：可能被其他应用占用，或这款耳机不支持盒音自定义。' +
-          '请关闭占用连接的应用后重试；非华为耳机不支持本功能'
-        : '耳机拒绝了这次串口连接：通道可能被智慧音频占用，请把它从后台移除后再试', code);
+        ? I18n.t('toneErr.rejectedNeutral')
+        : I18n.t('toneErr.rejected'), code);
     }
     if (code === 401) {
-      return new ToneError('设备地址无效，请在系统蓝牙设置中取消配对后重新配对', code);
+      return new ToneError(I18n.t('toneErr.badAddress'), code);
     }
     const text: string = ToneClient.messageOf(error);
-    return new ToneError(`串口连接失败${text.length > 0 ? `（${text}）` : ''}`, code);
+    return new ToneError(text.length > 0 ?
+      I18n.f('toneErr.serialFailedWith', [text]) : I18n.t('toneErr.serialFailed'), code);
   }
 
   /**
@@ -268,7 +274,7 @@ export class ToneClient {
           return;
         }
         settled = true;
-        reject(new ToneError('连接超时，耳机没有响应。请确认双耳在盒内并打开盒盖后重试'));
+        reject(new ToneError(I18n.t('toneErr.connectTimeout')));
       }, MbbSpec.CONNECT_TIMEOUT_MS);
       const options: socket.SppOptions = {
         uuid: MbbSpec.SPP_UUID,
@@ -414,11 +420,10 @@ export class ToneClient {
               if (silentFailures >= 3) {
                 this.broken = true;
                 throw new ToneError(this.neutralHints
-                  ? '耳机串口没有响应：请把双耳放回盒内、打开盒盖，关闭占用连接的应用，合盖 5 秒后再开盖重试'
-                  : '耳机串口没有响应：请把双耳放回盒内、打开盒盖，关闭智慧生活等占用连接的应用，' +
-                    '合盖 5 秒后再开盖重试');
+                  ? I18n.t('toneErr.noResponseNeutral')
+                  : I18n.t('toneErr.noResponse'));
               }
-              throw new ToneError('串口连上了但耳机没有响应，正在重连');
+              throw new ToneError(I18n.t('toneErr.silentReconnect'));
             }
             this.startKeepAlive();
             return;
@@ -452,8 +457,8 @@ export class ToneClient {
     this.broken = true;
     throw lastError !== null ? lastError as ToneError :
       new ToneError(this.neutralHints
-        ? '无法连接耳机：请双耳入盒并打开盒盖，合盖 5 秒后再开盖；如果这不是华为耳机，本功能不支持'
-        : '无法连接耳机：请双耳入盒并打开盒盖，合盖 5 秒后再开盖，并关闭智慧生活等占用连接的应用');
+        ? I18n.t('toneErr.cannotConnectNeutral')
+        : I18n.t('toneErr.cannotConnect'));
   }
 
   /** 耳机是否又把音频通道连回来了 */
@@ -601,7 +606,9 @@ export class ToneClient {
     }
     // 链路已死不能报“已取消”：那会把真正的原因（串口被耳机收回）盖掉
     if (this.clientSocket < 0 || this.broken) {
-      throw new ToneError('蓝牙串口通信中断，请合盖后再开盖后重试', 2901054);
+      const error: ToneError = new ToneError(I18n.t('toneErr.linkLost'), 2901054);
+      error.reason = ToneErrorReason.LINK;
+      throw error;
     }
     if (!bulk) {
       this.trace(`TX ${ToneClient.shortHex(payload)}`);
@@ -657,7 +664,9 @@ export class ToneClient {
         throw new CancelledError();
       }
       if (this.broken) {
-        throw new ToneError('蓝牙连接已中断，请重新连接耳机');
+        const error: ToneError = new ToneError(I18n.t('toneErr.linkDown'));
+        error.reason = ToneErrorReason.LINK;
+        throw error;
       }
       const packet: Uint8Array | null = this.takeMatch(predicate);
       if (packet !== null) {
@@ -814,9 +823,8 @@ export class ToneClient {
     // 固件明确报了能力项（值为 0）= 明确不支持；tag 缺失 = 认不出这款固件
     const declared: boolean = caps.has(21) || caps.has(14);
     const failure: ToneError = declared
-      ? new ToneError('这款耳机报告不支持盒音自定义，本次没有写入任何数据', TONE_CODE_UNSUPPORTED)
-      : new ToneError('无法识别这款耳机的固件能力，盒音自定义可能不兼容，本次没有写入任何数据',
-        TONE_CODE_UNSUPPORTED);
+      ? new ToneError(I18n.t('toneErr.unsupportedReported'), TONE_CODE_UNSUPPORTED)
+      : new ToneError(I18n.t('toneErr.unknownFirmware'), TONE_CODE_UNSUPPORTED);
     failure.reason = ToneErrorReason.UNSUPPORTED;
     failure.diagnostic = `CAPS=${capsHex} declared=${declared ? 1 : 0}`;
     throw failure;
@@ -837,7 +845,7 @@ export class ToneClient {
     this.trace(`TONE_SET id=${id} sel=${selected} vol=${clamped} -> enabled=${status.enabled} ` +
       `master=${status.master} tone=${status.toneId} selected=${status.selected}`);
     if (!status.enabled || status.selected !== selected) {
-      throw new ToneError('耳机没有确认音效设置，请重试');
+      throw new ToneError(I18n.t('toneErr.applyFailed'));
     }
     return status;
   }
@@ -882,17 +890,17 @@ export class ToneClient {
       shown = bounded;
       onProgress(bounded, stage);
     };
-    emit(0.04, '读取耳机状态');
+    emit(0.04, I18n.t('stage.readStatus'));
     // 不预发盒内查询：FreeClip 2 经常不回包，空等还会让耳机静默关掉 RFCOMM
     const before: ToneStatus = await this.query();
-    emit(0.06, '读取当前音效');
+    emit(0.06, I18n.t('stage.readTone'));
     // 链路已证明可用后再查型号：只读 15 号字段，失败忽略，不阻塞写入
     this.deviceModelCode = await this.readDeviceModel();
     const protocol: number = await this.protocolVersion();
     this.protocolUsed = protocol;
     this.trace(`PROTOCOL ${protocol} PCM_BYTES ${pcm.length} PACKAGE_BYTES ${data.length}`);
 
-    emit(0.08, '准备传输');
+    emit(0.08, I18n.t('stage.prepare'));
     // 从声明音效包开始就进入传输态：整段期间不发心跳
     this.transferring = true;
     if (protocol === 1) {
@@ -917,7 +925,7 @@ export class ToneClient {
         throw new CancelledError();
       }
       if (Date.now() - started > MbbSpec.UPLOAD_TOTAL_TIMEOUT_MS) {
-        throw new ToneError('传输时间过长，请重新连接后重试');
+        throw new ToneError(I18n.t('toneErr.timeout'));
       }
       const idleTimeout: number = receivedAll ? MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS : MbbSpec.UPLOAD_IDLE_TIMEOUT_MS;
       let packet: Uint8Array = new Uint8Array(0);
@@ -935,7 +943,9 @@ export class ToneClient {
         if (receivedAll) {
           // 数据已完整送达，但耳机没有回报擦写完成。此时音效可能只写进去一部分，
           // 不要自动补选（会选中半个音效）；重传也没有意义，交给用户合盖重试
-          throw new ToneError('数据已全部送达耳机，但没等到擦写完成。请合盖 3 秒再开盖后重试', -98);
+          const flushError: ToneError = new ToneError(I18n.t('toneErr.flushTimeout'), -98);
+          flushError.reason = ToneErrorReason.FLUSH_TIMEOUT;
+          throw flushError;
         }
         throw error as Error;
       }
@@ -957,8 +967,7 @@ export class ToneClient {
           }
           // 这一步在任何 PCM 之前：被拒说明格式不被接受，但一个字节都没落盘
           const formatError: ToneError = new ToneError(
-            `该机型不接受当前音效格式（16700Hz / 16bit / ${pcm.length} 字节），` +
-            '本次没有写入任何数据。请把机型和这条日志一起反馈', result);
+            I18n.f('toneErr.formatRejected', [`${pcm.length}`]), result);
           formatError.reason = ToneErrorReason.FORMAT;
           formatError.diagnostic = `PACKAGE_BYTES=${data.length} PCM_BYTES=${pcm.length} ` +
             `PROTOCOL=${protocol} RESULT=${result}`;
@@ -967,7 +976,7 @@ export class ToneClient {
         if (protocol === 1) {
           const mcuField: Uint8Array | undefined = fields.get(3);
           if (mcuField === undefined || mcuField.length !== 2) {
-            throw new ToneError('耳机没有返回正确的音效格式');
+            throw new ToneError(I18n.t('toneErr.noFormat'));
           }
           data = MbbProtocol.tonePackage(pcm, 'Whistle',
             ByteUtils.concat([new Uint8Array(2), mcuField]));
@@ -988,34 +997,34 @@ export class ToneClient {
         }
         const bytes: Uint8Array | undefined = fields.get(3);
         if (bytes === undefined || bytes.length !== 2) {
-          throw new ToneError('耳机没有返回分包大小');
+          throw new ToneError(I18n.t('toneErr.noChunkSize'));
         }
         chunkSize = ((ByteUtils.byteAt(bytes, 0) << 8) | ByteUtils.byteAt(bytes, 1)) - 9;
         if (chunkSize < 1 || chunkSize > 16300) {
-          throw new ToneError('耳机返回的分包大小不正确');
+          throw new ToneError(I18n.t('toneErr.badChunkSize'));
         }
         this.applyChunkSizeHint(chunkSize);
         await this.send(ByteUtils.fromHex('0909010101'));
       } else if (type === 3) {
         const offsetField: Uint8Array | undefined = fields.get(protocol === 1 ? 2 : 1);
         if (offsetField === undefined || offsetField.length !== 4) {
-          throw new ToneError('缺少传输偏移');
+          throw new ToneError(I18n.t('toneErr.noOffset'));
         }
         const offset: number = ByteUtils.intBE(offsetField);
         if (protocol === 1) {
           const bytes: Uint8Array | undefined = fields.get(5);
           if (bytes === undefined || bytes.length !== 2) {
-            throw new ToneError('缺少分包大小');
+            throw new ToneError(I18n.t('toneErr.missingChunkSize'));
           }
           chunkSize = (ByteUtils.byteAt(bytes, 0) << 8) | ByteUtils.byteAt(bytes, 1);
           this.applyChunkSizeHint(chunkSize);
         }
         if (chunkSize < 1 || chunkSize > 16300 || offset < 0 || offset > data.length) {
-          throw new ToneError('耳机请求了无效的数据范围');
+          throw new ToneError(I18n.t('toneErr.badRange'));
         }
         const bitmapField: Uint8Array | undefined = fields.get(protocol === 1 ? 4 : 3);
         if (bitmapField === undefined || bitmapField.length === 0) {
-          throw new ToneError('缺少分包回执');
+          throw new ToneError(I18n.t('toneErr.noAck'));
         }
         const bitmap: number = ByteUtils.byteAt(bitmapField, 0);
         for (let index = 0; index < 8; index++) {
@@ -1052,7 +1061,7 @@ export class ToneClient {
           `elapsed=${Date.now() - started}ms`);
         // 传输阶段占 8%~50%：一个分包组是 8 个 chunk，按下一次要写的偏移估算
         const sentBytes: number = Math.min(data.length, offset + chunkSize * 8);
-        emit(0.08 + 0.42 * (sentBytes / data.length), '正在传输');
+        emit(0.08 + 0.42 * (sentBytes / data.length), I18n.t('stage.transfer'));
       } else if (type === 5) {
         if (protocol === 2) {
           const totalField: Uint8Array | undefined = fields.get(1);
@@ -1064,7 +1073,7 @@ export class ToneClient {
           if (total > 0) {
             this.trace(`UPLOAD_WRITE ${written}/${total}`);
             // 写入阶段占 50%~95%：耳机的 total 是整包的两倍（收 + 校验写），单独一段
-            emit(0.5 + 0.45 * (written / total), '正在写入充电盒');
+            emit(0.5 + 0.45 * (written / total), I18n.t('stage.flash'));
             if (!receivedAll && written >= data.length) {
               receivedAll = true;
             }
@@ -1075,7 +1084,8 @@ export class ToneClient {
         } else {
           const update: Uint8Array | undefined = fields.get(2);
           if (update !== undefined && update.length >= 2) {
-            const stage: string = ByteUtils.byteAt(update, 0) === 2 ? '正在写入充电盒' : '正在传输';
+            const stage: string = ByteUtils.byteAt(update, 0) === 2 ?
+              I18n.t('stage.flash') : I18n.t('stage.transfer');
             emit(ToneClient.range(ByteUtils.byteAt(update, 1) / 100, 0.1, 0.95), stage);
           }
         }
@@ -1093,7 +1103,7 @@ export class ToneClient {
           // 擦写大包时可能几十秒不发任何进度，按普通空闲超时处理会误判失败。
           receivedAll = true;
           Logger.info(MODULE, `UPLOAD_RECEIVED_ALL bytes=${data.length} elapsed=${Date.now() - started}ms`);
-          onProgress(shown, '耳机正在擦写闪存');
+          onProgress(shown, I18n.t('stage.flushing'));
         }
       } else if (type === 7) {
         const errorField: Uint8Array | undefined = fields.get(protocol === 1 ? 2 : 127);
@@ -1115,7 +1125,7 @@ export class ToneClient {
     const elapsed: number = Date.now() - started;
     Logger.info(MODULE, `UPLOAD_DONE bytes=${data.length} elapsed=${elapsed}ms ` +
       `rate=${Math.round(data.length / Math.max(1, elapsed))}KB/s chunk=${this.writeChunk}`);
-    emit(0.97, '正在应用音效');
+    emit(0.97, I18n.t('stage.apply'));
     /**
      * 进度一满就立刻发选中命令，绝不再空等。
      *
@@ -1126,7 +1136,7 @@ export class ToneClient {
      * 选中命令本身也是"写入"，重发会重置耳机的空闲计时，所以失败就贴着链路快速重试。
      */
     const status: ToneStatus = await this.confirmTone(before.volume);
-    emit(1, '已应用');
+    emit(1, I18n.t('stage.applied'));
     // 分片发送时用过的空档要还原，避免影响后续命令的响应速度
     this.writeGap = MbbSpec.SPP_WRITE_GAP_MS;
     this.transferring = false;
@@ -1152,8 +1162,9 @@ export class ToneClient {
         throw new CancelledError();
       }
       if (this.clientSocket < 0 || this.broken) {
-        throw new ToneError('音效已写入耳机，但耳机收走了串口，没能自动切换。请合盖 3 秒后再开盖重试',
-          2901054);
+        const writtenError: ToneError = new ToneError(I18n.t('toneErr.writtenNoSwitch'), 2901054);
+        writtenError.reason = ToneErrorReason.DATA_WRITTEN;
+        throw writtenError;
       }
       try {
         // 回执超时压到 1.5 秒：即使耳机忽略这次命令，也不会让链路空着超过 4 秒
@@ -1168,11 +1179,12 @@ export class ToneClient {
       }
     }
     if (this.clientSocket < 0 || this.broken) {
-      throw new ToneError('音效已写入耳机，但耳机收走了串口，没能自动切换。请合盖 3 秒后再开盖重试',
-        2901054);
+      const writtenError: ToneError = new ToneError(I18n.t('toneErr.writtenNoSwitch'), 2901054);
+      writtenError.reason = ToneErrorReason.DATA_WRITTEN;
+      throw writtenError;
     }
     throw lastError !== null ? lastError as Error
-      : new ToneError('耳机没有确认音效设置，请合盖 3 秒后再开盖重试');
+      : new ToneError(I18n.t('toneErr.applyTimeout'));
   }
 
   /**

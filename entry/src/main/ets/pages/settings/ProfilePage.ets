@@ -1,5 +1,6 @@
 import { bundleManager, common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DeviceSupport, DeviceSupportLevel, SupportInfo, ToneSpec } from '../../common/constants/AppConstants';
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
@@ -108,11 +109,11 @@ export struct ProfilePage {
   @Builder
   buildHeader() {
     Column({ space: 6 }) {
-      Text('我的')
+      Text(I18n.t('profile.title'))
         .fontSize(Metric.TITLE_SIZE)
         .fontWeight(FontWeight.Bold)
         .fontColor(Palette.TEXT_PRIMARY)
-      Text('应用信息、支持机型与诊断工具')
+      Text(I18n.t('profile.subtitle'))
         .fontSize(12)
         .fontColor(Palette.TEXT_SECONDARY)
     }
@@ -131,11 +132,11 @@ export struct ProfilePage {
           .borderRadius(14)
 
         Column({ space: 5 }) {
-          Text('盒音工坊')
+          Text(I18n.t('app.name'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
             .fontColor(Palette.TEXT_PRIMARY)
-          Text(`v${this.versionName} · 为华为充电盒定制提示音`)
+          Text(I18n.f('profile.appTagline', [this.versionName]))
             .fontSize(11)
             .fontColor(Palette.TEXT_TERTIARY)
         }
@@ -149,21 +150,29 @@ export struct ProfilePage {
   @Builder
   buildStats() {
     Row({ space: Metric.GAP }) {
-      StatCell({ cellLabel: '音效', cellValue: `${this.toneCount}`, cellUnit: '个' })
-      StatCell({ cellLabel: '存储', cellValue: FormatUtils.bytes(this.toneBytes), cellUnit: '' })
-      StatCell({ cellLabel: '日志', cellValue: `${this.logCount}`, cellUnit: '条' })
+      StatCell({
+        cellLabel: I18n.t('profile.statTone'),
+        cellValue: `${this.toneCount}`,
+        cellUnit: I18n.t('profile.unitItems')
+      })
+      StatCell({ cellLabel: I18n.t('profile.statStorage'), cellValue: FormatUtils.bytes(this.toneBytes), cellUnit: '' })
+      StatCell({
+        cellLabel: I18n.t('profile.statLog'),
+        cellValue: `${this.logCount}`,
+        cellUnit: I18n.t('profile.unitLogs')
+      })
     }
     .width('100%')
   }
 
   @Builder
   buildActions() {
-    SectionTitle({ sectionText: '诊断与日志' })
+    SectionTitle({ sectionText: I18n.t('profile.diagnostics') })
 
     GlassCard({ cardPadding: 4 }) {
       ActionRow({
-        rowTitle: '日志中心',
-        rowDesc: `${this.logCount} 条记录 · ${FormatUtils.bytes(this.logBytes)}`,
+        rowTitle: I18n.t('profile.logCenter'),
+        rowDesc: I18n.f('profile.logDesc', [`${this.logCount}`, FormatUtils.bytes(this.logBytes)]),
         rowIcon: $r('app.media.ic_log'),
         onTap: (): void => {
           EventBus.emit(AppEvent.OPEN_LOG, 1);
@@ -173,10 +182,10 @@ export struct ProfilePage {
         .color(Palette.FILL_FAINT)
         .margin({ left: 16, right: 16 })
       ActionRow({
-        rowTitle: '反馈与建议',
+        rowTitle: I18n.t('profile.feedback'),
         rowDesc: SupportInfo.FEEDBACK_ONLINE_ENABLED
-          ? '提交问题或建议，自动附带诊断日志'
-          : '在线反馈暂未开放，可通过邮箱联系',
+          ? I18n.t('profile.feedbackDescOnline')
+          : I18n.t('profile.feedbackDescOffline'),
         rowIcon: $r('app.media.ic_feedback'),
         onTap: (): void => {
           EventBus.emit(AppEvent.OPEN_FEEDBACK, 1);
@@ -187,13 +196,13 @@ export struct ProfilePage {
 
   @Builder
   buildAppearance() {
-    SectionTitle({ sectionText: '外观设置' })
+    SectionTitle({ sectionText: I18n.t('profile.appearance') })
 
     GlassCard({ cardPadding: 10 }) {
       Row({ space: 8 }) {
-        ThemeChip({ chipLabel: '深色', chipMode: ThemeMode.DARK })
-        ThemeChip({ chipLabel: '浅色', chipMode: ThemeMode.LIGHT })
-        ThemeChip({ chipLabel: '跟随系统', chipMode: ThemeMode.SYSTEM })
+        ThemeChip({ chipLabel: I18n.t('profile.dark'), chipMode: ThemeMode.DARK })
+        ThemeChip({ chipLabel: I18n.t('profile.light'), chipMode: ThemeMode.LIGHT })
+        ThemeChip({ chipLabel: I18n.t('profile.system'), chipMode: ThemeMode.SYSTEM })
       }
       .width('100%')
     }
@@ -202,17 +211,18 @@ export struct ProfilePage {
   /** 支持机型入口摘要："官方支持待实测"为 0 时省略这一段 */
   private supportSummary(): string {
     const official: number = DeviceSupport.countOf(DeviceSupportLevel.OFFICIAL);
-    const officialPart: string = official > 0 ? ` · ${official} 款官方支持待实测` : '';
-    return `${DeviceSupport.countOf(DeviceSupportLevel.VERIFIED)} 款实测${officialPart} · 查看列表`;
+    const officialPart: string = official > 0 ? I18n.f('profile.supportSummaryOfficial', [`${official}`]) : '';
+    return I18n.f('profile.supportSummary',
+      [`${DeviceSupport.countOf(DeviceSupportLevel.VERIFIED)}`, officialPart]);
   }
 
   @Builder
   buildSupportEntry() {
-    SectionTitle({ sectionText: '支持与兼容' })
+    SectionTitle({ sectionText: I18n.t('profile.supportCompat') })
 
     GlassCard({ cardPadding: 4 }) {
       ActionRow({
-        rowTitle: '支持机型',
+        rowTitle: I18n.t('profile.supportedModels'),
         rowDesc: this.supportSummary(),
         rowIcon: $r('app.media.ic_check'),
         onTap: (): void => {
@@ -224,12 +234,12 @@ export struct ProfilePage {
 
   @Builder
   buildLegal() {
-    SectionTitle({ sectionText: '关于与协议' })
+    SectionTitle({ sectionText: I18n.t('profile.legal') })
 
     GlassCard({ cardPadding: 4 }) {
       ActionRow({
-        rowTitle: '关于盒音工坊',
-        rowDesc: `v${this.versionName} · 产品介绍与版本信息`,
+        rowTitle: I18n.t('profile.about'),
+        rowDesc: I18n.f('profile.aboutDesc', [this.versionName]),
         rowIcon: $r('app.media.ic_sparkle'),
         onTap: (): void => {
           this.showAbout = true;
@@ -241,8 +251,8 @@ export struct ProfilePage {
           .color(Palette.FILL_FAINT)
           .margin({ left: 16, right: 16 })
         ActionRow({
-          rowTitle: '隐私政策',
-          rowDesc: '查看我们如何处理你的信息',
+          rowTitle: I18n.t('profile.privacy'),
+          rowDesc: I18n.t('profile.privacyDesc'),
           rowIcon: $r('app.media.ic_info'),
           onTap: (): void => {
             this.openPrivacy();
@@ -263,10 +273,10 @@ export struct ProfilePage {
             .width(13)
             .height(13)
             .fillColor(Palette.TEXT_TERTIARY)
-          Text('版本')
+          Text(I18n.t('profile.version'))
             .fontSize(14)
             .fontColor(Palette.TEXT_TERTIARY)
-          Text(`v${this.versionName}（Build ${this.versionCode}）`)
+          Text(I18n.f('profile.versionBuild', [this.versionName, `${this.versionCode}`]))
             .fontSize(14)
             .fontColor(Palette.TEXT_TERTIARY)
         }
@@ -282,11 +292,11 @@ export struct ProfilePage {
             .height(56)
             .borderRadius(15)
           Column({ space: 4 }) {
-            Text('盒音工坊')
+            Text(I18n.t('app.name'))
               .fontSize(19)
               .fontWeight(FontWeight.Medium)
               .fontColor(Palette.TEXT_PRIMARY)
-            Text(`版本 v${this.versionName}（Build ${this.versionCode}）`)
+            Text(I18n.f('profile.versionBuildLong', [this.versionName, `${this.versionCode}`]))
               .fontSize(11)
               .fontColor(Palette.TEXT_TERTIARY)
           }
@@ -297,7 +307,7 @@ export struct ProfilePage {
       }
 
       ListItem() {
-        Text('把喜欢的旋律做成华为耳机充电盒的开盒提示音。音效在本机生成并直接写入充电盒，不上传任何音频。')
+        Text(I18n.t('profile.aboutBody'))
           .fontSize(12)
           .fontColor(Palette.TEXT_SECONDARY)
           .lineHeight(19)
@@ -306,11 +316,11 @@ export struct ProfilePage {
       ListItem() {
         GlassCard({ cardPadding: 16 }) {
           SpecRow({
-            specLabel: '收录机型',
-            specValue: `${DeviceSupport.SUPPORTED.length} 款 · 持续增加`,
+            specLabel: I18n.t('profile.modelCount'),
+            specValue: I18n.f('profile.modelCountValue', [`${DeviceSupport.SUPPORTED.length}`]),
             showDivider: true
           })
-          SpecRow({ specLabel: '反馈邮箱', specValue: SupportInfo.EMAIL })
+          SpecRow({ specLabel: I18n.t('profile.feedbackEmail'), specValue: SupportInfo.EMAIL })
         }
       }
 
@@ -318,8 +328,8 @@ export struct ProfilePage {
       ListItem() {
         GlassCard({ cardPadding: 8 }) {
           AboutLinkRow({
-            rowTitle: '更新日志',
-            rowAction: '查看',
+            rowTitle: I18n.t('profile.changelog'),
+            rowAction: I18n.t('profile.view'),
             rowIcon: $r('app.media.ic_log'),
             onTap: (): void => {
               this.showAbout = false;
@@ -330,8 +340,8 @@ export struct ProfilePage {
             .color(Palette.FILL_FAINT)
             .margin({ left: 8, right: 8 })
           AboutLinkRow({
-            rowTitle: '五星好评',
-            rowAction: '点击鼓励',
+            rowTitle: I18n.t('profile.rate'),
+            rowAction: I18n.t('profile.rateAction'),
             rowIcon: $r('app.media.ic_sparkle'),
             onTap: (): void => {
               this.openAppGallery();
@@ -341,8 +351,8 @@ export struct ProfilePage {
             .color(Palette.FILL_FAINT)
             .margin({ left: 8, right: 8 })
           AboutLinkRow({
-            rowTitle: '捐赠支持',
-            rowAction: '点击投喂',
+            rowTitle: I18n.t('profile.donate'),
+            rowAction: I18n.t('profile.donateAction'),
             rowIcon: $r('app.media.ic_feedback'),
             onTap: (): void => {
               // 捐赠图片暂未提供：入口先保持无响应，后续在同一点击事件里打开图片
@@ -352,33 +362,52 @@ export struct ProfilePage {
       }
 
       ListItem() {
-        SectionTitle({ sectionText: '编码规则' })
+        SectionTitle({ sectionText: I18n.t('profile.encoding') })
       }
 
       ListItem() {
         GlassCard({ cardPadding: 16 }) {
-          SpecRow({ specLabel: '采样率', specValue: `${ToneSpec.SAMPLE_RATE} Hz`, showDivider: true })
-          SpecRow({ specLabel: '位深', specValue: '16 bit 有符号', showDivider: true })
-          SpecRow({ specLabel: '声道', specValue: '单声道 Mono', showDivider: true })
-          SpecRow({ specLabel: '文件头', specValue: '无（RAW）', showDivider: true })
-          SpecRow({ specLabel: '单秒大小', specValue: `${ToneSpec.BYTES_PER_SECOND} 字节`, showDivider: true })
           SpecRow({
-            specLabel: '时长上限',
-            specValue: `${ToneSpec.MAX_SECONDS} 秒 / ${ToneSpec.MAX_BYTES} 字节`
+            specLabel: I18n.t('profile.sampleRate'),
+            specValue: `${ToneSpec.SAMPLE_RATE} Hz`,
+            showDivider: true
+          })
+          SpecRow({
+            specLabel: I18n.t('profile.bitDepth'),
+            specValue: I18n.t('profile.bitDepthValue'),
+            showDivider: true
+          })
+          SpecRow({
+            specLabel: I18n.t('profile.channels'),
+            specValue: I18n.t('profile.channelsValue'),
+            showDivider: true
+          })
+          SpecRow({
+            specLabel: I18n.t('profile.header'),
+            specValue: I18n.t('profile.headerValue'),
+            showDivider: true
+          })
+          SpecRow({
+            specLabel: I18n.t('profile.secondSize'),
+            specValue: I18n.f('tone.byteCount', [`${ToneSpec.BYTES_PER_SECOND}`]),
+            showDivider: true
+          })
+          SpecRow({
+            specLabel: I18n.t('profile.durationLimit'),
+            specValue: I18n.f('profile.durationLimitValue',
+              [`${ToneSpec.MAX_SECONDS}`, `${ToneSpec.MAX_BYTES}`])
           })
 
           Column({ space: 8 }) {
-            Text('为什么是 16700Hz')
+            Text(I18n.t('profile.why16700'))
               .fontSize(12)
               .fontWeight(FontWeight.Medium)
               .fontColor(Palette.ACCENT)
-            Text('充电盒的音频解码器未使用标准 16000Hz，而是标定在约 16700Hz。' +
-              '若直接放入 16000Hz 素材，播放时音调会整体升高；按 16700Hz 导出可保持原本听感。')
+            Text(I18n.t('profile.why16700Body'))
               .fontSize(11)
               .fontColor(Palette.TEXT_SECONDARY)
               .lineHeight(18)
-            Text('文件大小 = 声道数 × 位深 × 采样率 × 时长 ÷ 8，1 秒固定为 33400 字节。' +
-              '因无文件头，时长与体积严格成正比，超长文件无法写入充电盒。')
+            Text(I18n.t('profile.sizeRuleBody'))
               .fontSize(11)
               .fontColor(Palette.TEXT_SECONDARY)
               .lineHeight(18)
@@ -391,12 +420,12 @@ export struct ProfilePage {
 
       ListItem() {
         Column({ space: 10 }) {
-          Text('本应用为个人开发作品，与华为无关；华为、FreeBuds、FreeClip 等商标归华为技术有限公司所有。')
+          Text(I18n.t('profile.disclaimer'))
             .fontSize(10)
             .fontColor(Palette.TEXT_TERTIARY)
             .lineHeight(16)
           if (this.privacyUrl.length > 0) {
-            Text('查看隐私政策')
+            Text(I18n.t('profile.viewPrivacy'))
               .fontSize(12)
               .fontColor(Palette.ACCENT)
               .onClick(() => {
@@ -423,7 +452,7 @@ export struct ProfilePage {
       // 磨砂标题栏：只保留实时背景模糊（超厚材质），不加底色。
       // 参考图的顶栏没有可见色带，磨砂感只来自内容滚过时的模糊光晕
       Row() {
-        Text('关于')
+        Text(I18n.t('profile.aboutTitle'))
           .fontSize(28)
           .fontWeight(FontWeight.Bold)
           .fontColor(Palette.TEXT_PRIMARY)
@@ -455,14 +484,14 @@ export struct ProfilePage {
   private openAppGallery(): void {
     const url: string = SupportInfo.APP_GALLERY_URL;
     if (url.length === 0) {
-      this.toast('应用市场链接暂未配置');
+      this.toast(I18n.t('profile.galleryMissing'));
       return;
     }
     const context: common.UIAbilityContext =
       this.getUIContext().getHostContext() as common.UIAbilityContext;
     context.openLink(url).catch((error: BusinessError) => {
       Logger.warn(MODULE, `打开应用市场失败 code=${error.code}`);
-      this.toast('无法打开应用市场');
+      this.toast(I18n.t('profile.galleryFailed'));
     });
   }
 
@@ -471,7 +500,7 @@ export struct ProfilePage {
       this.getUIContext().getHostContext() as common.UIAbilityContext;
     PrivacyLinkService.open(context).then((opened: boolean) => {
       if (!opened) {
-        this.toast('隐私政策链接暂不可用，请稍后重试');
+        this.toast(I18n.t('profile.privacyUnavailable'));
       }
     });
   }
@@ -484,8 +513,7 @@ export struct ProfilePage {
           .width(13)
           .height(13)
           .fillColor(Palette.TEXT_TERTIARY)
-        Text('开盒音通过蓝牙串口（SPP）直接写入充电盒，无需导出文件。' +
-          '写入时请把双耳放入盒内并打开盒盖，过程中会临时断开音频通道。')
+        Text(I18n.t('profile.writeInfo'))
           .fontSize(10)
           .fontColor(Palette.TEXT_TERTIARY)
           .lineHeight(16)
@@ -494,7 +522,7 @@ export struct ProfilePage {
       .width('100%')
       .alignItems(VerticalAlign.Top)
 
-      Text('本应用与华为无关，音效素材请确保拥有合法使用权')
+      Text(I18n.t('profile.rights'))
         .fontSize(9)
         .fontColor(Palette.TEXT_FAINT)
     }

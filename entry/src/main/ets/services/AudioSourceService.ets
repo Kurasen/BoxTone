@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { decodeAudio, probeAudio, DecodedAudio, AudioProbe } from 'libaudiodec.so';
+import { I18n } from '../common/i18n/I18n';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
 import { PcmAudio, SourceAudio } from '../models/ToneModel';
@@ -88,11 +89,10 @@ export class AudioSourceService {
     } catch (error) {
       firstError = error as BusinessError;
       Logger.exception(MODULE, `打开音频失败 uri=${uri} code=${firstError.code}`, firstError);
-      throw new Error(`无法打开「${displayName}」（${firstError.code}）。` +
-        '如果是网盘或微信里的文件，请先保存到本机「文件管理」再导入');
+      throw new Error(I18n.f('audio.openFailed', [displayName, `${firstError.code}`]));
     }
     if (source === null) {
-      throw new Error(`无法打开「${displayName}」`);
+      throw new Error(I18n.f('audio.openFailedShort', [displayName]));
     }
     try {
       fs.copyFileSync(source.fd, target);
@@ -114,7 +114,7 @@ export class AudioSourceService {
       Logger.exception(MODULE,
         `复制音频文件失败 uri=${uri} code=${businessError.code}（首次错误 ${firstError !== null ? firstError.code : 0}）`,
         businessError);
-      throw new Error(`无法读取「${displayName}」（${businessError.code}），请确认文件仍可访问`);
+      throw new Error(I18n.f('audio.readFailed', [displayName, `${businessError.code}`]));
     }
   }
 
@@ -135,7 +135,7 @@ export class AudioSourceService {
         total += read;
       }
       if (total <= 0) {
-        throw new Error(`「${displayName}」是空文件`);
+        throw new Error(I18n.f('audio.emptyFile', [displayName]));
       }
     } finally {
       try {
@@ -190,7 +190,7 @@ export class AudioSourceService {
     // 先探测：只解封装读轨道信息，能明确区分"容器打不开"和"解码器出问题"
     const probe: AudioProbe = probeAudio(path);
     if (!probe.ok) {
-      const reason: string = probe.error !== undefined ? probe.error : '系统无法解析该音频';
+      const reason: string = probe.error !== undefined ? probe.error : I18n.t('audio.cannotParse');
       Logger.warn(MODULE, `探测失败 ${displayName}（阶段 ${probe.stage}）：${reason}`);
       throw new Error(reason);
     }
@@ -204,15 +204,15 @@ export class AudioSourceService {
     } catch (error) {
       const businessError: BusinessError = error as BusinessError;
       Logger.exception(MODULE, `原生解码异常 ${displayName}`, businessError);
-      throw new Error(`解码「${displayName}」失败：${businessError.message}`);
+      throw new Error(I18n.f('audio.decodeFailed', [displayName, businessError.message]));
     }
     if (!decoded.ok) {
-      const reason: string = decoded.error !== undefined ? decoded.error : '系统无法解析该音频';
+      const reason: string = decoded.error !== undefined ? decoded.error : I18n.t('audio.cannotParse');
       Logger.warn(MODULE, `解码失败 ${displayName}（阶段 ${decoded.stage}）：${reason}`);
       throw new Error(reason);
     }
     if (decoded.frameCount <= 0 || decoded.frames.length === 0) {
-      throw new Error('这个文件里没有可用的音频数据');
+      throw new Error(I18n.t('audio.noAudioData'));
     }
 
     const channels: number = decoded.channels > 0 ? decoded.channels : 1;
@@ -244,7 +244,7 @@ export class AudioSourceService {
   private static formatNameOf(fileName: string): string {
     const dot: number = fileName.lastIndexOf('.');
     if (dot < 0 || dot >= fileName.length - 1) {
-      return '音频';
+      return I18n.t('audio.generic');
     }
     const ext: string = fileName.substring(dot + 1).toUpperCase();
     if (ext === 'M4A' || ext === 'MP4') {
@@ -267,7 +267,7 @@ export class AudioSourceService {
 
       const format: WavFormat = AudioSourceService.parseHeader(headerBuffer);
       if (format.dataSize <= 0) {
-        throw new Error('文件中没有可用的音频数据');
+        throw new Error(I18n.t('audio.wavNoData'));
       }
 
       const maxFrames: number = Math.floor(format.sampleRate * MAX_ANALYZE_SECONDS);
@@ -315,13 +315,13 @@ export class AudioSourceService {
 
   private static parseHeader(buffer: ArrayBuffer): WavFormat {
     if (buffer.byteLength < 44) {
-      throw new Error('文件过小，不是有效的 WAV 音频');
+      throw new Error(I18n.t('audio.wavTooSmall'));
     }
     const view: DataView = new DataView(buffer);
     const riff: string = AudioSourceService.readFourCC(view, 0);
     const wave: string = AudioSourceService.readFourCC(view, 8);
     if (riff !== 'RIFF' || wave !== 'WAVE') {
-      throw new Error('这个文件的 WAV 头不完整，请重新导出后导入');
+      throw new Error(I18n.t('audio.wavBadHeader'));
     }
 
     const result: WavFormat = {
@@ -363,19 +363,19 @@ export class AudioSourceService {
     }
 
     if (!hasFormat) {
-      throw new Error('WAV 文件缺少格式信息（fmt 块），无法解析');
+      throw new Error(I18n.t('audio.wavNoFmt'));
     }
     if (result.channels < 1 || result.channels > 8) {
-      throw new Error(`不支持的声道数：${result.channels}`);
+      throw new Error(I18n.f('audio.unsupportedChannels', [`${result.channels}`]));
     }
     if (result.sampleRate < 4000 || result.sampleRate > 192000) {
-      throw new Error(`不支持的采样率：${result.sampleRate}Hz`);
+      throw new Error(I18n.f('audio.unsupportedRate', [`${result.sampleRate}`]));
     }
     if (result.audioFormat !== 1 && result.audioFormat !== 3) {
-      throw new Error('仅支持未压缩的 WAV（PCM 或 IEEE Float）');
+      throw new Error(I18n.t('audio.unsupportedWav'));
     }
     if (result.audioFormat === 3 && result.bitsPerSample !== 32) {
-      throw new Error('浮点 WAV 仅支持 32bit');
+      throw new Error(I18n.t('audio.float32Only'));
     }
 
     const frameBytes: number = result.channels * result.bitsPerSample / 8;
@@ -422,7 +422,7 @@ export class AudioSourceService {
         out[i] = view.getInt32(i * 4, true) / 2147483648;
       }
     } else {
-      throw new Error(`不支持的位深：${bits}bit`);
+      throw new Error(I18n.f('audio.unsupportedBits', [`${bits}`]));
     }
     return out;
   }

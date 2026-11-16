@@ -1,6 +1,7 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { DeviceSupport, DeviceSupportLevel, DeviceVerdict, ToneSpec } from '../common/constants/AppConstants';
+import { I18n } from '../common/i18n/I18n';
 import { DateUtils } from '../common/utils/DateUtils';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
@@ -87,30 +88,58 @@ export class CaseWriteService {
   /** 写入前置检查：音效规格 + 文件 + 耳机连接状态 */
   public static check(entry: ToneEntry): WriteCheck {
     if (DemoService.isActive()) {
-      return CaseWriteService.checkFail(WriteCode.NO_EARBUD,
-        '演示模式使用模拟耳机，不会写入真实设备。退出演示并连接耳机后再试');
+      return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.demoMode'));
     }
     if (CaseWriteService.writing) {
-      return CaseWriteService.checkFail(WriteCode.WRITE_FAILED, '正在写入，请等待当前任务完成');
+      return CaseWriteService.checkFail(WriteCode.WRITE_FAILED, I18n.t('write.inProgress'));
     }
     if (entry.byteLength <= 0 || entry.durationMs <= 0) {
-      return CaseWriteService.checkFail(WriteCode.EMPTY_TONE, '音效数据为空，请重新生成');
+      return CaseWriteService.checkFail(WriteCode.EMPTY_TONE, I18n.t('write.emptyTone'));
     }
     if (entry.durationMs > ToneSpec.MAX_SECONDS * 1000) {
       return CaseWriteService.checkFail(WriteCode.TOO_LONG,
-        `时长 ${FormatUtils.seconds(entry.durationMs)} 超过充电盒上限 ${ToneSpec.MAX_SECONDS} 秒`);
+        I18n.f('write.tooLong', [FormatUtils.seconds(entry.durationMs), `${ToneSpec.MAX_SECONDS}`]));
     }
     if (entry.byteLength > ToneSpec.MAX_BYTES) {
       return CaseWriteService.checkFail(WriteCode.TOO_LARGE,
-        `文件 ${FormatUtils.bytes(entry.byteLength)} 超过上限 ${FormatUtils.bytes(ToneSpec.MAX_BYTES)}`);
+        I18n.f('write.tooLarge',
+          [FormatUtils.bytes(entry.byteLength), FormatUtils.bytes(ToneSpec.MAX_BYTES)]));
     }
 
+    const link: WriteCheck = CaseWriteService.checkLink();
+    if (!link.ok) {
+      return link;
+    }
+    try {
+      if (!fs.accessSync(ToneRepositoryService.pathOf(entry))) {
+        return CaseWriteService.checkFail(WriteCode.FILE_MISSING, I18n.t('write.fileMissing'));
+      }
+    } catch (error) {
+      Logger.exception(MODULE, '检查音效文件失败', error as BusinessError);
+      return CaseWriteService.checkFail(WriteCode.FILE_MISSING, I18n.t('write.fileUnreadable'));
+    }
+    return link;
+  }
+
+  /** 恢复默认音的前置检查：只依赖设备连接状态 */
+  public static checkRestore(): WriteCheck {
+    return CaseWriteService.checkLink();
+  }
+
+  /** 设备链路检查：权限、蓝牙开关、当前输出设备、星闪拦截 */
+  private static checkLink(): WriteCheck {
+    if (DemoService.isActive()) {
+      return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.demoMode'));
+    }
+    if (CaseWriteService.writing) {
+      return CaseWriteService.checkFail(WriteCode.WRITE_FAILED, I18n.t('write.inProgress'));
+    }
     const snapshot = BluetoothService.getSnapshot();
     if (!snapshot.authorized) {
-      return CaseWriteService.checkFail(WriteCode.NOT_AUTHORIZED, '未授予蓝牙权限，无法写入耳机');
+      return CaseWriteService.checkFail(WriteCode.NOT_AUTHORIZED, I18n.t('write.noPermission'));
     }
     if (!snapshot.enabled) {
-      return CaseWriteService.checkFail(WriteCode.BLUETOOTH_OFF, '蓝牙未开启，请先打开蓝牙');
+      return CaseWriteService.checkFail(WriteCode.BLUETOOTH_OFF, I18n.t('write.btOff'));
     }
 
     // 写入必须先连上耳机：串口通道要在已建立的 ACL 上才稳定，
@@ -121,8 +150,7 @@ export class CaseWriteService {
         return CaseWriteService.checkFail(WriteCode.NEARLINK_UNSUPPORTED,
           CaseWriteService.nearLinkHint(snapshot.nearLinkName));
       }
-      return CaseWriteService.checkFail(WriteCode.NO_EARBUD,
-        '未连接到耳机。请先在「设备」页配对并连接耳机，写入时把双耳放入充电盒、打开盒盖');
+      return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.noEarbud'));
     }
     // 星闪链路没有对三方开放的串口通道：写入前置直接拦截，不给用户白等一次超时
     const viaNearLink: boolean = snapshot.nearLinkBtId.length > 0 &&
@@ -133,15 +161,6 @@ export class CaseWriteService {
     }
     // 型号来自固件，改名不影响；名称只在型号未识别时兜底。未命中只提醒，协议探测才是门槛
     const warn: string = CaseWriteService.compatWarn(deviceId, snapshot.activeName);
-
-    try {
-      if (!fs.accessSync(ToneRepositoryService.pathOf(entry))) {
-        return CaseWriteService.checkFail(WriteCode.FILE_MISSING, '音效文件已被删除，请重新生成');
-      }
-    } catch (error) {
-      Logger.exception(MODULE, '检查音效文件失败', error as BusinessError);
-      return CaseWriteService.checkFail(WriteCode.FILE_MISSING, '音效文件不可读，请重新生成');
-    }
 
     const ok: WriteCheck = {
       ok: true,
@@ -172,13 +191,12 @@ export class CaseWriteService {
       return '';
     }
     if (verdict.level === DeviceSupportLevel.OFFICIAL) {
-      return `当前设备「${verdict.name}」${verdict.detail}：` +
-        '协议探测会判断是否可用，可能被盒子拒绝（不会损坏设备）。';
+      return I18n.f('write.compatOfficial', [verdict.name, verdict.detail]);
     }
     const label: string = hwModel.length > 0
-      ? `当前设备型号「${hwModel}」` : (activeName.length > 0 ? `当前设备「${activeName}」` : '当前设备');
-    return `${label}不在已验证机型列表：盒音自定义为实验性功能，可能被盒子拒绝（不会损坏设备）。` +
-      '写入时会自动记录耳机型号，之后按型号比对。';
+      ? I18n.f('write.compatHwModel', [hwModel]) :
+      (activeName.length > 0 ? I18n.f('write.compatName', [activeName]) : I18n.t('write.compatGeneric'));
+    return I18n.f('write.compatWarn', [label]);
   }
 
   /** 把本次会话查到的型号写进缓存，返回可用于日志/诊断的型号 */
@@ -194,9 +212,8 @@ export class CaseWriteService {
 
   /** 星闪连接的统一提示：盒音通道只支持经典蓝牙，给出可执行的切换指引 */
   public static nearLinkHint(name: string): string {
-    const label: string = name.length > 0 ? `「${name}」` : '耳机';
-    return `${label}当前通过星闪方式连接。盒音写入只支持经典蓝牙通道：` +
-      '请在设备页和系统「星闪和蓝牙」设置中把耳机切换为经典蓝牙连接（关闭星闪音频）后，再进行数据写入操作。';
+    const label: string = name.length > 0 ? name : I18n.t('write.nearLinkFallbackName');
+    return I18n.f('write.nearLinkHint', [label]);
   }
 
   /** 写入耳机盒 */
@@ -223,17 +240,18 @@ export class CaseWriteService {
     } catch (error) {
       CaseWriteService.writing = false;
       Logger.exception(MODULE, '读取音效文件失败', error as BusinessError);
-      return reject(WriteCode.FILE_MISSING, '音效文件不可读，请重新生成');
+      return reject(WriteCode.FILE_MISSING, I18n.t('write.fileUnreadable'));
     }
     if (pcm.length === 0 || pcm.length % 2 !== 0) {
       CaseWriteService.writing = false;
       Logger.warn(MODULE, `音效数据格式不正确 length=${pcm.length}`);
-      return reject(WriteCode.EMPTY_TONE, '音效数据不完整，请重新生成');
+      return reject(WriteCode.EMPTY_TONE, I18n.t('write.dataIncomplete'));
     }
 
     // 链路级失败（串口被耳机收回）自动重来一次：耳机收尾后通常还能再用
     let attempt: number = 0;
-    let failure: WriteResult = reject(WriteCode.WRITE_FAILED, '写入失败');
+    let failure: WriteResult = reject(WriteCode.WRITE_FAILED,
+      I18n.f('write.failedWith', [`${WriteCode.WRITE_FAILED}`]));
     try {
       while (attempt < 2) {
         attempt++;
@@ -242,7 +260,8 @@ export class CaseWriteService {
         try {
           if (onProgress !== undefined) {
             const cooling: number = ToneClient.cooldownLeft();
-            onProgress(0.02, attempt > 1 ? '重新连接耳机' : (cooling > 0 ? '等待耳机就绪' : '连接耳机'));
+            onProgress(0.02, attempt > 1 ? I18n.t('write.stageReconnect') :
+              (cooling > 0 ? I18n.t('write.stageWaitReady') : I18n.t('write.stageConnect')));
             if (cooling > 0) {
               Logger.info(MODULE, `耳机仍在收尾上一段写入，等待 ${cooling}ms`);
             }
@@ -266,7 +285,7 @@ export class CaseWriteService {
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
-            message: '已写入耳机盒。合盖 3 秒再开盖即可听到新音效；换下一段音效前也请先合盖再开盖，让耳机把上一段写完'
+            message: I18n.t('write.success')
           };
         } catch (error) {
           const hwModel: string = CaseWriteService.rememberModel(client, deviceId);
@@ -279,7 +298,7 @@ export class CaseWriteService {
           if (attempt < 2 && CaseWriteService.dataAlreadyWritten(error)) {
             Logger.warn(MODULE, '音效数据已写入，改为只补发选中命令');
             if (onProgress !== undefined) {
-              onProgress(0.97, '重新连接以应用音效');
+              onProgress(0.97, I18n.t('write.stageApplyOnly'));
             }
             const applied: WriteResult | null = await CaseWriteService.applyOnly(deviceId);
             if (applied !== null) {
@@ -294,7 +313,7 @@ export class CaseWriteService {
           if (attempt < 2 && linkBroken) {
             Logger.warn(MODULE, `串口在传输中断开，准备重试一次 code=${client.errorCode}`);
             if (onProgress !== undefined) {
-              onProgress(0.02, '链路中断，正在重连');
+              onProgress(0.02, I18n.t('write.stageLinkRetry'));
             }
             await CaseWriteService.pause(1200);
             continue;
@@ -310,6 +329,91 @@ export class CaseWriteService {
     }
   }
 
+  /**
+   * 恢复默认开盒音：把耳机从自定义槽位切回出厂提示音。
+   * 只发查询与“选中默认”两条命令，不上传音频，通常几秒内完成。
+   */
+  public static async restoreDefault(): Promise<WriteResult> {
+    const link: WriteCheck = CaseWriteService.checkLink();
+    if (!link.ok) {
+      Logger.warn(MODULE, `恢复默认前置检查未通过 code=${link.code}：${link.message}`);
+      return reject(link.code, link.message, WriteReason.BLOCKED);
+    }
+    CaseWriteService.cancelPendingRestore();
+    CaseWriteService.writing = true;
+    const deviceId: string = link.deviceId;
+    const modelName: string = BluetoothService.getSnapshot().activeName;
+    const linkMode: string = BluetoothService.getSnapshot().nearLinkName.length > 0 ? 'nearlink' : 'bt';
+    Logger.info(MODULE, `开始恢复默认开盒音 → ${FormatUtils.maskAddress(deviceId)} ` +
+      `机型=${modelName.length > 0 ? modelName : '未知'}`);
+
+    let attempt: number = 0;
+    let failure: WriteResult = reject(WriteCode.WRITE_FAILED, I18n.t('write.restoreFailed'));
+    try {
+      while (attempt < 2) {
+        attempt++;
+        const client: ToneClient = new ToneClient(true);
+        client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
+        try {
+          await client.connect(deviceId);
+          const status: ToneStatus = await client.restoreDefault();
+          const hwModel: string = CaseWriteService.rememberModel(client, deviceId);
+          Logger.info(MODULE, `恢复默认完成 槽位=${status.toneId} 音量=${status.volume}`);
+          Logger.info(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
+            `btName=${modelName.length > 0 ? modelName : '未知'} ` +
+            `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
+            `result=ok action=restore`);
+          CaseWriteService.scheduleAudioRestore(deviceId);
+          return {
+            ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
+            message: I18n.t('write.restoreSuccess')
+          };
+        } catch (error) {
+          const hwModel: string = CaseWriteService.rememberModel(client, deviceId);
+          failure = CaseWriteService.describeRestoreFailure(error, deviceId, modelName);
+          Logger.warn(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
+            `btName=${modelName.length > 0 ? modelName : '未知'} ` +
+            `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
+            `result=fail action=restore code=${failure.code} reason=${failure.reason}`);
+          if (attempt < 2 && CaseWriteService.isLinkFailure(error)) {
+            Logger.warn(MODULE, `恢复默认音链路中断，准备重试一次 code=${client.errorCode}`);
+            await CaseWriteService.pause(1200);
+            continue;
+          }
+          return failure;
+        } finally {
+          client.close();
+        }
+      }
+      return failure;
+    } finally {
+      CaseWriteService.writing = false;
+    }
+  }
+
+  private static describeRestoreFailure(error: Object, deviceId: string,
+    modelName: string): WriteResult {
+    const toneError: ToneError = error as ToneError;
+    const declaredReason: string = toneError.reason !== undefined ? toneError.reason : '';
+    let reason: string = declaredReason.length > 0 ? declaredReason : WriteReason.OTHER;
+    let code: number = toneError.code !== undefined && toneError.code !== 0
+      ? toneError.code : WriteCode.WRITE_FAILED;
+    let message: string = toneError.message !== undefined && toneError.message.length > 0
+      ? toneError.message : I18n.f('write.restoreFailedWith', [`${code}`]);
+    if (reason === WriteReason.UNSUPPORTED) {
+      code = WriteCode.PROTOCOL_UNVERIFIED;
+    } else if (code === -99) {
+      message = I18n.t('write.restoreInterrupted');
+    }
+    if (message.indexOf('SPP IO error') >= 0 || message.indexOf('BussinessError') >= 0) {
+      message = I18n.t('write.restoreSppError');
+    }
+    Logger.exception(MODULE, `恢复默认音失败 code=${code} reason=${reason}：${message}`,
+      error as BusinessError);
+    return reject(code, message, reason,
+      CaseWriteService.buildDiagnostic(null, deviceId, modelName, error));
+  }
+
   private static pause(ms: number): Promise<void> {
     return new Promise<void>((resolve: () => void) => {
       setTimeout(() => {
@@ -320,8 +424,7 @@ export class CaseWriteService {
 
   /** 音效包是否已经完整落盘，只是"选中"没发出去 */
   private static dataAlreadyWritten(error: Object): boolean {
-    const message: string = (error as ToneError).message;
-    return message !== undefined && message.indexOf('音效已写入') >= 0;
+    return (error as ToneError).reason === ToneErrorReason.DATA_WRITTEN;
   }
 
   /** 重连一次，只补发选中命令 */
@@ -336,7 +439,7 @@ export class CaseWriteService {
       CaseWriteService.scheduleAudioRestore(deviceId);
       return {
         ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
-        message: '已写入耳机盒。合盖 3 秒再开盖即可听到新音效'
+        message: I18n.t('write.successApplyOnly')
       };
     } catch (error) {
       Logger.warn(MODULE, `补发选中失败：${(error as ToneError).message}`);
@@ -349,12 +452,16 @@ export class CaseWriteService {
   /** 链路级失败（而非耳机拒绝）：这类失败值得自动重试 */
   private static isLinkFailure(error: Object): boolean {
     const toneError: ToneError = error as ToneError;
-    const message: string = toneError.message !== undefined ? toneError.message : '';
-    const code: number = toneError.code !== undefined ? toneError.code : 0;
-    if (code === 2901054 || code === 2900099 || code === 2900001 || code === 2900003) {
+    const reason: string = toneError.reason !== undefined ? toneError.reason : '';
+    if (reason === ToneErrorReason.FLUSH_TIMEOUT || reason === ToneErrorReason.DATA_WRITTEN ||
+      reason === ToneErrorReason.CANCELLED) {
+      return false;
+    }
+    if (reason === ToneErrorReason.LINK || reason === ToneErrorReason.ACK_TIMEOUT) {
       return true;
     }
-    return message.indexOf('连接已中断') >= 0 || message.indexOf('回执超时') >= 0;
+    const code: number = toneError.code !== undefined ? toneError.code : 0;
+    return code === 2901054 || code === 2900099 || code === 2900001 || code === 2900003;
   }
 
   private static describeFailure(error: Object, entry: ToneEntry, deviceId: string,
@@ -365,13 +472,13 @@ export class CaseWriteService {
     let code: number = toneError.code !== undefined && toneError.code !== 0
       ? toneError.code : WriteCode.WRITE_FAILED;
     let message: string = toneError.message !== undefined && toneError.message.length > 0
-      ? toneError.message : `写入失败（${code}），详见日志`;
+      ? toneError.message : I18n.f('write.failedWith', [`${code}`]);
     if (reason === WriteReason.UNSUPPORTED) {
       // 不支持的机型是终端结局：不引导重试，只引导反馈
       code = WriteCode.PROTOCOL_UNVERIFIED;
     } else if (reason === WriteReason.FORMAT) {
       code = WriteCode.FORMAT_REJECTED;
-    } else if (reason.length === 0 && CaseWriteService.isLinkFailure(error)) {
+    } else if ((reason.length === 0 || reason === WriteReason.LINK) && CaseWriteService.isLinkFailure(error)) {
       const linkSnapshot: BtSnapshot = BluetoothService.getSnapshot();
       const nearLinkConnected: boolean = linkSnapshot.nearLinkName.length > 0;
       reason = nearLinkConnected ? WriteReason.NEARLINK : WriteReason.LINK;
@@ -380,13 +487,13 @@ export class CaseWriteService {
           linkSnapshot.activeName.length > 0 ? linkSnapshot.activeName : linkSnapshot.nearLinkName);
       }
     }
-    if (message === '已取消') {
+    if (code === -99) {
       // 用户主动取消不会走到这里，链路断了才会，别把原因显示成"已取消"
-      message = '写入被中断：耳机收回了串口，请合盖 3 秒后再开盖重试';
+      message = I18n.t('write.interrupted');
     }
     // 系统原生的 SPP 错误文案对用户没有意义，换成可执行的动作
     if (message.indexOf('SPP IO error') >= 0 || message.indexOf('BussinessError') >= 0) {
-      message = '串口在传输中断开。耳机可能还在写入上一段音效，请合盖 3 秒后再开盖重试';
+      message = I18n.t('write.sppError');
     }
     Logger.exception(MODULE,
       `写入失败 code=${code}${reason.length > 0 ? ` reason=${reason}` : ''}：${message}`,
@@ -396,26 +503,33 @@ export class CaseWriteService {
   }
 
   /** 结构化诊断文本：覆盖未验证机型的全部关键现场，一键复制后可直接发给开发者 */
-  private static buildDiagnostic(entry: ToneEntry, deviceId: string, modelName: string,
+  private static buildDiagnostic(entry: ToneEntry | null, deviceId: string, modelName: string,
     error: Object): string {
     const toneError: ToneError = error as ToneError;
     const reason: string = toneError.reason !== undefined ? toneError.reason : '';
     const linkSnapshot: BtSnapshot = BluetoothService.getSnapshot();
     const lines: string[] = [];
-    lines.push('【盒音工坊 诊断信息】');
-    lines.push(`时间：${DateUtils.dateTime(Date.now())}`);
+    lines.push(I18n.t('write.diagHeader'));
+    lines.push(I18n.f('write.diagTime', [DateUtils.dateTime(Date.now())]));
     const hwModel: string = BluetoothService.deviceModelOf(deviceId);
-    lines.push(`型号：${hwModel.length > 0 ? hwModel : '未识别'}`);
-    lines.push(`蓝牙名：${modelName.length > 0 ? modelName : '未知'}（${FormatUtils.maskAddress(deviceId)}）`);
-    lines.push(`链路：${linkSnapshot.nearLinkName.length > 0 ? '星闪（尝试经典蓝牙写入）' : '经典蓝牙'}`);
-    lines.push(`音效：${entry.name} ${entry.durationMs}ms / ${entry.byteLength} 字节`);
-    lines.push(`结果：code=${toneError.code !== undefined ? toneError.code : 0}` +
-      `${reason.length > 0 ? ` reason=${reason}` : ''}`);
+    lines.push(I18n.f('write.diagModel', [hwModel.length > 0 ? hwModel : I18n.t('write.diagUnknown')]));
+    lines.push(I18n.f('write.diagBtName',
+      [modelName.length > 0 ? modelName : I18n.t('write.diagUnknownName'), FormatUtils.maskAddress(deviceId)]));
+    lines.push(I18n.f('write.diagLink',
+      [linkSnapshot.nearLinkName.length > 0 ? I18n.t('write.diagNearLink') : I18n.t('write.diagClassic')]));
+    if (entry !== null) {
+      lines.push(I18n.f('write.diagTone',
+        [entry.name, `${entry.durationMs}`, `${entry.byteLength}`]));
+    } else {
+      lines.push(I18n.t('write.diagAction'));
+    }
+    lines.push(I18n.f('write.diagResult', [`code=${toneError.code !== undefined ? toneError.code : 0}` +
+      `${reason.length > 0 ? ` reason=${reason}` : ''}`]));
     const extra: string = toneError.diagnostic !== undefined ? toneError.diagnostic : '';
     if (extra.length > 0) {
-      lines.push(`详情：${extra}`);
+      lines.push(I18n.f('write.diagDetail', [extra]));
     }
-    lines.push('请把以上内容连同日志反馈给开发者，谢谢');
+    lines.push(I18n.t('write.diagFooter'));
     return lines.join('\n');
   }
 

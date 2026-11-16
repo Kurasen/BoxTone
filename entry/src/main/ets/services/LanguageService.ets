@@ -1,5 +1,6 @@
 import { i18n } from '@kit.LocalizationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { I18n } from '../common/i18n/I18n';
 import { Logger } from '../common/utils/Logger';
 
 const MODULE: string = 'Language';
@@ -19,6 +20,7 @@ export class LanguageService {
       const region: string = i18n.System.getSystemRegion().toUpperCase();
       const language: string = HANS_REGIONS.indexOf(region) >= 0 ? 'zh-Hans' : 'en-US';
       i18n.System.setAppPreferredLanguage(language);
+      I18n.use(language);
       Logger.info(MODULE, `地区=${region} 应用语言=${language}`);
     } catch (error) {
       Logger.warn(MODULE, `设置应用语言失败 code=${(error as BusinessError).code}`);

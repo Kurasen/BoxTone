@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
+import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
 import { AppEvent, EventBus, SimpleHandler, TextHandler } from '../common/utils/EventBus';
 import { Logger } from '../common/utils/Logger';
@@ -174,22 +175,22 @@ struct Index {
           TabContent() {
             DevicePage()
           }
-          .tabBar(this.tabItem(0, '设备', $r('app.media.ic_tab_device')))
+          .tabBar(this.tabItem(0, I18n.t('tab.device'), $r('app.media.ic_tab_device')))
 
           TabContent() {
             TonePage()
           }
-          .tabBar(this.tabItem(1, '音效', $r('app.media.ic_tab_tone')))
+          .tabBar(this.tabItem(1, I18n.t('tab.tone'), $r('app.media.ic_tab_tone')))
 
           TabContent() {
             LibraryPage()
           }
-          .tabBar(this.tabItem(2, '音效库', $r('app.media.ic_tab_library')))
+          .tabBar(this.tabItem(2, I18n.t('tab.library'), $r('app.media.ic_tab_library')))
 
           TabContent() {
             ProfilePage()
           }
-          .tabBar(this.tabItem(3, '我的', $r('app.media.ic_tab_mine')))
+          .tabBar(this.tabItem(3, I18n.t('tab.profile'), $r('app.media.ic_tab_mine')))
         }
         .scrollable(false)
         .barOverlap(true)
@@ -343,15 +344,15 @@ struct Index {
 
   private confirmExitDemo(): void {
     this.getUIContext().showAlertDialog({
-      title: '退出演示模式',
-      message: '退出后将恢复真实蓝牙设备状态，模拟耳机会消失。',
+      title: I18n.t('index.demo.exitTitle'),
+      message: I18n.t('index.demo.exitMessage'),
       primaryButton: {
-        value: '继续演示',
+        value: I18n.t('index.demo.keep'),
         action: (): void => {
         }
       },
       secondaryButton: {
-        value: '退出',
+        value: I18n.t('index.demo.exit'),
         fontColor: Palette.DANGER,
         action: (): void => {
           DemoService.setActive(false);
@@ -369,10 +370,10 @@ struct Index {
   buildDemoBadge() {
     Column() {
       Row({ space: 8 }) {
-        Text('演示模式 · 模拟耳机')
+        Text(I18n.t('index.demo.badge'))
           .fontSize(11)
           .fontColor(Palette.ACCENT)
-        Text('退出')
+        Text(I18n.t('index.demo.exit'))
           .fontSize(11)
           .fontColor(Palette.TEXT_SECONDARY)
       }
@@ -409,15 +410,14 @@ struct Index {
             .width(18)
             .height(18)
             .fillColor(Palette.ACCENT)
-          Text('没有耳机也能先体验')
+          Text(I18n.t('index.demo.guideTitle'))
             .fontSize(19)
             .fontWeight(FontWeight.Medium)
             .fontColor(Palette.TEXT_PRIMARY)
         }
         .width('100%')
 
-        Text('开启演示模式后会显示一台模拟的演示耳机：音效制作、试听、生成和导出都能照常使用，' +
-          '不会申请蓝牙权限，也不会写入真实设备。随时可以在页面底部退出演示。')
+        Text(I18n.t('index.demo.guideBody'))
           .fontSize(12)
           .fontColor(Palette.TEXT_SECONDARY)
           .lineHeight(19)
@@ -425,14 +425,14 @@ struct Index {
 
         Row({ space: 10 }) {
           GhostButton({
-            ghostLabel: '直接使用',
+            ghostLabel: I18n.t('index.demo.useDirectly'),
             onTap: (): void => {
               this.skipDemoGuide();
             }
           })
             .layoutWeight(1)
           PrimaryButton({
-            btnLabel: '开始演示',
+            btnLabel: I18n.t('index.demo.start'),
             onTap: (): void => {
               this.startDemo();
             }

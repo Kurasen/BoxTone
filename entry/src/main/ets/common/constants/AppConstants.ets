@@ -1,3 +1,5 @@
+import { I18n } from '../i18n/I18n';
+
 /**
  * 全局常量定义
  * 音频规格严格对齐华为充电盒的解码标准
@@ -42,8 +44,8 @@ export interface SupportedDevice {
   names: string[];
   /** 耳机自报型号（0107 tag 15），允许同平台后缀变体 */
   modelCodes: string[];
-  /** 验证结论 / 备注 */
-  detail: string;
+  /** 验证结论 / 备注（文案 key） */
+  detailKey: string;
 }
 
 /** 机型匹配结果 */
@@ -65,7 +67,7 @@ export class DeviceSupport {
       names: ['HUAWEI FreeClip 2', 'HUAWEI FreeClip 2 耳夹耳机', 'HUAWEI FreeClip 2 典藏版',
         'HUAWEI FreeClip 2 典藏版 耳夹耳机', '华为 FreeClip 2', '华为 FreeClip 2 典藏版'],
       modelCodes: ['BTFT0027'],
-      detail: '协议 2 · 盒音写入实测通过；典藏版同型号平台，未单独实测'
+      detailKey: 'support.detail.freeclip2'
     },
     // 以下为华为官方支持充电盒开盒提示音的机型：
     // https://consumer.huawei.com/cn/support/content/zh-cn16053049/
@@ -73,20 +75,20 @@ export class DeviceSupport {
       level: DeviceSupportLevel.OFFICIAL,
       names: ['HUAWEI FreeBuds 6', 'HUAWEI FreeBuds 6 悦彰耳机', '华为 FreeBuds 6'],
       modelCodes: ['BTFT0020'],
-      detail: '官方支持开盒提示音 · 盒音自定义待实测'
+      detailKey: 'support.detail.official'
     },
     {
       level: DeviceSupportLevel.OFFICIAL,
       names: ['HUAWEI FreeBuds Pro 5', 'HUAWEI FreeBuds Pro 5 悦彰耳机',
         'HUAWEI FreeBuds Pro 5 马年典藏款', '华为 FreeBuds Pro 5'],
       modelCodes: ['BTFT0023'],
-      detail: '官方支持开盒提示音（含马年典藏款）· 盒音自定义待实测'
+      detailKey: 'support.detail.officialHorse'
     },
     {
       level: DeviceSupportLevel.OFFICIAL,
       names: ['HUAWEI FreeBuds 7', 'HUAWEI FreeBuds 7 悦彰耳机', '华为 FreeBuds 7'],
       modelCodes: ['BTFT0028'],
-      detail: '官方支持开盒提示音 · 盒音自定义待实测'
+      detailKey: 'support.detail.official'
     }
   ];
 
@@ -119,7 +121,7 @@ export class DeviceSupport {
     const matched: SupportedDevice | null =
       DeviceSupport.findMatch(DeviceSupport.SUPPORTED, modelCode, names);
     if (matched !== null) {
-      return { level: matched.level, name: matched.names[0], detail: matched.detail };
+      return { level: matched.level, name: matched.names[0], detail: I18n.t(matched.detailKey) };
     }
     return { level: DeviceSupportLevel.UNKNOWN, name: '', detail: '' };
   }
@@ -213,33 +215,48 @@ export class SupportInfo {
 /** 更新日志条目 */
 export interface ChangelogEntry {
   version: string;
-  note: string;
-  items: string[];
+  noteKey: string;
+  itemKeys: string[];
 }
 
 export class Changelog {
   static readonly ENTRIES: ChangelogEntry[] = [
     {
+      version: 'v1.1.1',
+      noteKey: 'changelog.v111.note',
+      itemKeys: [
+        'changelog.v111.i1',
+        'changelog.v111.i2',
+        'changelog.v111.i3',
+        'changelog.v111.i4',
+        'changelog.v111.i5',
+        'changelog.v111.i6',
+        'changelog.v111.i7',
+        'changelog.v111.i8',
+        'changelog.v111.i9'
+      ]
+    },
+    {
       version: 'v1.1.0',
-      note: '当前版本',
-      items: [
-        '最低支持 HarmonyOS 6.1（API 23），兼容更多机型',
-        '新增外观设置：深色 / 浅色 / 跟随系统',
-        '新增中英文自动切换：按系统地区自动匹配界面语言',
-        '新增星闪连接检测：星闪连接下写入前自动提示并引导切换',
-        '优化设备连接识别体验：连接状态与设备名称刷新更及时',
-        '优化数据写入提示：进度与结果反馈更清晰',
-        '优化整体 UI 动画与布局，操作更顺滑'
+      noteKey: 'changelog.v110.note',
+      itemKeys: [
+        'changelog.v110.i1',
+        'changelog.v110.i2',
+        'changelog.v110.i3',
+        'changelog.v110.i4',
+        'changelog.v110.i5',
+        'changelog.v110.i6',
+        'changelog.v110.i7'
       ]
     },
     {
       version: 'v1.0.0',
-      note: '首个版本',
-      items: [
-        '充电盒开盒音效制作：导入素材、内置音色、裁剪与增益调节',
-        '按 16700Hz · 16bit · 单声道无文件头规格导出',
-        '通过蓝牙串口直接写入充电盒，无需导出文件',
-        '音效库管理与诊断日志'
+      noteKey: 'changelog.v100.note',
+      itemKeys: [
+        'changelog.v100.i1',
+        'changelog.v100.i2',
+        'changelog.v100.i3',
+        'changelog.v100.i4'
       ]
     }
   ];

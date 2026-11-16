@@ -1,3 +1,5 @@
+import { I18n } from '../i18n/I18n';
+
 export class FormatUtils {
   /** 字节数 → 人类可读，保留一位小数 */
   public static bytes(size: number): string {
@@ -37,12 +39,12 @@ export class FormatUtils {
   /** 声道数显示 */
   public static channelName(channels: number): string {
     if (channels === 1) {
-      return '单声道';
+      return I18n.t('format.mono');
     }
     if (channels === 2) {
-      return '立体声';
+      return I18n.t('format.stereo');
     }
-    return `${channels} 声道`;
+    return I18n.f('format.channelCount', [`${channels}`]);
   }
 
   /** 带符号的增益显示 */

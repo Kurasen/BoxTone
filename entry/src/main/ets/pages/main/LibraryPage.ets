@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
+import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DateUtils } from '../../common/utils/DateUtils';
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
@@ -8,6 +9,7 @@ import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { EmptyView } from '../../components/EmptyView';
+import { GhostButton } from '../../components/GhostButton';
 import { GlassCard } from '../../components/GlassCard';
 import { ToneCard } from '../../components/ToneCard';
 import { ToneEntry } from '../../models/ToneModel';
@@ -30,6 +32,8 @@ export struct LibraryPage {
   @State writeRatio: number = 0;
   @State editingId: string = '';
   @State editingName: string = '';
+  @State sortMode: string = 'time';
+  @State restoring: boolean = false;
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
@@ -79,7 +83,7 @@ export struct LibraryPage {
     } catch (error) {
       this.playingId = '';
       Logger.exception(MODULE, '试听失败', error as BusinessError);
-      this.toast('试听失败');
+      this.toast(I18n.t('tone.previewFailed'));
     }
   }
 
@@ -87,8 +91,9 @@ export struct LibraryPage {
    * 写入耳机盒：先检查耳机状态，未连接时给出确认，再走 SPP 控制通道上传
    */
   private async writeToCase(entry: ToneEntry): Promise<void> {
-    if (this.writingId.length > 0) {
-      this.toast(this.writingId === entry.id ? '正在写入这条音效，请稍候' : '正在写入其他音效，完成后再试');
+    if (this.writingId.length > 0 || this.restoring) {
+      this.toast(this.restoring ? I18n.t('lib.restoringDefault')
+        : (this.writingId === entry.id ? I18n.t('lib.writingThis') : I18n.t('lib.writingOther')));
       return;
     }
     // 先刷新一次：配对列表与音频连接状态决定写入目标设备
@@ -103,20 +108,18 @@ export struct LibraryPage {
       }
       return;
     }
-    const baseHint: string = '写入会把数据直接下发到充电盒，过程中会临时断开耳机与手机的音频连接。';
+    const baseHint: string = I18n.t('lib.writeHint');
     const hint: string = check.warn.length > 0 ? `${check.warn}\n${baseHint}` : baseHint;
     this.getUIContext().showAlertDialog({
-      title: '准备写入充电盒',
-      message: `${hint}\n\n请确认双耳已放入盒内并打开盒盖，然后继续。\n\n` +
-        '其他机型不兼容时会被盒子拒绝，不会损坏设备。' +
-        '写入期间请勿切走应用或关闭蓝牙。',
+      title: I18n.t('lib.writeTitle'),
+      message: I18n.f('lib.writeMessage', [hint]),
       primaryButton: {
-        value: '取消',
+        value: I18n.t('common.cancel'),
         action: (): void => {
         }
       },
       secondaryButton: {
-        value: '开始写入',
+        value: I18n.t('lib.startWrite'),
         fontColor: Palette.ACCENT,
         action: (): void => {
           this.runWrite(entry);
@@ -139,7 +142,7 @@ export struct LibraryPage {
 
   private async runWrite(entry: ToneEntry): Promise<void> {
     this.writingId = entry.id;
-    this.writeStage = '连接耳机';
+    this.writeStage = I18n.t('lib.stageConnect');
     this.writeRatio = 0;
     Logger.info(MODULE, `开始写入「${entry.name}」`);
     await this.setKeepScreenOn(true);
@@ -152,13 +155,13 @@ export struct LibraryPage {
       if (result.ok) {
         // 补发选中成功时 upload 已经抛错，进度可能停在上一步，这里补到 100%
         this.writeRatio = 100;
-        this.writeStage = '已应用';
+        this.writeStage = I18n.t('lib.stageApplied');
         Logger.info(MODULE, `写入成功「${entry.name}」`);
         this.getUIContext().showAlertDialog({
-          title: '写入完成',
-          message: `${result.message}\n\n如需恢复听歌，从充电盒取出耳机会自动重连。`,
+          title: I18n.t('lib.writeDone'),
+          message: I18n.f('lib.writeDoneMessage', [result.message]),
           confirm: {
-            value: '知道了',
+            value: I18n.t('common.ok'),
             action: (): void => {
             }
           }
@@ -169,7 +172,7 @@ export struct LibraryPage {
       }
     } catch (error) {
       Logger.exception(MODULE, '写入异常', error as BusinessError);
-      this.toast('写入失败，请查看日志');
+      this.toast(I18n.t('lib.writeFailed'));
     } finally {
       this.writingId = '';
       this.writeStage = '';
@@ -181,6 +184,104 @@ export struct LibraryPage {
         Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);
       });
     }
+  }
+
+  /** 恢复默认开盒音：先刷新设备状态，再给出可执行的确认信息 */
+  private async confirmRestore(): Promise<void> {
+    if (this.writingId.length > 0 || this.restoring) {
+      this.toast(this.restoring ? I18n.t('lib.restoringDefault') : I18n.t('lib.writingNow'));
+      return;
+    }
+    await BluetoothService.refresh();
+    const check: WriteCheck = CaseWriteService.checkRestore();
+    if (!check.ok) {
+      Logger.warn(MODULE, `恢复默认前置检查未通过 code=${check.code}：${check.message}`);
+      if (check.code === WriteCode.NEARLINK_UNSUPPORTED) {
+        this.showNearLinkBlocked(check.message);
+      } else {
+        this.toast(check.message);
+      }
+      return;
+    }
+    const warn: string = check.warn.length > 0 ? `${check.warn}\n` : '';
+    this.getUIContext().showAlertDialog({
+      title: I18n.t('lib.restoreTitle'),
+      message: I18n.f('lib.restoreMessage', [warn]),
+      primaryButton: {
+        value: I18n.t('common.cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: I18n.t('lib.restoreAction'),
+        fontColor: Palette.ACCENT,
+        action: (): void => {
+          this.runRestore();
+        }
+      }
+    });
+  }
+
+  private async runRestore(): Promise<void> {
+    this.restoring = true;
+    EventBus.emitText(AppEvent.BUSY_CHANGED, I18n.t('lib.restoreBusy'));
+    await this.setKeepScreenOn(true);
+    Logger.info(MODULE, '开始恢复默认开盒音');
+    try {
+      const result: WriteResult = await CaseWriteService.restoreDefault();
+      if (result.ok) {
+        Logger.info(MODULE, '恢复默认开盒音成功');
+        this.getUIContext().showAlertDialog({
+          title: I18n.t('lib.restoreDone'),
+          message: I18n.f('lib.restoreDoneMessage', [result.message]),
+          confirm: {
+            value: I18n.t('common.ok'),
+            action: (): void => {
+            }
+          }
+        });
+      } else {
+        Logger.warn(MODULE, `恢复默认开盒音未完成 code=${result.code}：${result.message}`);
+        this.getUIContext().showAlertDialog({
+          title: I18n.t('lib.restoreIncomplete'),
+          message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
+          primaryButton: {
+            value: I18n.t('common.ok'),
+            action: (): void => {
+            }
+          },
+          secondaryButton: {
+            value: I18n.t('lib.viewLog'),
+            fontColor: Palette.ACCENT,
+            action: (): void => {
+              EventBus.emit(AppEvent.OPEN_LOG, 1);
+            }
+          }
+        });
+      }
+    } catch (error) {
+      Logger.exception(MODULE, '恢复默认开盒音异常', error as BusinessError);
+      this.toast(I18n.t('lib.restoreFailed'));
+    } finally {
+      this.restoring = false;
+      EventBus.emitText(AppEvent.BUSY_CHANGED, '');
+      await this.setKeepScreenOn(false);
+      BluetoothService.refresh().then(() => {
+      }).catch((error: BusinessError) => {
+        Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);
+      });
+    }
+  }
+
+  /** 列表展示用：时间按新→旧，名称按中文排序 */
+  private sortedItems(): ToneEntry[] {
+    const copy: ToneEntry[] = this.items.slice();
+    if (this.sortMode === 'name') {
+      copy.sort((a: ToneEntry, b: ToneEntry): number => a.name.localeCompare(b.name));
+    } else {
+      copy.sort((a: ToneEntry, b: ToneEntry): number => b.createdAt - a.createdAt);
+    }
+    return copy;
   }
 
   /** 星闪连接下写入被前置拦截：给出明确的切换指引和跳转入口 */
@@ -198,17 +299,18 @@ export struct LibraryPage {
     const needReport: boolean = result.reason === WriteReason.UNSUPPORTED ||
       result.reason === WriteReason.FORMAT;
     if (needReport) {
-      const title: string = result.reason === WriteReason.UNSUPPORTED ? '该机型暂不支持' : '音效未被耳机接受';
+      const title: string = result.reason === WriteReason.UNSUPPORTED ?
+        I18n.t('lib.unsupportedTitle') : I18n.t('lib.rejectedTitle');
       this.getUIContext().showAlertDialog({
         title: title,
-        message: `${result.message}\n\n错误码 ${result.code}`,
+        message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
         primaryButton: {
-          value: '关闭',
+          value: I18n.t('common.close'),
           action: (): void => {
           }
         },
         secondaryButton: {
-          value: '复制诊断信息',
+          value: I18n.t('lib.copyDiagnostic'),
           fontColor: Palette.ACCENT,
           action: (): void => {
             this.copyDiagnostic(result.diagnostic);
@@ -218,15 +320,15 @@ export struct LibraryPage {
       return;
     }
     this.getUIContext().showAlertDialog({
-      title: '写入未完成',
-      message: `${result.message}\n\n错误码 ${result.code}`,
+      title: I18n.t('lib.writeIncomplete'),
+      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
       primaryButton: {
-        value: '知道了',
+        value: I18n.t('common.ok'),
         action: (): void => {
         }
       },
       secondaryButton: {
-        value: '查看日志',
+        value: I18n.t('lib.viewLog'),
         fontColor: Palette.ACCENT,
         action: (): void => {
           EventBus.emit(AppEvent.OPEN_LOG, 1);
@@ -237,16 +339,16 @@ export struct LibraryPage {
 
   private async copyDiagnostic(text: string): Promise<void> {
     if (text.length === 0) {
-      this.toast('没有可复制的诊断信息');
+      this.toast(I18n.t('lib.noDiagnostic'));
       return;
     }
     try {
       const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
       await pasteboard.getSystemPasteboard().setData(data);
-      this.toast('诊断信息已复制，可粘贴到反馈中发送');
+      this.toast(I18n.t('lib.diagnosticCopied'));
     } catch (error) {
       Logger.warn(MODULE, `复制诊断信息失败 code=${(error as BusinessError).code}`);
-      this.toast('复制失败');
+      this.toast(I18n.t('common.copyFailed'));
     }
   }
 
@@ -254,25 +356,25 @@ export struct LibraryPage {
     try {
       const fileName: string = await ToneRepositoryService.exportTone(entry);
       if (fileName.length > 0) {
-        this.toast(`已导出 ${fileName}`);
+        this.toast(I18n.f('tone.exported', [fileName]));
       }
     } catch (error) {
       Logger.exception(MODULE, '导出失败', error as BusinessError);
-      this.toast('导出失败，请查看日志');
+      this.toast(I18n.t('tone.exportFailed'));
     }
   }
 
   private confirmDelete(entry: ToneEntry): void {
     this.getUIContext().showAlertDialog({
-      title: '删除音效',
-      message: `确定删除「${entry.name}」吗？该操作不可恢复。`,
+      title: I18n.t('lib.deleteTitle'),
+      message: I18n.f('lib.deleteMessage', [entry.name]),
       primaryButton: {
-        value: '取消',
+        value: I18n.t('common.cancel'),
         action: (): void => {
         }
       },
       secondaryButton: {
-        value: '删除',
+        value: I18n.t('lib.delete'),
         fontColor: Palette.DANGER,
         action: (): void => {
           ToneRepositoryService.remove(entry);
@@ -281,7 +383,7 @@ export struct LibraryPage {
             this.playingId = '';
           }
           this.reload();
-          this.toast('已删除');
+          this.toast(I18n.t('lib.deleted'));
         }
       }
     });
@@ -290,14 +392,14 @@ export struct LibraryPage {
   private commitRename(entry: ToneEntry): void {
     const trimmed: string = this.editingName.trim();
     if (trimmed.length === 0) {
-      this.toast('名称不能为空');
+      this.toast(I18n.t('lib.renameEmpty'));
       return;
     }
     ToneRepositoryService.rename(entry, trimmed);
     this.editingId = '';
     this.editingName = '';
     this.reload();
-    this.toast('已重命名');
+    this.toast(I18n.t('lib.renamed'));
   }
 
   build() {
@@ -305,6 +407,10 @@ export struct LibraryPage {
       Column({ space: 16 }) {
         this.buildHeader()
         this.buildSummary()
+        this.buildRestoreAction()
+        if (this.items.length > 0) {
+          this.buildSortBar()
+        }
         this.buildList()
       }
       .width('100%')
@@ -325,11 +431,11 @@ export struct LibraryPage {
   @Builder
   buildHeader() {
     Column({ space: 6 }) {
-      Text('音效库')
+      Text(I18n.t('lib.title'))
         .fontSize(Metric.TITLE_SIZE)
         .fontWeight(FontWeight.Bold)
         .fontColor(Palette.TEXT_PRIMARY)
-      Text('已生成的音效都会保存在本机，可随时导出')
+      Text(I18n.t('lib.subtitle'))
         .fontSize(12)
         .fontColor(Palette.TEXT_SECONDARY)
     }
@@ -342,13 +448,17 @@ export struct LibraryPage {
   buildSummary() {
     GlassCard({ cardPadding: 16 }) {
       Row() {
-        SummaryCell({ cellLabel: '音效数量', cellValue: `${this.items.length}`, cellUnit: '个' })
+        SummaryCell({
+          cellLabel: I18n.t('lib.count'),
+          cellValue: `${this.items.length}`,
+          cellUnit: I18n.t('lib.unit')
+        })
         Divider()
           .vertical(true)
           .height(28)
           .color(Palette.FILL_SOFT)
         SummaryCell({
-          cellLabel: '占用空间',
+          cellLabel: I18n.t('lib.size'),
           cellValue: FormatUtils.bytes(this.totalBytes),
           cellUnit: ''
         })
@@ -356,7 +466,7 @@ export struct LibraryPage {
           .vertical(true)
           .height(28)
           .color(Palette.FILL_SOFT)
-        SummaryCell({ cellLabel: '最近生成', cellValue: this.lastCreated(), cellUnit: '' })
+        SummaryCell({ cellLabel: I18n.t('lib.last'), cellValue: this.lastCreated(), cellUnit: '' })
       }
       .width('100%')
     }
@@ -370,18 +480,56 @@ export struct LibraryPage {
   }
 
   @Builder
+  buildRestoreAction() {
+    GhostButton({
+      ghostLabel: this.restoring ? I18n.t('lib.restoring') : I18n.t('lib.restoreDefault'),
+      ghostEnabled: !this.restoring && this.writingId.length === 0,
+      onTap: (): void => {
+        this.confirmRestore();
+      }
+    })
+  }
+
+  @Builder
+  buildSortBar() {
+    Row({ space: 8 }) {
+      Text(I18n.f('lib.totalCount', [`${this.items.length}`]))
+        .fontSize(10)
+        .fontColor(Palette.TEXT_TERTIARY)
+      Blank()
+      this.sortChip(I18n.t('lib.sortTime'), 'time')
+      this.sortChip(I18n.t('lib.sortName'), 'name')
+    }
+    .width('100%')
+    .margin({ top: -4 })
+  }
+
+  @Builder
+  sortChip(label: string, key: string) {
+    Text(label)
+      .fontSize(11)
+      .fontColor(this.sortMode === key ? '#05080E' : Palette.TEXT_SECONDARY)
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .borderRadius(999)
+      .backgroundColor(this.sortMode === key ? Palette.ACCENT : Palette.FILL_FAINT)
+      .onClick(() => {
+        this.sortMode = key;
+      })
+  }
+
+  @Builder
   buildList() {
     if (this.items.length === 0) {
       GlassCard({ cardPadding: 6 }) {
         EmptyView({
           emptyIcon: $r('app.media.ic_tab_library'),
-          emptyTitle: '还没有音效',
-          emptyDesc: '去「音效」页导入素材或选择内置音色，生成后会出现在这里'
+          emptyTitle: I18n.t('lib.empty'),
+          emptyDesc: I18n.t('lib.emptyDesc')
         })
       }
     } else {
       Column({ space: 10 }) {
-        ForEach(this.items, (entry: ToneEntry) => {
+        ForEach(this.sortedItems(), (entry: ToneEntry) => {
           Column({ space: 8 }) {
             ToneCard({
               entry: entry,
@@ -389,8 +537,9 @@ export struct LibraryPage {
               playing: this.playingId === entry.id,
               writing: this.writingId === entry.id,
               writingText: this.writingId === entry.id && this.writeRatio > 0
-                ? `写入 ${this.writeRatio}%` : '写入中…',
-              writeLocked: this.writingId.length > 0 && this.writingId !== entry.id,
+                ? I18n.f('lib.writeProgress', [`${this.writeRatio}`]) : I18n.t('lib.writing'),
+              writeLocked: this.restoring ||
+                (this.writingId.length > 0 && this.writingId !== entry.id),
               onToggle: (): void => {
                 this.expandedId = this.expandedId === entry.id ? '' : entry.id;
                 if (this.expandedId !== entry.id) {
@@ -418,7 +567,7 @@ export struct LibraryPage {
             if (this.writingId === entry.id) {
               Column({ space: 6 }) {
                 Row() {
-                  Text(this.writeStage.length > 0 ? this.writeStage : '正在写入')
+                  Text(this.writeStage.length > 0 ? this.writeStage : I18n.t('lib.writingStage'))
                     .fontSize(11)
                     .fontColor(Palette.ACCENT)
                     .layoutWeight(1)
@@ -440,7 +589,7 @@ export struct LibraryPage {
 
             if (this.editingId === entry.id) {
               Row({ space: 8 }) {
-                TextInput({ text: this.editingName, placeholder: '输入新名称' })
+                TextInput({ text: this.editingName, placeholder: I18n.t('lib.renamePlaceholder') })
                   .layoutWeight(1)
                   .height(40)
                   .fontSize(13)
@@ -451,7 +600,7 @@ export struct LibraryPage {
                   .onChange((value: string) => {
                     this.editingName = value;
                   })
-                Text('保存')
+                Text(I18n.t('common.save'))
                   .fontSize(12)
                   .fontColor('#05080E')
                   .height(40)

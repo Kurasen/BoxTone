@@ -2,6 +2,7 @@ import { common, bundleManager } from '@kit.AbilityKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { LogLevel } from '../common/constants/AppConstants';
+import { I18n } from '../common/i18n/I18n';
 import { DateUtils } from '../common/utils/DateUtils';
 import { Logger } from '../common/utils/Logger';
 import { LogEntry } from '../models/LogModel';
@@ -11,6 +12,20 @@ const MODULE: string = 'LogService';
 const MAX_MEMORY_ENTRIES: number = 600;
 /** 累积多少条后落盘 */
 const FLUSH_THRESHOLD: number = 12;
+/** 历史日志保留天数（含今天） */
+const LOG_RETENTION_DAYS: number = 7;
+/** 历史日志总占用上限：超出后从最旧的开始删 */
+const LOG_TOTAL_MAX_BYTES: number = 2 * 1024 * 1024;
+const LOG_FILE_PREFIX: string = 'boxtone-';
+const LOG_FILE_SUFFIX: string = '.log';
+
+interface LogFileInfo {
+  name: string;
+  path: string;
+  size: number;
+  /** 文件名里的 yyyyMMdd，用于判断新旧 */
+  day: number;
+}
 
 export type LogChangeListener = (entries: LogEntry[]) => void;
 
@@ -42,12 +57,98 @@ export class LogService {
     if (!fs.accessSync(dir)) {
       fs.mkdirSync(dir);
     }
+    LogService.pruneLogs(dir);
     const today: string = DateUtils.fileStamp(Date.now()).substring(0, 8);
     this.logFilePath = `${dir}/boxtone-${today}.log`;
     Logger.setSink((level: LogLevel, module: string, message: string): void => {
       this.append(level, module, message);
     });
     this.append(LogLevel.INFO, MODULE, '日志中心已启动');
+  }
+
+  /**
+   * 启动时清理历史日志：
+   * 1. 删除保留期之外的文件；
+   * 2. 总量超过上限时从最旧的开始删。
+   * 日期直接读文件名，避免依赖 stat.mtime 的单位差异。
+   */
+  private static pruneLogs(dir: string): void {
+    let names: string[] = [];
+    try {
+      names = fs.listFileSync(dir);
+    } catch (error) {
+      Logger.warn(MODULE, '读取日志目录失败，跳过清理');
+      return;
+    }
+    const files: LogFileInfo[] = [];
+    for (let i = 0; i < names.length; i++) {
+      const name: string = names[i];
+      if (!name.startsWith(LOG_FILE_PREFIX) || !name.endsWith(LOG_FILE_SUFFIX)) {
+        continue;
+      }
+      const dayText: string = name.substring(LOG_FILE_PREFIX.length,
+        name.length - LOG_FILE_SUFFIX.length);
+      if (dayText.length !== 8) {
+        continue;
+      }
+      const day: number = Number(dayText);
+      if (isNaN(day)) {
+        continue;
+      }
+      const path: string = `${dir}/${name}`;
+      let size: number = 0;
+      try {
+        size = fs.statSync(path).size;
+      } catch (error) {
+        continue;
+      }
+      files.push({ name: name, path: path, size: size, day: day });
+    }
+    if (files.length === 0) {
+      return;
+    }
+    const cutoffDate: Date = new Date(Date.now() - (LOG_RETENTION_DAYS - 1) * 86400000);
+    const cutoff: number = cutoffDate.getFullYear() * 10000 +
+      (cutoffDate.getMonth() + 1) * 100 + cutoffDate.getDate();
+    const remain: LogFileInfo[] = [];
+    let total: number = 0;
+    let expired: number = 0;
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].day < cutoff) {
+        if (LogService.unlinkQuietly(files[i].path)) {
+          expired++;
+        }
+        continue;
+      }
+      remain.push(files[i]);
+      total += files[i].size;
+    }
+    remain.sort((a: LogFileInfo, b: LogFileInfo): number => a.day - b.day);
+    let oversized: number = 0;
+    let index: number = 0;
+    // 至少保留最新一份，哪怕它自己就超过上限
+    while (total > LOG_TOTAL_MAX_BYTES && index < remain.length - 1) {
+      if (LogService.unlinkQuietly(remain[index].path)) {
+        total -= remain[index].size;
+        oversized++;
+      }
+      index++;
+    }
+    if (expired > 0 || oversized > 0) {
+      Logger.info(MODULE, `日志清理完成：过期 ${expired} 份，超量 ${oversized} 份，保留 ${remain.length - oversized} 份`);
+    }
+  }
+
+  private static unlinkQuietly(path: string): boolean {
+    try {
+      if (fs.accessSync(path)) {
+        fs.unlinkSync(path);
+        return true;
+      }
+    } catch (error) {
+      Logger.warn(MODULE, `删除日志失败 ${path.substring(path.lastIndexOf('/') + 1)}`);
+    }
+    return false;
   }
 
   public append(level: LogLevel, module: string, message: string): void {
@@ -148,13 +249,28 @@ export class LogService {
   public clear(): void {
     this.entries = [];
     this.pending = [];
-    try {
-      if (fs.accessSync(this.logFilePath)) {
-        fs.unlinkSync(this.logFilePath);
+    let removed: number = 0;
+    const context: common.UIAbilityContext | undefined = this.context;
+    if (context !== undefined) {
+      const dir: string = `${context.filesDir}/logs`;
+      try {
+        const names: string[] = fs.listFileSync(dir);
+        for (let i = 0; i < names.length; i++) {
+          if (!names[i].startsWith(LOG_FILE_PREFIX) || !names[i].endsWith(LOG_FILE_SUFFIX)) {
+            continue;
+          }
+          if (LogService.unlinkQuietly(`${dir}/${names[i]}`)) {
+            removed++;
+          }
+        }
+      } catch (error) {
+        Logger.warn(MODULE, `读取日志目录失败 code=${(error as BusinessError).code}`);
       }
-    } catch (error) {
-      Logger.exception(MODULE, '清空日志文件失败', error as BusinessError);
     }
+    if (removed === 0 && this.logFilePath.length > 0) {
+      LogService.unlinkQuietly(this.logFilePath);
+    }
+    Logger.info(MODULE, `已清空日志文件 ${removed} 份`);
     this.append(LogLevel.INFO, MODULE, '日志已清空');
   }
 
@@ -162,10 +278,10 @@ export class LogService {
   public buildReport(): string {
     this.flush();
     const lines: string[] = [];
-    lines.push('==== 盒音工坊 诊断日志 ====');
-    lines.push(`导出时间：${DateUtils.dateTime(Date.now())}`);
-    lines.push(`条目数量：${this.entries.length}`);
-    lines.push(`系统版本：${this.systemVersion()}`);
+    lines.push(I18n.t('log.reportHeader'));
+    lines.push(I18n.f('log.reportTime', [DateUtils.dateTime(Date.now())]));
+    lines.push(I18n.f('log.reportCount', [`${this.entries.length}`]));
+    lines.push(I18n.f('log.reportSystem', [this.systemVersion()]));
     lines.push('----------------------------');
     // 先输出错误，便于快速定位
     for (let i = 0; i < this.entries.length; i++) {
@@ -173,7 +289,7 @@ export class LogService {
         lines.push(this.formatLine(this.entries[i]));
       }
     }
-    lines.push('------ 全部记录 ------');
+    lines.push(I18n.t('log.reportAll'));
     for (let i = 0; i < this.entries.length; i++) {
       lines.push(this.formatLine(this.entries[i]));
     }
@@ -197,7 +313,7 @@ export class LogService {
    */
   public async exportToFile(): Promise<string> {
     if (this.context === undefined) {
-      throw new Error('日志服务未初始化');
+      throw new Error(I18n.t('log.notReady'));
     }
     const fileName: string = `boxtone-log-${DateUtils.fileStamp(Date.now())}.txt`;
     const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();

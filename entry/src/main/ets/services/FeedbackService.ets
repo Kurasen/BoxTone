@@ -5,6 +5,7 @@ import { systemShare } from '@kit.ShareKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppStorageKey, SupportInfo } from '../common/constants/AppConstants';
+import { I18n } from '../common/i18n/I18n';
 import { DateUtils } from '../common/utils/DateUtils';
 import { Logger } from '../common/utils/Logger';
 import { BluetoothService } from './BluetoothService';
@@ -19,17 +20,18 @@ export const MAX_IMAGES: number = 3;
 /** 上报时所有截图 base64 后的总量上限，避免请求体过大 */
 const IMAGES_TOTAL_MAX_BYTES: number = 8 * 1024 * 1024;
 const MAX_RECORDS: number = 50;
+const IMAGE_CACHE_PREFIX: string = 'feedback-image-';
 
 export interface FeedbackTypeOption {
   key: string;
-  label: string;
+  labelKey: string;
 }
 
 export const FEEDBACK_TYPES: FeedbackTypeOption[] = [
-  { key: 'bug', label: '问题反馈' },
-  { key: 'feature', label: '功能建议' },
-  { key: 'ux', label: '体验问题' },
-  { key: 'other', label: '其他' }
+  { key: 'bug', labelKey: 'fb.type.bug' },
+  { key: 'feature', labelKey: 'fb.type.feature' },
+  { key: 'ux', labelKey: 'fb.type.ux' },
+  { key: 'other', labelKey: 'fb.type.other' }
 ];
 
 export interface FeedbackDraft {
@@ -74,9 +76,50 @@ export class FeedbackService {
       const options: preferences.Options = { name: AppStorageKey.PREFS_NAME };
       FeedbackService.store = preferences.getPreferencesSync(context, options);
       FeedbackService.records = FeedbackService.readRecords();
+      FeedbackService.cleanStaleImages(context);
       Logger.info(MODULE, `反馈记录已加载，共 ${FeedbackService.records.length} 条`);
     } catch (error) {
       Logger.exception(MODULE, '读取反馈记录失败', error as BusinessError);
+    }
+  }
+
+  /** 删除不再使用的截图副本：移除、重置表单、退出反馈页时调用 */
+  public static discardImages(paths: string[]): void {
+    for (let i = 0; i < paths.length; i++) {
+      if (paths[i].length === 0) {
+        continue;
+      }
+      try {
+        if (fs.accessSync(paths[i])) {
+          fs.unlinkSync(paths[i]);
+        }
+      } catch (error) {
+        Logger.warn(MODULE, '删除截图缓存失败');
+      }
+    }
+  }
+
+  /** 启动时清掉上次会话遗留的截图副本（cacheDir 可能被系统保留很久） */
+  private static cleanStaleImages(context: common.UIAbilityContext): void {
+    try {
+      const names: string[] = fs.listFileSync(context.cacheDir);
+      let removed: number = 0;
+      for (let i = 0; i < names.length; i++) {
+        if (!names[i].startsWith(IMAGE_CACHE_PREFIX)) {
+          continue;
+        }
+        try {
+          fs.unlinkSync(`${context.cacheDir}/${names[i]}`);
+          removed++;
+        } catch (error) {
+          Logger.warn(MODULE, '清理历史截图失败');
+        }
+      }
+      if (removed > 0) {
+        Logger.info(MODULE, `已清理历史截图 ${removed} 张`);
+      }
+    } catch (error) {
+      Logger.warn(MODULE, '扫描截图缓存目录失败');
     }
   }
 
@@ -91,12 +134,12 @@ export class FeedbackService {
   public static async submit(draft: FeedbackDraft): Promise<SubmitOutcome> {
     const context: common.UIAbilityContext | undefined = FeedbackService.context;
     if (context === undefined) {
-      return { ok: false, channel: '', message: '反馈服务未初始化，请重启应用后重试' };
+      return { ok: false, channel: '', message: I18n.t('fb.serviceNotReady') };
     }
     try {
       const logText: string = FeedbackService.buildLogText(draft);
       const body: string = FeedbackService.buildBody(draft);
-      const subject: string = `盒音工坊反馈 · ${draft.typeLabel}`;
+      const subject: string = I18n.f('fb.subject', [draft.typeLabel]);
       let channel: string = '';
       let imageCount: number = 0;
 
@@ -114,7 +157,7 @@ export class FeedbackService {
           images: images
         };
         await FeedbackApiService.submit(payload);
-        channel = '服务器';
+        channel = I18n.t('fb.channel.server');
       } else {
         const logPath: string = FeedbackService.writeLogFile(logText, context);
         const paths: string[] = [logPath];
@@ -123,7 +166,7 @@ export class FeedbackService {
         }
         imageCount = draft.imagePaths.length;
         await FeedbackService.share(context, subject, body, paths);
-        channel = '系统分享';
+        channel = I18n.t('fb.channel.share');
       }
 
       const record: FeedbackRecord = {
@@ -133,31 +176,33 @@ export class FeedbackService {
         contact: draft.contact,
         createdAt: Date.now(),
         channel: channel,
-        status: channel === '服务器' ? '已发送' : '已提交'
+        status: channel === I18n.t('fb.channel.server') ?
+          I18n.t('fb.status.sent') : I18n.t('fb.status.submitted')
       };
       FeedbackService.saveRecord(record);
       Logger.info(MODULE, `反馈已提交 channel=${channel} 截图=${imageCount}`);
       return {
         ok: true,
         channel: channel,
-        message: channel === '服务器'
-          ? `已提交到反馈服务，附带 ${imageCount} 张截图`
-          : `已准备好反馈内容与日志，正文已注明收件邮箱 ${SupportInfo.EMAIL}；若分享面板里没有完成发送，可再点一次提交`
+        message: channel === I18n.t('fb.channel.server')
+          ? I18n.f('fb.successServer', [`${imageCount}`])
+          : I18n.f('fb.successShare', [SupportInfo.EMAIL])
       };
     } catch (error) {
       Logger.exception(MODULE, '提交反馈失败', error as BusinessError);
-      const message: string = (error as Error).message !== undefined ? (error as Error).message : '未知错误';
-      return { ok: false, channel: '', message: `提交失败：${message}` };
+      const message: string = (error as Error).message !== undefined ?
+        (error as Error).message : I18n.t('fb.unknownError');
+      return { ok: false, channel: '', message: I18n.f('fb.failedWith', [message]) };
     }
   }
 
   /** 反馈正文 + 诊断日志，限制总长度 */
   private static buildLogText(draft: FeedbackDraft): string {
     let text: string = FeedbackService.buildBody(draft);
-    text += '\n\n==== 诊断日志 ====\n';
+    text += `\n\n${I18n.t('fb.logSection')}\n`;
     text += LogService.getInstance().buildReport();
     if (text.length > LOG_MAX_CHARS) {
-      text = '（较早的日志已省略）\n' + text.substring(text.length - LOG_MAX_CHARS);
+      text = `${I18n.t('fb.logOmitted')}\n` + text.substring(text.length - LOG_MAX_CHARS);
     }
     return text;
   }
@@ -177,15 +222,15 @@ export class FeedbackService {
 
   private static buildBody(draft: FeedbackDraft): string {
     const lines: string[] = [];
-    lines.push('==== 盒音工坊 反馈 ====');
-    lines.push(`请发送到：${SupportInfo.EMAIL}`);
-    lines.push(`反馈类型：${draft.typeLabel}`);
-    lines.push(`提交时间：${DateUtils.dateTime(Date.now())}`);
-    lines.push(`应用版本：${FeedbackService.versionName()}`);
-    lines.push(`耳机：${FeedbackService.deviceName()}`);
-    lines.push(`联系方式：${draft.contact.length > 0 ? draft.contact : '未填写'}`);
+    lines.push(I18n.t('fb.bodyHeader'));
+    lines.push(I18n.f('fb.bodySendTo', [SupportInfo.EMAIL]));
+    lines.push(I18n.f('fb.bodyType', [draft.typeLabel]));
+    lines.push(I18n.f('fb.bodyTime', [DateUtils.dateTime(Date.now())]));
+    lines.push(I18n.f('fb.bodyVersion', [FeedbackService.versionName()]));
+    lines.push(I18n.f('fb.bodyDevice', [FeedbackService.deviceName()]));
+    lines.push(I18n.f('fb.bodyContact', [draft.contact.length > 0 ? draft.contact : I18n.t('fb.bodyContactEmpty')]));
     lines.push('');
-    lines.push('描述：');
+    lines.push(I18n.t('fb.bodyDescription'));
     lines.push(draft.description);
     return lines.join('\n');
   }
@@ -251,7 +296,7 @@ export class FeedbackService {
 
   private static deviceName(): string {
     const name: string = BluetoothService.getSnapshot().activeName;
-    return name.length > 0 ? name : '未连接耳机';
+    return name.length > 0 ? name : I18n.t('fb.deviceNone');
   }
 
   public static suffixOf(path: string): string {
