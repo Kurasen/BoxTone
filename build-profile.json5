@@ -1,0 +1,63 @@
+{
+  "app": {
+    "signingConfigs": [
+      /*
+       * 发布签名（AppGallery Connect）
+       *
+       * 真实签名材料放在本地 signing/ 目录，该目录已被 .gitignore 排除。
+       * 密码字段保持为空，由 hvigorfile.ts 在 release 构建时读取
+       * signing/keystore-password.txt 并加密注入，不写入仓库。
+       */
+      {
+        "name": "release",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "signing/boxtone-release.p12",
+          "storePassword": "",
+          "keyAlias": "boxtone",
+          "keyPassword": "",
+          "signAlg": "SHA256withECDSA",
+          "profile": "signing/boxtone_profileRelease.p7b",
+          "certpath": "signing/boxtone-release_cer.cer"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "release",
+        "compatibleSdkVersion": "26.0.0",
+        "targetSdkVersion": "26.0.0",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+import { Palette } from '../common/constants/ThemeConstants';
+import { FormatUtils } from '../common/utils/FormatUtils';
+import { BtDevice, createEmptyDevice } from '../models/DeviceModel';
+
+/** 蓝牙设备行 */
+@Component
+export struct DeviceRow {
+  @Prop device: BtDevice = createEmptyDevice();
+  @Prop actionLabel: string = '';
+  @Prop showAction: boolean = true;
+  onAction: () => void = () => {
+  };
+
+  build() {
+    Row({ space: 12 }) {
+      Stack() {
+        Circle()
+          .width(38)
+          .height(38)
+          .fill(this.device.audio ? Palette.ACCENT_SOFT : 'rgba(255, 255, 255, 0.05)')
+        Image($r('app.media.ic_tab_device'))
+          .width(18)
+          .height(18)
+          .fillColor(this.device.audio ? Palette.ACCENT : Palette.TEXT_TERTIARY)
+      }
+
+      Column({ space: 3 }) {
+        Row({ space: 6 }) {
+          Text(this.device.name)
+            .fontSize(13)
+            .fontColor(Palette.TEXT_PRIMARY)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          if (this.device.connected) {
+            Circle()
+              .width(6)
+              .height(6)
+              .fill(Palette.SUCCESS)
+          }
+        }
+        .width('100%')
+
+        Text(this.subtitle())
+          .fontSize(11)
+          .fontColor(Palette.TEXT_TERTIARY)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      if (this.showAction && this.actionLabel.length > 0) {
+        Text(this.actionLabel)
+          .fontSize(12)
+          .fontColor(Palette.ACCENT)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(999)
+          .backgroundColor(Palette.ACCENT_SOFT)
+          .onClick(() => {
+            this.onAction();
+          })
+      }
+    }
+    .width('100%')
+    .padding({ top: 9, bottom: 9 })
+  }
+
+  private subtitle(): string {
+    const address: string = FormatUtils.maskAddress(this.device.deviceId);
+    if (this.device.connected) {
+      return `已连接 · ${address}`;
+    }
+    if (this.device.paired) {
+      return `已配对 · ${address}`;
+    }
+    return this.device.audio ? `音频设备 · ${address}` : address;
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "boxtone",
+  "version": "1.0.0",
+  "description": "华为耳机开盖音效定制工具",
+  "main": "",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

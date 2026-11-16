@@ -1,0 +1,30 @@
+**/node_modules
+**/oh_modules
+/local.properties
+/.idea
+**/build
+**/.hvigor
+**/.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+/.codegenie
+/.workbuddy
+# 发布签名材料：密钥库、证书、profile 和密码都不入库
+/signing
+.tmp_cert.pem
+**/*.p12
+**/*.csr
+**/*.cer
+**/*.p7b
+**/keystore-password.txt
+# 反馈服务依赖与本地配置
+/server/node_modules
+/server/.env*
+!/server/.env.example
+/server.zip
+*.pem
+*.jks
+*.keystore

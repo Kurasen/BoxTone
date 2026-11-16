@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.boxtone.audiokit",
+    "vendor": "boxtone",
+    "versionCode": 1000100,
+    "versionName": "1.1.0",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}

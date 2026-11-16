@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Customize the opening tone of HUAWEI earbuds"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "BoxTone: connect earbuds, craft and flash a case-opening tone"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "BoxTone"
+    },
+    {
+      "name": "perm_bluetooth_reason",
+      "value": "Used to discover, pair and connect your HUAWEI Bluetooth earbuds and read their connection state"
+    }
+  ]
+}

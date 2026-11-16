@@ -1,0 +1,75 @@
+import { emitter } from '@kit.BasicServicesKit';
+
+/**
+ * 轻量事件总线：解耦页面之间的数据刷新
+ * 使用 emitter 而非全局状态，避免跨版本装饰器差异
+ */
+export class AppEvent {
+  /** 音效库发生变化（新增 / 删除 / 重命名） */
+  static readonly TONE_CHANGED: number = 3001;
+  /** 日志新增 */
+  static readonly LOG_APPENDED: number = 3002;
+  /** 请求切换到指定页签 */
+  static readonly SWITCH_TAB: number = 3003;
+  /** 打开日志中心 */
+  static readonly OPEN_LOG: number = 3004;
+  /** 打开反馈与建议 */
+  static readonly OPEN_FEEDBACK: number = 3006;
+  /** 全屏忙碌遮罩：payload 为空串表示收起 */
+  static readonly BUSY_CHANGED: number = 3005;
+  /** 托管隐私弹窗已签署同意，业务服务完成初始化 */
+  static readonly PRIVACY_READY: number = 3007;
+}
+
+export type SimpleHandler = (payload: number) => void;
+export type TextHandler = (payload: string) => void;
+
+export class EventBus {
+  public static on(eventId: number, handler: SimpleHandler): void {
+    const event: emitter.InnerEvent = { eventId: eventId };
+    const callback: (data: emitter.EventData) => void = (data: emitter.EventData): void => {
+      let value: number = 0;
+      const payload: Record<string, Object> | undefined = data.data;
+      if (payload !== undefined && payload !== null) {
+        const raw: Object | undefined = payload['value'];
+        if (raw !== undefined && raw !== null) {
+          value = raw as number;
+        }
+      }
+      handler(value);
+    };
+    emitter.on(event, callback);
+  }
+
+  public static off(eventId: number): void {
+    emitter.off(eventId);
+  }
+
+  public static emit(eventId: number, payload: number = 0): void {
+    const event: emitter.InnerEvent = { eventId: eventId };
+    const data: emitter.EventData = { data: { value: payload } };
+    emitter.emit(event, data);
+  }
+
+  public static onText(eventId: number, handler: TextHandler): void {
+    const event: emitter.InnerEvent = { eventId: eventId };
+    const callback: (data: emitter.EventData) => void = (data: emitter.EventData): void => {
+      let value: string = '';
+      const payload: Record<string, Object> | undefined = data.data;
+      if (payload !== undefined && payload !== null) {
+        const raw: Object | undefined = payload['value'];
+        if (raw !== undefined && raw !== null) {
+          value = raw as string;
+        }
+      }
+      handler(value);
+    };
+    emitter.on(event, callback);
+  }
+
+  public static emitText(eventId: number, payload: string): void {
+    const event: emitter.InnerEvent = { eventId: eventId };
+    const data: emitter.EventData = { data: { value: payload } };
+    emitter.emit(event, data);
+  }
+}

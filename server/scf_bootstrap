@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+cd "$(dirname "$0")"
+
+for node_bin in node /var/lang/node20/bin/node /var/lang/node18/bin/node /var/lang/node16/bin/node; do
+  if command -v "$node_bin" >/dev/null 2>&1; then
+    exec "$node_bin" feedback-server.mjs
+  fi
+done
+
+echo "[bootstrap] node executable not found" >&2
+exit 1

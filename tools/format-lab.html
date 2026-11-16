@@ -1,0 +1,1202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>盒音工坊 · 格式验证台</title>
+<style>
+  :root {
+    --bg: #070A10;
+    --bg2: #0D1524;
+    --card: rgba(255, 255, 255, 0.048);
+    --card-hi: rgba(255, 255, 255, 0.075);
+    --stroke: rgba(255, 255, 255, 0.09);
+    --text: #F2F6FB;
+    --text2: #9AA6B8;
+    --text3: #5E697B;
+    --accent: #4ED8FF;
+    --violet: #9B7BFF;
+    --ok: #43D6A0;
+    --warn: #FFB84D;
+    --danger: #FF6B7A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html {
+    min-height: 100%;
+    background-color: #070A10;
+    background-image:
+      radial-gradient(900px 520px at 8% -4%, rgba(78, 216, 255, 0.17), transparent 62%),
+      radial-gradient(760px 480px at 92% 2%, rgba(155, 123, 255, 0.16), transparent 60%),
+      radial-gradient(880px 520px at 50% 102%, rgba(64, 206, 190, 0.11), transparent 62%),
+      linear-gradient(168deg, #070A10 0%, #0D1524 64%, #0A1120 100%);
+    background-repeat: no-repeat;
+  }
+  body {
+    min-height: 100vh;
+    color: var(--text);
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 40px 24px 80px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+
+  header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 26px; flex-wrap: wrap; }
+  .logo {
+    width: 46px; height: 46px; border-radius: 14px; flex: none;
+    background: linear-gradient(150deg, #5BE0FF, #8F7BFF);
+    display: grid; place-items: center;
+    box-shadow: 0 8px 26px rgba(78, 216, 255, 0.28);
+  }
+  h1 { font-size: 22px; font-weight: 600; letter-spacing: 0.2px; }
+  .sub { font-size: 12.5px; color: var(--text2); margin-top: 5px; line-height: 1.6; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid rgba(78, 216, 255, 0.34);
+    background: rgba(78, 216, 255, 0.10); color: var(--accent);
+  }
+  .badge.warn { border-color: rgba(255, 184, 77, 0.34); background: rgba(255, 184, 77, 0.10); color: var(--warn); }
+
+  .notice {
+    display: flex; gap: 12px; align-items: flex-start;
+    border: 1px solid rgba(255, 184, 77, 0.22);
+    background: rgba(255, 184, 77, 0.055);
+    border-radius: 18px; padding: 15px 17px; margin-bottom: 26px;
+    font-size: 12.5px; line-height: 1.75; color: #E8D2AE;
+  }
+  .notice b { color: var(--warn); font-weight: 600; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--stroke);
+    border-radius: 22px;
+    padding: 20px 22px;
+    margin-bottom: 16px;
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+  }
+  .card-h { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
+  .step {
+    width: 22px; height: 22px; border-radius: 7px; flex: none;
+    display: grid; place-items: center; font-size: 11px; font-weight: 600;
+    background: rgba(78, 216, 255, 0.14); color: var(--accent);
+    border: 1px solid rgba(78, 216, 255, 0.26);
+  }
+  .card-t { font-size: 14.5px; font-weight: 600; }
+  .card-hint { font-size: 11.5px; color: var(--text3); margin-left: auto; }
+
+  .drop {
+    border: 1.5px dashed rgba(255, 255, 255, 0.16);
+    border-radius: 18px; padding: 30px 20px; text-align: center;
+    cursor: pointer; transition: all .18s ease;
+    background: rgba(255, 255, 255, 0.018);
+  }
+  .drop:hover, .drop.over { border-color: rgba(78, 216, 255, 0.55); background: rgba(78, 216, 255, 0.06); }
+  .drop b { display: block; font-size: 13.5px; margin-bottom: 6px; }
+  .drop span { font-size: 11.5px; color: var(--text3); }
+
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
+  .meta div { background: rgba(255, 255, 255, 0.035); border-radius: 12px; padding: 9px 12px; }
+  .meta dt { font-size: 10.5px; color: var(--text3); margin-bottom: 3px; }
+  .meta dd { font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  #wave { width: 100%; height: 132px; display: block; border-radius: 14px; background: rgba(0,0,0,0.22); cursor: ew-resize; touch-action: none; }
+  .wave-wrap { position: relative; }
+
+  .row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .row:last-child { margin-bottom: 0; }
+  .row label { font-size: 12.5px; color: var(--text2); width: 78px; flex: none; }
+  .row .val { font-size: 12px; color: var(--accent); font-variant-numeric: tabular-nums; width: 74px; text-align: right; flex: none; }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; flex: 1; height: 3px; border-radius: 2px;
+    background: rgba(255, 255, 255, 0.14); outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 4px rgba(78, 216, 255, 0.22); cursor: pointer;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 15px; height: 15px; border: none; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 4px rgba(78, 216, 255, 0.22); cursor: pointer;
+  }
+  .row label.check { width: auto; flex: 1; }
+  .check { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text2); cursor: pointer; line-height: 1.5; }
+  .check input { width: 15px; height: 15px; accent-color: #4ED8FF; cursor: pointer; }
+
+  .btn {
+    border: none; border-radius: 14px; padding: 12px 20px; font-size: 13px; font-weight: 500;
+    cursor: pointer; font-family: inherit; transition: transform .12s ease, box-shadow .18s ease, opacity .18s;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .btn:active { transform: scale(0.975); }
+  .btn-primary {
+    background: linear-gradient(120deg, #5BE0FF, #8F7BFF);
+    color: #04121C; box-shadow: 0 8px 26px rgba(78, 216, 255, 0.26);
+  }
+  .btn-ghost {
+    background: rgba(255, 255, 255, 0.07); color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+  }
+  .btn:disabled { opacity: .34; cursor: not-allowed; box-shadow: none; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 10px; }
+  .stat { background: rgba(255, 255, 255, 0.04); border-radius: 14px; padding: 12px 14px; border: 1px solid rgba(255,255,255,0.055); }
+  .stat dt { font-size: 10.5px; color: var(--text3); margin-bottom: 5px; }
+  .stat dd { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
+  .stat dd small { font-size: 10.5px; font-weight: 400; color: var(--text3); margin-left: 3px; }
+  .stat.ok dd { color: var(--ok); }
+  .stat.bad dd { color: var(--danger); }
+
+  .hex {
+    margin-top: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; line-height: 1.85; color: var(--text2);
+    background: rgba(0, 0, 0, 0.28); border-radius: 12px; padding: 11px 13px;
+    overflow-x: auto; white-space: pre;
+  }
+  .hex em { color: var(--accent); font-style: normal; }
+
+  .empty { font-size: 12.5px; color: var(--text3); line-height: 1.8; }
+
+  .tests { display: grid; gap: 7px; }
+  .t { display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 8px 12px; border-radius: 11px; background: rgba(255,255,255,0.032); }
+  .t .tag { font-size: 10px; font-weight: 700; letter-spacing: .4px; padding: 2px 7px; border-radius: 5px; flex: none; }
+  .t.p .tag { background: rgba(67, 214, 160, 0.16); color: var(--ok); }
+  .t.f .tag { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
+  .t .d { margin-left: auto; color: var(--text3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+  footer { margin-top: 30px; font-size: 11.5px; color: var(--text3); line-height: 1.9; text-align: center; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(78,216,255,.3); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="8" width="18" height="11" rx="4" stroke="#04121C" stroke-width="1.7"/>
+        <path d="M7 12.5v2M12 10.5v6M17 12.5v2" stroke="#04121C" stroke-width="1.9" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div style="flex:1; min-width: 260px;">
+      <h1>盒音工坊 · 格式验证台</h1>
+      <div class="sub">
+        在电脑上跑一遍与 App 完全相同的转换链：下混 → 裁剪 → 归一化 → 窗口化 sinc 重采样 → 淡入淡出 → 16bit 量化。
+      </div>
+    </div>
+    <div class="badge">同一套 DSP</div>
+  </header>
+
+  <div class="notice">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" style="flex:none; margin-top:2px;">
+      <circle cx="12" cy="12" r="9" stroke="#FFB84D" stroke-width="1.7"/>
+      <path d="M12 7.6v5.2" stroke="#FFB84D" stroke-width="1.7" stroke-linecap="round"/>
+      <circle cx="12" cy="16.4" r="1.05" fill="#FFB84D"/>
+    </svg>
+    <div>
+      <b>这不是 App 本身。</b>HAP 需要 DevEco 的 ArkTS 编译器与资源编译器才能产出，且沉浸光感底栏来自闭源 <code>@kit.UIDesignKit</code>，只能在装了 HarmonyOS SDK 的机器上编译。
+      所以这里做的是<b>去掉界面外壳、保留全部音频算法</b>的验证工具 —— 它能证明「导出的字节流是否合规」这件最容易出错的事，导出的 <code>.pcm</code> 与 App 生成的是同一串字节。
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="step">1</div><div class="card-t">导入音频</div><div class="card-hint">仅接受 WAV（8/16/24/32bit PCM、32bit Float、EXTENSIBLE）</div></div>
+    <div class="drop" id="drop">
+      <b>点击选择或拖入 WAV 文件</b>
+      <span>也可以点下面「生成测试音」，用一段带衰减的双音提示走完整个流程</span>
+    </div>
+    <input type="file" id="file" accept=".wav,audio/wav,audio/x-wav" hidden />
+    <dl class="meta" id="meta" hidden>
+      <div><dt>源文件</dt><dd id="m-name">—</dd></div>
+      <div><dt>采样率</dt><dd id="m-rate">—</dd></div>
+      <div><dt>声道</dt><dd id="m-ch">—</dd></div>
+      <div><dt>位深</dt><dd id="m-bits">—</dd></div>
+      <div><dt>时长</dt><dd id="m-dur">—</dd></div>
+    </dl>
+    <div class="actions">
+      <button class="btn btn-ghost" id="demo">生成测试音 · 双音提示 · 48kHz · 2s</button>
+      <button class="btn btn-ghost" id="demo2">同素材 · 44.1kHz 立体声 8s（验证 5 秒截断）</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="step">2</div><div class="card-t">波形与裁剪</div><div class="card-hint">拖动白色手柄调整起止，拖中间平移</div></div>
+    <div class="wave-wrap">
+      <canvas id="wave" width="1000" height="132"></canvas>
+    </div>
+    <div class="row" style="margin-top:14px;">
+      <label>起始位置</label>
+      <input type="range" id="start" min="0" max="1000" value="0" step="1" />
+      <div class="val" id="start-v">0.00s</div>
+    </div>
+    <div class="row">
+      <label>截取时长</label>
+      <input type="range" id="dur" min="200" max="5000" value="2000" step="10" />
+      <div class="val" id="dur-v">2.00s</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="step">3</div><div class="card-t">处理参数</div><div class="card-hint">与原 App 音效页一致</div></div>
+    <div class="row">
+      <label>增益</label>
+      <input type="range" id="gain" min="-12" max="12" value="0" step="0.5" />
+      <div class="val" id="gain-v">0.0 dB</div>
+    </div>
+    <div class="row">
+      <label>淡入</label>
+      <input type="range" id="fi" min="0" max="200" value="12" step="1" />
+      <div class="val" id="fi-v">12 ms</div>
+    </div>
+    <div class="row">
+      <label>淡出</label>
+      <input type="range" id="fo" min="0" max="300" value="24" step="1" />
+      <div class="val" id="fo-v">24 ms</div>
+    </div>
+    <div class="row" style="margin-top:14px;">
+      <label class="check"><input type="checkbox" id="norm" checked /> 峰值归一化（拉到 -0.2dBFS，避免写入后削顶）</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="step">4</div><div class="card-t">转换并核对</div><div class="card-hint" id="cost"></div></div>
+    <div class="actions" style="margin-top:0; margin-bottom:16px;">
+      <button class="btn btn-primary" id="convert">开始转换 → 16700Hz RAW</button>
+      <button class="btn btn-ghost" id="play-src" disabled>试听原声</button>
+      <button class="btn btn-ghost" id="play-out" disabled>试听盒音（升采样还原音高）</button>
+    </div>
+    <div id="result-empty" class="empty">转换后这里会显示字节数、时长、峰值，以及文件头的十六进制 —— 用来确认它真的是「无文件头」。</div>
+    <div id="result-body" hidden>
+      <dl class="stats" id="stats"></dl>
+      <div class="hex" id="hex"></div>
+      <div class="actions">
+        <button class="btn btn-primary" id="dl-raw" disabled>导出 .pcm（交付格式）</button>
+        <button class="btn btn-ghost" id="dl-wav" disabled>导出 .wav（仅供播放器核对）</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><div class="step">✓</div><div class="card-t">内置自检</div><div class="card-hint">在本机实时验证算法，不依赖任何素材</div></div>
+    <div class="actions" style="margin-top:0;">
+      <button class="btn btn-ghost" id="selftest">运行自检</button>
+    </div>
+    <div class="tests" id="tests" style="margin-top:14px;"></div>
+  </div>
+
+  <footer>
+    目标规格：有符号 16bit PCM · 单声道 · 16700Hz · 无文件头 RAW · ≤5 秒 · 33400 字节/秒<br />
+    写入耳机需通过「华为智慧音频」App 的自定义音效入口，本工具只负责产出合规字节流。
+  </footer>
+</div>
+
+<script>
+/* 盒音工坊 DSP 核心 —— 与 entry/src/main/ets/services/AudioConvertService.ets 逐行等价 */
+(function (root) {
+  'use strict';
+
+  var SAMPLE_RATE = 16700;
+  var CHANNELS = 1;
+  var BYTES_PER_SAMPLE = 2;
+  var BYTES_PER_SECOND = 33400;
+  var MAX_SECONDS = 5;
+  var MAX_BYTES = 167000;
+  var MIN_SECONDS = 0.2;
+  var TAPS = 12;
+  var CUTOFF_MARGIN = 0.9;
+  var SIN_TABLE_SIZE = 2048;
+  var WINDOW_TABLE_SIZE = 1024;
+
+  var SIN_TABLE = (function () {
+    var t = new Float32Array(SIN_TABLE_SIZE + 1);
+    for (var i = 0; i <= SIN_TABLE_SIZE; i++) {
+      t[i] = Math.sin(Math.PI * i / SIN_TABLE_SIZE);
+    }
+    return t;
+  })();
+
+  var WINDOW_TABLE = (function () {
+    var t = new Float32Array(WINDOW_TABLE_SIZE + 1);
+    for (var i = 0; i <= WINDOW_TABLE_SIZE; i++) {
+      var u = i / WINDOW_TABLE_SIZE;
+      t[i] = 0.42 + 0.5 * Math.cos(Math.PI * u) + 0.08 * Math.cos(2 * Math.PI * u);
+    }
+    return t;
+  })();
+
+  function sinPi(x) {
+    var base = Math.floor(x);
+    var fraction = x - base;
+    var position = fraction * SIN_TABLE_SIZE;
+    var index = Math.floor(position);
+    var weight = position - index;
+    var low = SIN_TABLE[index];
+    var high = index + 1 <= SIN_TABLE_SIZE ? SIN_TABLE[index + 1] : 0;
+    var value = low * (1 - weight) + high * weight;
+    return base % 2 === 0 ? value : -value;
+  }
+
+  function sinc(x) {
+    if (Math.abs(x) < 1e-9) { return 1; }
+    return sinPi(x) / (Math.PI * x);
+  }
+
+  function blackmanAt(u) {
+    if (u >= 1) { return 0; }
+    var position = u * WINDOW_TABLE_SIZE;
+    var index = Math.floor(position);
+    var weight = position - index;
+    var low = WINDOW_TABLE[index];
+    var high = index + 1 <= WINDOW_TABLE_SIZE ? WINDOW_TABLE[index + 1] : 0;
+    return low * (1 - weight) + high * weight;
+  }
+
+  function toMono(source) {
+    var channels = source.channels;
+    var frameCount = source.frameCount;
+    var frames = source.frames;
+    var mono = new Float32Array(frameCount);
+    var i;
+    if (channels <= 1) {
+      for (i = 0; i < frameCount; i++) { mono[i] = frames[i]; }
+      return mono;
+    }
+    var gain = 1 / channels;
+    for (i = 0; i < frameCount; i++) {
+      var sum = 0;
+      var base = i * channels;
+      for (var c = 0; c < channels; c++) { sum += frames[base + c]; }
+      mono[i] = sum * gain;
+    }
+    return mono;
+  }
+
+  function sliceByTime(input, sampleRate, startMs, durationMs) {
+    var startFrame = Math.max(0, Math.round(startMs * sampleRate / 1000));
+    var wantFrames = Math.max(1, Math.round(durationMs * sampleRate / 1000));
+    var available = Math.max(0, input.length - startFrame);
+    var count = Math.min(wantFrames, available);
+    if (count === 0) { return new Float32Array(1); }
+    return input.slice(startFrame, startFrame + count);
+  }
+
+  function normalize(input) {
+    var peak = 0;
+    for (var i = 0; i < input.length; i++) {
+      var abs = Math.abs(input[i]);
+      if (abs > peak) { peak = abs; }
+    }
+    if (peak <= 0.0001) { return input; }
+    var scale = 0.978 / peak;
+    var out = new Float32Array(input.length);
+    for (var j = 0; j < input.length; j++) { out[j] = input[j] * scale; }
+    return out;
+  }
+
+  function resample(input, srcRate, dstRate) {
+    if (srcRate === dstRate || input.length === 0) { return input; }
+    var ratio = dstRate / srcRate;
+    var scale = (ratio < 1 ? ratio : 1) * CUTOFF_MARGIN;
+    var halfWidth = TAPS / scale;
+    var outLength = Math.max(1, Math.round(input.length * ratio));
+    var out = new Float32Array(outLength);
+    var last = input.length - 1;
+    var i, k;
+    for (i = 0; i < outLength; i++) {
+      var t = i / ratio;
+      var lo = Math.ceil(t - halfWidth);
+      var hi = Math.floor(t + halfWidth);
+      var acc = 0;
+      var weightSum = 0;
+      for (k = lo; k <= hi; k++) {
+        var distance = t - k;
+        var normalizedDistance = Math.abs(distance) / halfWidth;
+        if (normalizedDistance >= 1) { continue; }
+        var kernel = scale * sinc(scale * distance) * blackmanAt(normalizedDistance);
+        var index = k < 0 ? 0 : (k > last ? last : k);
+        acc += input[index] * kernel;
+        weightSum += kernel;
+      }
+      out[i] = weightSum !== 0 ? acc / weightSum : 0;
+    }
+    return out;
+  }
+
+  function applyGainAndFade(input, gainDb, fadeInMs, fadeOutMs) {
+    var out = new Float32Array(input.length);
+    var linearGain = Math.pow(10, gainDb / 20);
+    var fadeInFrames = Math.round(fadeInMs * SAMPLE_RATE / 1000);
+    var fadeOutFrames = Math.round(fadeOutMs * SAMPLE_RATE / 1000);
+    var total = input.length;
+    for (var i = 0; i < total; i++) {
+      var env = 1;
+      if (fadeInFrames > 0 && i < fadeInFrames) {
+        env = 0.5 - 0.5 * Math.cos(Math.PI * i / fadeInFrames);
+      }
+      var fromEnd = total - 1 - i;
+      if (fadeOutFrames > 0 && fromEnd < fadeOutFrames) {
+        var tail = 0.5 - 0.5 * Math.cos(Math.PI * fromEnd / fadeOutFrames);
+        env = Math.min(env, tail);
+      }
+      var value = input[i] * linearGain * env;
+      if (value > 1) { value = 1; } else if (value < -1) { value = -1; }
+      out[i] = value;
+    }
+    return out;
+  }
+
+  function encodeInt16(samples) {
+    var buffer = new ArrayBuffer(samples.length * BYTES_PER_SAMPLE);
+    var view = new DataView(buffer);
+    for (var i = 0; i < samples.length; i++) {
+      var value = samples[i];
+      if (value > 1) { value = 1; } else if (value < -1) { value = -1; }
+      var quantized = value < 0 ? Math.round(value * 32768) : Math.round(value * 32767);
+      if (quantized > 32767) { quantized = 32767; } else if (quantized < -32768) { quantized = -32768; }
+      view.setInt16(i * BYTES_PER_SAMPLE, quantized, true);
+    }
+    return buffer;
+  }
+
+  function decodeInt16(buffer) {
+    var view = new DataView(buffer);
+    var count = Math.floor(buffer.byteLength / BYTES_PER_SAMPLE);
+    var out = new Float32Array(count);
+    for (var i = 0; i < count; i++) {
+      out[i] = view.getInt16(i * BYTES_PER_SAMPLE, true) / 32768;
+    }
+    return out;
+  }
+
+  function convert(source, options) {
+    if (source.frameCount === 0) { throw new Error('源音频为空，无法转换'); }
+    var started = Date.now();
+    var mono = toMono(source);
+    var sliced = sliceByTime(mono, source.sampleRate, options.startMs, options.durationMs);
+    var normalized = options.normalize ? normalize(sliced) : sliced;
+    var resampled = resample(normalized, source.sampleRate, SAMPLE_RATE);
+    var shaped = applyGainAndFade(resampled, options.gainDb,
+      options.fadeInMs === undefined ? 12 : options.fadeInMs,
+      options.fadeOutMs === undefined ? 24 : options.fadeOutMs);
+
+    var maxFrames = SAMPLE_RATE * MAX_SECONDS;
+    var finalSamples = shaped;
+    var trimmed = false;
+    if (shaped.length > maxFrames) {
+      finalSamples = shaped.slice(0, maxFrames);
+      trimmed = true;
+    }
+
+    var buffer = encodeInt16(finalSamples);
+    var peak = 0;
+    for (var i = 0; i < finalSamples.length; i++) {
+      var abs = Math.abs(finalSamples[i]);
+      if (abs > peak) { peak = abs; }
+    }
+    return {
+      buffer: buffer,
+      sampleCount: finalSamples.length,
+      byteLength: buffer.byteLength,
+      durationMs: finalSamples.length * 1000 / SAMPLE_RATE,
+      peak: Math.min(1, peak),
+      trimmed: trimmed,
+      costMs: Date.now() - started
+    };
+  }
+
+  function buildPeaks(source, buckets) {
+    var mono = toMono(source);
+    var count = Math.min(buckets, Math.max(1, mono.length));
+    var peaks = [];
+    if (mono.length === 0) { return { peaks: peaks, durationMs: 0 }; }
+    var step = mono.length / count;
+    var globalMax = 0.0001;
+    var b, i;
+    for (b = 0; b < count; b++) {
+      var start = Math.floor(b * step);
+      var end = Math.min(mono.length, Math.floor((b + 1) * step));
+      var localMax = 0;
+      for (i = start; i < end; i++) {
+        var abs = Math.abs(mono[i]);
+        if (abs > localMax) { localMax = abs; }
+      }
+      peaks.push(localMax);
+      if (localMax > globalMax) { globalMax = localMax; }
+    }
+    for (b = 0; b < peaks.length; b++) {
+      var ratio = peaks[b] / globalMax;
+      if (ratio > 1) { ratio = 1; }
+      peaks[b] = Math.sqrt(ratio);
+    }
+    return { peaks: peaks, durationMs: mono.length * 1000 / source.sampleRate };
+  }
+
+  function estimateBytes(durationMs) {
+    return Math.round(durationMs * BYTES_PER_SECOND / 1000);
+  }
+
+  /* ---------- WAV 解析（与原 App 的 AudioSourceService 一致） ---------- */
+
+  function parseWav(arrayBuffer) {
+    var view = new DataView(arrayBuffer);
+    if (view.byteLength < 44) { throw new Error('文件过小，不是有效的 WAV'); }
+    if (view.getUint32(0, false) !== 0x52494646) { throw new Error('缺少 RIFF 标记，不是 WAV 文件'); }
+    if (view.getUint32(8, false) !== 0x57415645) { throw new Error('缺少 WAVE 标记，不是 WAV 文件'); }
+
+    var fmtOffset = -1;
+    var dataOffset = -1;
+    var dataLength = 0;
+    var formatTag = 1;
+    var channels = 1;
+    var sampleRate = 44100;
+    var bitsPerSample = 16;
+
+    var cursor = 12;
+    var limit = view.byteLength;
+    while (cursor + 8 <= limit) {
+      var chunkId = view.getUint32(cursor, false);
+      var chunkSize = view.getUint32(cursor + 4, true);
+      var payload = cursor + 8;
+      if (chunkId === 0x666d7420) {
+        fmtOffset = payload;
+      } else if (chunkId === 0x64617461) {
+        dataOffset = payload;
+        dataLength = Math.min(chunkSize, limit - payload);
+      }
+      var advance = chunkSize + (chunkSize % 2);
+      if (advance <= 0) { break; }
+      cursor = payload + advance;
+    }
+
+    if (fmtOffset < 0 || dataOffset < 0 || dataLength <= 0) {
+      throw new Error('WAV 缺少 fmt 或 data 区块');
+    }
+
+    formatTag = view.getUint16(fmtOffset, true);
+    channels = view.getUint16(fmtOffset + 2, true);
+    sampleRate = view.getUint32(fmtOffset + 4, true);
+    bitsPerSample = view.getUint16(fmtOffset + 14, true);
+
+    if (formatTag === 0xfffe && fmtOffset + 26 <= limit) {
+      formatTag = view.getUint16(fmtOffset + 24, true);
+    }
+
+    var bytesPerSample = bitsPerSample / 8;
+    if (bytesPerSample <= 0) { throw new Error('位深无效'); }
+    var frameCount = Math.floor(dataLength / (bytesPerSample * channels));
+    var frames = new Float32Array(frameCount * channels);
+
+    for (var f = 0; f < frameCount; f++) {
+      for (var c = 0; c < channels; c++) {
+        var offset = dataOffset + (f * channels + c) * bytesPerSample;
+        var value = 0;
+        if (formatTag === 3 && bitsPerSample === 32) {
+          value = view.getFloat32(offset, true);
+        } else if (bitsPerSample === 8) {
+          value = (view.getUint8(offset) - 128) / 128;
+        } else if (bitsPerSample === 16) {
+          value = view.getInt16(offset, true) / 32768;
+        } else if (bitsPerSample === 24) {
+          var b0 = view.getUint8(offset);
+          var b1 = view.getUint8(offset + 1);
+          var b2 = view.getUint8(offset + 2);
+          var raw = (b2 << 16) | (b1 << 8) | b0;
+          if (raw & 0x800000) { raw -= 0x1000000; }
+          value = raw / 8388608;
+        } else if (bitsPerSample === 32) {
+          value = view.getInt32(offset, true) / 2147483648;
+        } else {
+          throw new Error('不支持的位深：' + bitsPerSample);
+        }
+        frames[f * channels + c] = value;
+      }
+    }
+
+    return {
+      sampleRate: sampleRate,
+      channels: channels,
+      bitsPerSample: bitsPerSample,
+      frameCount: frameCount,
+      frames: frames,
+      durationMs: frameCount * 1000 / sampleRate
+    };
+  }
+
+  /* 生成用于试听核对的带 WAV 头文件（非交付格式，仅本地校验） */
+  function wavEncode(samples, sampleRate, channels) {
+    var dataLength = samples.length * BYTES_PER_SAMPLE;
+    var buffer = new ArrayBuffer(44 + dataLength);
+    var view = new DataView(buffer);
+    var writeAscii = function (offset, text) {
+      for (var i = 0; i < text.length; i++) { view.setUint8(offset + i, text.charCodeAt(i)); }
+    };
+    writeAscii(0, 'RIFF');
+    view.setUint32(4, 36 + dataLength, true);
+    writeAscii(8, 'WAVE');
+    writeAscii(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * channels * BYTES_PER_SAMPLE, true);
+    view.setUint16(32, channels * BYTES_PER_SAMPLE, true);
+    view.setUint16(34, 8 * BYTES_PER_SAMPLE, true);
+    writeAscii(36, 'data');
+    view.setUint32(40, dataLength, true);
+    var base = new Uint8Array(buffer, 44);
+    base.set(new Uint8Array(encodeInt16(samples)));
+    return buffer;
+  }
+
+  root.BoxToneDsp = {
+    SAMPLE_RATE: SAMPLE_RATE,
+    CHANNELS: CHANNELS,
+    BYTES_PER_SECOND: BYTES_PER_SECOND,
+    MAX_SECONDS: MAX_SECONDS,
+    MAX_BYTES: MAX_BYTES,
+    MIN_SECONDS: MIN_SECONDS,
+    TAPS: TAPS,
+    CUTOFF_MARGIN: CUTOFF_MARGIN,
+    sinPi: sinPi,
+    sinc: sinc,
+    blackmanAt: blackmanAt,
+    toMono: toMono,
+    sliceByTime: sliceByTime,
+    normalize: normalize,
+    resample: resample,
+    applyGainAndFade: applyGainAndFade,
+    encodeInt16: encodeInt16,
+    decodeInt16: decodeInt16,
+    convert: convert,
+    buildPeaks: buildPeaks,
+    estimateBytes: estimateBytes,
+    parseWav: parseWav,
+    wavEncode: wavEncode
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var D = window.BoxToneDsp;
+  var R = D.SAMPLE_RATE;
+
+  var state = {
+    source: null,      // { sampleRate, channels, frameCount, frames, durationMs }
+    name: 'boxtone',
+    startMs: 0,
+    durMs: 2000,
+    result: null,      // ConvertResult
+    outSamples: null,  // Float32Array（16700Hz）
+    drag: null
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var fmtSec = function (ms) { return (ms / 1000).toFixed(2) + 's'; };
+  var fmtMs = function (ms) { return ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms) + 'ms'; };
+  var fmtBytes = function (n) {
+    if (n < 1024) { return n + ' B'; }
+    if (n < 1024 * 1024) { return (n / 1024).toFixed(2) + ' KB'; }
+    return (n / 1048576).toFixed(2) + ' MB';
+  };
+
+  /* ---------------- 音频输出 ---------------- */
+
+  var ctx = null;
+  var currentSource = null;
+
+  function audioCtx() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+    }
+    if (ctx.state === 'suspended') { ctx.resume(); }
+    return ctx;
+  }
+
+  function stopPlayback() {
+    if (currentSource) {
+      try { currentSource.stop(); } catch (e) { /* 已停止 */ }
+      currentSource = null;
+    }
+  }
+
+  function playSamples(samples, sampleRate) {
+    stopPlayback();
+    var c = audioCtx();
+    var buffer = c.createBuffer(1, samples.length, sampleRate);
+    buffer.copyToChannel(samples, 0);
+    var node = c.createBufferSource();
+    node.buffer = buffer;
+    node.connect(c.destination);
+    node.onended = function () { currentSource = null; };
+    node.start();
+    currentSource = node;
+  }
+
+  /* ---------------- 波形绘制 ---------------- */
+
+  var canvas = $('wave');
+  var cctx = canvas.getContext('2d');
+  var peaksCache = { key: '', peaks: [] };
+
+  function peaksOf(source, buckets) {
+    var key = buckets + ':' + source.frameCount + ':' + source.sampleRate;
+    if (peaksCache.key === key) { return peaksCache.peaks; }
+    var p = D.buildPeaks(source, buckets).peaks;
+    peaksCache = { key: key, peaks: p };
+    return p;
+  }
+
+  function drawWave() {
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth || 1000;
+    var cssH = 132;
+    if (canvas.width !== Math.round(cssW * dpr)) {
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+    }
+    cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cctx.clearRect(0, 0, cssW, cssH);
+
+    var mid = cssH / 2;
+    cctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    cctx.lineWidth = 1;
+    cctx.beginPath();
+    cctx.moveTo(0, mid);
+    cctx.lineTo(cssW, mid);
+    cctx.stroke();
+
+    if (!state.source) {
+      cctx.fillStyle = 'rgba(154,166,184,0.55)';
+      cctx.font = '12px system-ui, sans-serif';
+      cctx.textAlign = 'center';
+      cctx.fillText('导入音频后显示波形', cssW / 2, mid + 4);
+      return;
+    }
+
+    var totalMs = state.source.durationMs;
+    var buckets = Math.max(60, Math.round(cssW / 2));
+    var peaks = peaksOf(state.source, buckets);
+    var selStart = state.startMs / totalMs;
+    var selEnd = Math.min(1, (state.startMs + state.durMs) / totalMs);
+    var barW = cssW / buckets;
+
+    for (var i = 0; i < peaks.length; i++) {
+      var ratio = i / peaks.length;
+      var inSel = ratio >= selStart && ratio <= selEnd;
+      var h = Math.max(1.2, peaks[i] * (cssH - 16));
+      var x = i * barW;
+      cctx.fillStyle = inSel ? 'rgba(78,216,255,0.92)' : 'rgba(120,136,158,0.34)';
+      cctx.fillRect(x, mid - h / 2, Math.max(1, barW - 1.1), h);
+    }
+
+    // 选区遮罩
+    cctx.fillStyle = 'rgba(7,10,16,0.52)';
+    cctx.fillRect(0, 0, selStart * cssW, cssH);
+    cctx.fillRect(selEnd * cssW, 0, cssW - selEnd * cssW, cssH);
+
+    // 手柄
+    var hx = [selStart * cssW, selEnd * cssW];
+    for (var k = 0; k < 2; k++) {
+      cctx.fillStyle = '#F2F6FB';
+      cctx.fillRect(hx[k] - 1, 0, 2, cssH);
+      cctx.beginPath();
+      cctx.arc(hx[k], mid, 4.6, 0, Math.PI * 2);
+      cctx.fillStyle = '#FFFFFF';
+      cctx.fill();
+      cctx.strokeStyle = 'rgba(78,216,255,0.85)';
+      cctx.lineWidth = 2;
+      cctx.stroke();
+    }
+  }
+
+  /* 拖动裁剪 */
+  function xToMs(clientX) {
+    var rect = canvas.getBoundingClientRect();
+    var r = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return r * state.source.durationMs;
+  }
+
+  function clampSelection() {
+    if (!state.source) { return; }
+    var total = state.source.durationMs;
+    var dur = Math.max(200, Math.min(5000, state.durMs));
+    dur = Math.min(dur, total);
+    var start = Math.max(0, Math.min(total - dur, state.startMs));
+    state.durMs = dur;
+    state.startMs = start;
+  }
+
+  function syncSliders() {
+    if (!state.source) { return; }
+    var total = state.source.durationMs;
+    var startEl = $('start');
+    startEl.max = String(Math.max(0, Math.round(total - 200)));
+    startEl.value = String(Math.round(state.startMs));
+    $('dur').max = String(Math.min(5000, Math.round(total)));
+    $('dur').value = String(Math.round(state.durMs));
+    $('start-v').textContent = fmtSec(state.startMs);
+    $('dur-v').textContent = fmtSec(state.durMs);
+  }
+
+  canvas.addEventListener('pointerdown', function (ev) {
+    if (!state.source) { return; }
+    var total = state.source.durationMs;
+    var rect = canvas.getBoundingClientRect();
+    var px = ev.clientX - rect.left;
+    var sX = (state.startMs / total) * rect.width;
+    var eX = (Math.min(total, state.startMs + state.durMs) / total) * rect.width;
+    var near = Math.min(Math.abs(px - sX), Math.abs(px - eX));
+    if (near < 14) {
+      state.drag = { mode: Math.abs(px - sX) <= Math.abs(px - eX) ? 'start' : 'end', at: state.startMs, dur: state.durMs, anchor: xToMs(ev.clientX) };
+    } else if (px > sX && px < eX) {
+      state.drag = { mode: 'move', at: state.startMs, anchor: xToMs(ev.clientX) };
+    } else {
+      state.drag = { mode: 'new', anchor: xToMs(ev.clientX) };
+    }
+    canvas.setPointerCapture(ev.pointerId);
+    handleDrag(ev);
+  });
+
+  function handleDrag(ev) {
+    if (!state.drag) { return; }
+    var total = state.source.durationMs;
+    var cur = xToMs(ev.clientX);
+    var d = state.drag;
+    if (d.mode === 'start') {
+      var newStart = Math.min(d.at + d.dur - 200, Math.max(0, cur));
+      state.startMs = newStart;
+      state.durMs = d.at + d.dur - newStart;
+    } else if (d.mode === 'end') {
+      state.durMs = Math.max(200, Math.min(5000, cur - state.startMs));
+    } else if (d.mode === 'move') {
+      state.startMs = d.at + (cur - d.anchor);
+    } else {
+      var a = Math.min(d.anchor, cur);
+      var b = Math.max(d.anchor, cur);
+      state.startMs = a;
+      state.durMs = Math.max(200, Math.min(5000, b - a));
+    }
+    clampSelection();
+    syncSliders();
+    drawWave();
+  }
+
+  canvas.addEventListener('pointermove', function (ev) { if (state.drag) { handleDrag(ev); } });
+  canvas.addEventListener('pointerup', function () { state.drag = null; });
+  canvas.addEventListener('pointercancel', function () { state.drag = null; });
+
+  /* ---------------- 导入 ---------------- */
+
+  function acceptSource(source, name) {
+    state.source = source;
+    state.name = (name || 'boxtone').replace(/\.[^.]+$/, '');
+    state.result = null;
+    state.outSamples = null;
+    peaksCache.key = '';
+    state.startMs = 0;
+    state.durMs = Math.min(2000, Math.max(200, Math.round(source.durationMs)));
+
+    $('meta').hidden = false;
+    $('m-name').textContent = name || '测试音';
+    $('m-rate').textContent = source.sampleRate + ' Hz';
+    $('m-ch').textContent = source.channels === 1 ? '单声道' : source.channels === 2 ? '立体声' : source.channels + ' 声道';
+    $('m-bits').textContent = (source.bitsPerSample || 16) + ' bit';
+    $('m-dur').textContent = fmtSec(source.durationMs);
+
+    $('play-src').disabled = false;
+    $('play-out').disabled = true;
+    $('dl-raw').disabled = true;
+    $('dl-wav').disabled = true;
+    $('result-empty').hidden = false;
+    $('result-body').hidden = true;
+    $('result-empty').textContent = '转换后这里会显示字节数、时长、峰值，以及文件头的十六进制 —— 用来确认它真的是「无文件头」。';
+    $('cost').textContent = '';
+
+    clampSelection();
+    syncSliders();
+    drawWave();
+    window.requestAnimationFrame(drawWave);
+  }
+
+  function readFile(file) {
+    if (!file) { return; }
+    var isWav = /\.wav$/i.test(file.name);
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var source = D.parseWav(reader.result);
+        source.bitsPerSample = source.bitsPerSample || 16;
+        acceptSource(source, file.name);
+      } catch (err) {
+        alert('无法解析：' + err.message + (isWav ? '' : '\n\n本工具与原 App 一致，只接受未压缩的 WAV。'));
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  $('drop').addEventListener('click', function () { $('file').click(); });
+  $('file').addEventListener('change', function (ev) { readFile(ev.target.files[0]); });
+  $('drop').addEventListener('dragover', function (ev) { ev.preventDefault(); $('drop').classList.add('over'); });
+  $('drop').addEventListener('dragleave', function () { $('drop').classList.remove('over'); });
+  $('drop').addEventListener('drop', function (ev) {
+    ev.preventDefault();
+    $('drop').classList.remove('over');
+    if (ev.dataTransfer.files.length > 0) { readFile(ev.dataTransfer.files[0]); }
+  });
+
+  function chimeAt(tt) {
+    if (tt < 0) { return 0; }
+    var a = Math.exp(-tt * 7.5) * Math.sin(2 * Math.PI * 1046.5 * tt);
+    if (tt <= 0.42) { return a; }
+    var d = tt - 0.42;
+    return a + 0.85 * Math.exp(-d * 8) * Math.sin(2 * Math.PI * 1568 * d);
+  }
+
+  function makeDemo(rate, seconds, channels, amp) {
+    var frameCount = Math.round(rate * seconds);
+    var frames = new Float32Array(frameCount * channels);
+    var cycle = 1.15;
+    for (var i = 0; i < frameCount; i++) {
+      var t = i / rate;
+      var tt = t - Math.floor(t / cycle) * cycle;
+      var v = chimeAt(tt) * amp;
+      if (v > 1) { v = 1; } else if (v < -1) { v = -1; }
+      for (var c = 0; c < channels; c++) { frames[i * channels + c] = v; }
+    }
+    return {
+      sampleRate: rate, channels: channels, bitsPerSample: 32,
+      frameCount: frameCount, frames: frames, durationMs: frameCount * 1000 / rate
+    };
+  }
+
+  $('demo').addEventListener('click', function () { acceptSource(makeDemo(48000, 2, 1, 0.85), 'chime-48k.wav'); });
+  $('demo2').addEventListener('click', function () { acceptSource(makeDemo(44100, 8, 2, 0.85), 'chime-44k-stereo.wav'); });
+
+  /* ---------------- 参数 ---------------- */
+
+  function bindSlider(id, onInput) {
+    var el = $(id);
+    el.addEventListener('input', function () { onInput(parseFloat(el.value)); });
+  }
+
+  bindSlider('start', function (v) { state.startMs = v; clampSelection(); syncSliders(); drawWave(); });
+  bindSlider('dur', function (v) { state.durMs = v; clampSelection(); syncSliders(); drawWave(); });
+  bindSlider('gain', function (v) { $('gain-v').textContent = (v > 0 ? '+' : '') + v.toFixed(1) + ' dB'; });
+  bindSlider('fi', function (v) { $('fi-v').textContent = Math.round(v) + ' ms'; });
+  bindSlider('fo', function (v) { $('fo-v').textContent = Math.round(v) + ' ms'; });
+
+  /* ---------------- 转换 ---------------- */
+
+  $('convert').addEventListener('click', function () {
+    if (!state.source) { alert('先导入一段音频，或点「生成测试音」'); return; }
+    try {
+      var result = D.convert(state.source, {
+        startMs: state.startMs,
+        durationMs: state.durMs,
+        gainDb: parseFloat($('gain').value),
+        fadeInMs: parseFloat($('fi').value),
+        fadeOutMs: parseFloat($('fo').value),
+        normalize: $('norm').checked
+      });
+      state.result = result;
+      state.outSamples = D.decodeInt16(result.buffer);
+      renderResult(result, state.outSamples);
+    } catch (err) {
+      alert('转换失败：' + err.message);
+    }
+  });
+
+  function renderResult(result, samples) {
+    var seconds = result.durationMs / 1000;
+    var expect = Math.round(seconds * D.BYTES_PER_SECOND);
+    var byteOk = Math.abs(result.byteLength - expect) <= Math.max(1, Math.round(D.BYTES_PER_SECOND / R));
+    var durOk = result.durationMs <= 5000.5;
+
+    $('result-empty').hidden = true;
+    $('result-body').hidden = false;
+
+    var stats = [
+      { k: '字节数', v: result.byteLength, u: 'B', cls: byteOk ? 'ok' : 'bad' },
+      { k: '帧数', v: result.sampleCount, u: '帧', cls: '' },
+      { k: '时长', v: seconds.toFixed(3), u: 's', cls: durOk ? 'ok' : 'bad' },
+      { k: '采样率', v: '16700', u: 'Hz', cls: '' },
+      { k: '峰值', v: (20 * Math.log10(Math.max(result.peak, 1e-6))).toFixed(1), u: 'dBFS', cls: result.peak <= 1 ? 'ok' : 'bad' },
+      { k: '耗时', v: result.costMs, u: 'ms', cls: '' }
+    ];
+    var html = '';
+    for (var i = 0; i < stats.length; i++) {
+      var s = stats[i];
+      html += '<div class="stat ' + s.cls + '"><dt>' + s.k + '</dt><dd>' + s.v + '<small>' + s.u + '</small></dd></div>';
+    }
+    $('stats').innerHTML = html;
+    $('cost').textContent = result.byteLength === expect ? '字节数与 33400×秒 完全吻合' : '注意：字节数偏离理论值';
+
+    // 十六进制：首 16 字节 + 末尾 4 字节，并显式比对 RIFF 标记
+    var bytes = new Uint8Array(result.buffer);
+    var head = [], tail = [];
+    for (var j = 0; j < Math.min(16, bytes.length); j++) { head.push(bytes[j].toString(16).padStart(2, '0')); }
+    for (var t = Math.max(0, bytes.length - 4); t < bytes.length; t++) { tail.push(bytes[t].toString(16).padStart(2, '0')); }
+    var isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    var lead = '首 16 字节    ';
+    $('hex').innerHTML =
+      lead + head.join(' ') + '\n' +
+      '末尾 4 字节   ' + tail.join(' ') + '\n' +
+      '\nRIFF 标记     期望 52 49 46 46（"RIFF"） · 实测 ' +
+      (isRiff ? '<em>命中</em> → 带文件头，耳机不认' : '未命中 → <em>确认为裸 PCM</em>，符合盒端要求');
+
+    $('play-out').disabled = false;
+    $('dl-raw').disabled = false;
+    $('dl-wav').disabled = false;
+  }
+
+  $('play-src').addEventListener('click', function () {
+    if (!state.source) { return; }
+    var mono = D.toMono(state.source);
+    playSamples(mono, state.source.sampleRate);
+  });
+
+  $('play-out').addEventListener('click', function () {
+    if (!state.outSamples) { return; }
+    // 16700Hz 不在 AudioContext 的常规采样率枚举内，升采样到 48k 播，音高与盒端一致
+    var up = D.resample(state.outSamples, R, 48000);
+    playSamples(up, 48000);
+  });
+
+  /* ---------------- 导出 ---------------- */
+
+  function download(buffer, filename, mime) {
+    var blob = new Blob([buffer], { type: mime || 'application/octet-stream' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  $('dl-raw').addEventListener('click', function () {
+    if (!state.result) { return; }
+    download(state.result.buffer, state.name + '_16700_mono_s16.raw');
+  });
+
+  $('dl-wav').addEventListener('click', function () {
+    if (!state.outSamples) { return; }
+    var wav = D.wavEncode(state.outSamples, R, 1);
+    download(wav, state.name + '_16700_mono_s16.wav', 'audio/wav');
+  });
+
+  /* ---------------- 自检 ---------------- */
+
+  function sineSource(rate, seconds, freq, amp, channels) {
+    var frameCount = Math.round(rate * seconds);
+    var frames = new Float32Array(frameCount * channels);
+    for (var i = 0; i < frameCount; i++) {
+      var v = amp * Math.sin(2 * Math.PI * freq * i / rate);
+      for (var c = 0; c < channels; c++) { frames[i * channels + c] = v; }
+    }
+    return { sampleRate: rate, channels: channels, frameCount: frameCount, frames: frames, durationMs: frameCount * 1000 / rate };
+  }
+
+  function rmsOf(arr, from, to) {
+    var s = 0;
+    for (var i = from; i < to; i++) { s += arr[i] * arr[i]; }
+    return Math.sqrt(s / Math.max(1, to - from));
+  }
+
+  function pitchOf(samples, rate, lo, hi) {
+    var best = lo, bestMag = -1;
+    for (var f = lo; f <= hi; f += 1) {
+      var re = 0, im = 0;
+      var w = 2 * Math.PI * f / rate;
+      for (var n = 0; n < samples.length; n++) {
+        re += samples[n] * Math.cos(w * n);
+        im += samples[n] * Math.sin(w * n);
+      }
+      var mag = Math.sqrt(re * re + im * im);
+      if (mag > bestMag) { bestMag = mag; best = f; }
+    }
+    return best;
+  }
+
+  $('selftest').addEventListener('click', function () {
+    var box = $('tests');
+    box.innerHTML = '';
+    var pass = 0, total = 0;
+
+    var add = function (name, cond, detail) {
+      total++;
+      if (cond) { pass++; }
+      var div = document.createElement('div');
+      div.className = 't ' + (cond ? 'p' : 'f');
+      div.innerHTML = '<span class="tag">' + (cond ? 'PASS' : 'FAIL') + '</span><span>' + name +
+        '</span><span class="d">' + detail + '</span>';
+      box.appendChild(div);
+    };
+
+    // 1. 长度与字节数
+    var r1 = D.convert(sineSource(48000, 2, 1000, 0.8, 1), { startMs: 0, durationMs: 2000, gainDb: 0, normalize: true, fadeInMs: 0, fadeOutMs: 0 });
+    add('2 秒输出 66800 字节（33400×2）', r1.byteLength === 66800, r1.byteLength + ' B');
+    add('帧数 33400', r1.sampleCount === 33400, r1.sampleCount + ' 帧');
+
+    // 2. 音高
+    var d1 = D.decodeInt16(r1.buffer);
+    var pitch = pitchOf(d1.subarray(2000, 10000), R, 900, 1100);
+    add('1kHz 音高保持不变', Math.abs(pitch - 1000) <= 2, pitch + ' Hz');
+
+    // 3. 幅度
+    var rms = rmsOf(d1, 1000, 32000);
+    var expectRms = 0.978 / Math.SQRT2;
+    add('归一化后 RMS ≈ 0.978/√2', Math.abs(rms - expectRms) / expectRms < 0.01, rms.toFixed(4));
+
+    // 4. 抗混叠
+    var alias = D.convert(sineSource(48000, 1, 10000, 0.9, 1), { startMs: 0, durationMs: 1000, gainDb: 0, normalize: true, fadeInMs: 0, fadeOutMs: 0 });
+    var ad = D.decodeInt16(alias.buffer);
+    var aliasDb = 20 * Math.log10(Math.max(rmsOf(ad, 500, ad.length - 500), 1e-12) / 0.978);
+    add('10kHz 混叠抑制 < -70dB', aliasDb < -70, aliasDb.toFixed(1) + ' dB');
+
+    // 5. 5 秒上限
+    var long = D.convert(sineSource(44100, 8, 440, 0.5, 1), { startMs: 0, durationMs: 8000, gainDb: 0, normalize: true });
+    add('8 秒输入被截到 167000 字节', long.byteLength === 167000 && long.trimmed, long.byteLength + ' B');
+
+    // 6. 无文件头
+    var bytes = new Uint8Array(r1.buffer);
+    var isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    add('输出无 RIFF 文件头', !isRiff, isRiff ? '检测到 RIFF' : '裸 PCM');
+
+    // 7. WAV 往返
+    var rt = D.parseWav(D.wavEncode(d1.subarray(0, 1500), R, 1));
+    add('WAV 编解码往返一致', rt.sampleRate === R && rt.frameCount === 1500, rt.sampleRate + 'Hz / ' + rt.frameCount + ' 帧');
+
+    // 8. 各源采样率
+    var rates = [8000, 16000, 22050, 32000, 44100, 48000];
+    var allOk = true;
+    for (var i = 0; i < rates.length; i++) {
+      var r = D.convert(sineSource(rates[i], 1, 500, 0.7, 1), { startMs: 0, durationMs: 1000, gainDb: 0, normalize: true });
+      if (r.byteLength !== 33400) { allOk = false; }
+    }
+    add('6 种源采样率均输出 33400 B/s', allOk, '8k / 16k / 22.05k / 32k / 44.1k / 48k');
+
+    var sum = document.createElement('div');
+    sum.className = 't ' + (pass === total ? 'p' : 'f');
+    sum.innerHTML = '<span class="tag">' + (pass === total ? 'PASS' : 'FAIL') + '</span><span>合计</span><span class="d">' + pass + ' / ' + total + '</span>';
+    box.appendChild(sum);
+  });
+
+  /* ---------------- 初始化 ---------------- */
+
+  window.addEventListener('resize', drawWave);
+  drawWave();
+  $('gain-v').textContent = '+0.0 dB';
+  $('fi-v').textContent = '12 ms';
+  $('fo-v').textContent = '24 ms';
+  $('start-v').textContent = '0.00s';
+  $('dur-v').textContent = '2.00s';
+})();
+</script>
+</body>
+</html>

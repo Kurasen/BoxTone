@@ -1,0 +1,6 @@
+{
+  "name": "libaudiodec.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "盒音工坊原生音频解码模块"
+}
