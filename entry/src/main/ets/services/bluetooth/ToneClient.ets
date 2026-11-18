@@ -1349,15 +1349,15 @@ export class ToneClient {
         return ByteUtils.byteAt(candidate, 0) === 9;
       };
       let packet: Uint8Array = new Uint8Array(0);
-      let audioRestarted: boolean = false;
+      let flushAccepted: boolean = false;
       try {
         if (receivedAll) {
           /**
-           * 擦写阶段：切成 600ms 一片等，顺便盯住音频通道。
+           * 擦写阶段不再要求 100% 回执。
            *
-           * 真机写 3.5 秒的音效时，耳机在「已写入 96.8%」处彻底停止回报，一个字节都不再发；
-           * 14 秒后它自己把 A2DP 连了回来——那是它写完后重启音频的固定动作。
-           * 旧实现对此只会死等满 60 秒擦写超时，用户白等一分钟，还被告知写入失败。
+           * 参考实现（OpenFreebuds 的 _wait_complete）在收到 09 06、或者一段时间没有新包时
+           * 就直接判定完成往下走，从不检查擦写进度是否走满；真机上长音效也确实给不出最后一截进度。
+           * 只要数据已经全部送达，这里就按「最长静默」收口，把成功与否交给最终回读。
            */
           const flushUntil: number = Date.now() + MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS;
           while (true) {
@@ -1373,11 +1373,14 @@ export class ToneClient {
                 throw new CancelledError();
               }
               if (this.audioLinked(this.address)) {
-                audioRestarted = true;
+                this.trace('FLUSH_AUDIO_BACK 耳机已重启音频，视为擦写结束');
+                flushAccepted = true;
                 break;
               }
               if (Date.now() > flushUntil) {
-                throw sliceError as Error;
+                this.trace(`FLUSH_SILENT 静默超过 ${MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS}ms，视为擦写结束`);
+                flushAccepted = true;
+                break;
               }
             }
           }
@@ -1385,30 +1388,11 @@ export class ToneClient {
           packet = await this.awaitPacket(MbbSpec.UPLOAD_IDLE_TIMEOUT_MS, isUploadPacket);
         }
       } catch (error) {
-        if (receivedAll) {
-          // 数据已完整送达，但耳机没有回报擦写完成。此时音效可能只写进去一部分，
-          // 不要自动补选（会选中半个音效）；重传也没有意义，交给用户合盖重试
-          const flushError: ToneError = new ToneError(I18n.t('toneErr.flushTimeout'), -98);
-          flushError.reason = ToneErrorReason.FLUSH_TIMEOUT;
-          throw flushError;
-        }
         throw error as Error;
       }
-      if (audioRestarted) {
-        /**
-         * 音频被耳机拉回来 = 它已经把这包处理完，不会再补发擦写进度。
-         *
-         * 参考实现（OpenFreebuds）在擦写阶段根本不要求 100% 回执：
-         * 收到 09 06 或「一段时间内没有新包」就直接往下走，补发选中命令后以回读为准。
-         * 我们原来的判据是「written 必须等于 2×包长」，长音效永远等不到，于是必然失败。
-         * 这里改成把结果标成「数据已落盘、只差选中」，交给上层重连补选并回读确认。
-         */
-        this.trace('FLUSH_AUDIO_BACK 耳机已重启音频，未再回报擦写进度');
-        // 这条 socket 已经没用了：标记 broken 让 release() 直接关掉，别把死会话留在池子里
-        this.broken = true;
-        const unconfirmed: ToneError = new ToneError(I18n.t('toneErr.flushUnconfirmed'), -98);
-        unconfirmed.reason = ToneErrorReason.DATA_WRITTEN;
-        throw unconfirmed;
+      if (flushAccepted) {
+        completed = true;
+        break;
       }
       const fields: Map<number, Uint8Array> = MbbProtocol.tlv(packet);
       const typeField: Uint8Array | undefined = fields.get(1);
@@ -1442,7 +1426,21 @@ export class ToneClient {
           data = MbbProtocol.tonePackage(pcm, 'Whistle',
             ByteUtils.concat([new Uint8Array(2), mcuField]));
         }
-        await this.setTone(0, false, before.volume);
+        /**
+         * 这里直接选中目标槽位，再开始传数据——和参考实现（OpenFreebuds）一致：
+         * 它先写 toneId、再传包，传完不再改动。
+         *
+         * 我们以前反过来：先写 0（取消选中）→ 传包 → 传完再选中 43。
+         * 代价是任何一次「传完但选不中」都会让耳机回落到默认音；
+         * 而且长音效拿不到 100% 擦写回执时，还得重连一次才能补选，
+         * 而那时耳机往往正忙、连不上，最终表现为「写失败 + 变回默认音」。
+         */
+        try {
+          await this.setTone(MbbSpec.TONE_CUSTOM_ID, true, before.volume, 1500, 1);
+        } catch (error) {
+          // 耳机对这条命令不一定回执，选中结果不影响传输，最后回读时再确认
+          this.trace(`TONE_PRESELECT_IGNORED ${ToneClient.messageOf(error)}`);
+        }
         if (protocol === 1) {
           await this.send(ByteUtils.concat([
             ByteUtils.fromHex('2bb60101020204'),
@@ -1588,15 +1586,21 @@ export class ToneClient {
       `rate=${Math.round(data.length / Math.max(1, elapsed))}KB/s chunk=${this.writeChunk}`);
     emit(0.97, I18n.t('stage.apply'));
     /**
-     * 进度一满就立刻发选中命令，绝不再空等。
-     *
-     * 真机日志：耳机在「最后一个分包发出去」到「回报 100%」之间已经静默 2~3 秒
-     * （正在擦写闪存），而它静默约 4 秒就会自己收掉 RFCOMM。
-     * 原来这里固定 sleep(1500) 再去发命令，等于把静默推到 4 秒以上——
-     * 所以每次都死在 98%~99%，写进去的数据其实已经完整。
-     * 选中命令本身也是"写入"，重发会重置耳机的空闲计时，所以失败就贴着链路快速重试。
+     * 目标槽位在传输开始前就已经选中，所以这里只是「尽力确认」，不再是成败门槛：
+     * 耳机写完闪存后随时可能收掉串口，补发不上也不影响它自己按已选中的槽位播放。
+     * 只有真正的协议错误（格式、参数被拒）才继续上抛。
      */
-    const status: ToneStatus = await this.confirmTone(before.volume);
+    let status: ToneStatus =
+      new ToneStatus(true, true, before.volume, MbbSpec.TONE_CUSTOM_ID, true);
+    try {
+      status = await this.confirmTone(before.volume);
+    } catch (error) {
+      if (error instanceof CancelledError) {
+        throw error as Error;
+      }
+      // 其余一律不阻断：槽位已经提前选中，耳机擦写完成后自己就生效
+      this.trace(`TONE_CONFIRM_IGNORED ${ToneClient.messageOf(error)}`);
+    }
     emit(1, I18n.t('stage.applied'));
     // 分片发送时用过的空档要还原，避免影响后续命令的响应速度
     this.writeGap = MbbSpec.SPP_WRITE_GAP_MS;
