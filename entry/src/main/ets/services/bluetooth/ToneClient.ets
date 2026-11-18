@@ -472,20 +472,19 @@ export class ToneClient {
     this.audioGate = 'idle';
     const startedAt: number = Date.now();
     /**
-     * 通道模式顺序，默认「非加密优先」。
+     * 通道模式顺序固定「非加密优先」。
      *
-     * 但真机日志连续多轮都是同一个结果：音频刚断开时非加密通道必失败（400~900ms 后回 -1），
-     * 紧接着的加密通道 0.3 秒就通。所以在「刚主动断开音频」这一步之后把顺序对调，
-     * 省掉一次注定失败的请求；其它情况（音频本来就没连、断不开）仍按非加密优先走。
+     * 曾经试过「断开音频后改走加密通道优先」，真机反而更慢：
+     * 14:04 那轮 secure=true 第一条失败后，第二条在 10ms 内被回 2900099，
+     * 而换成 secure=false 反而一次就通。说明先失败的是时序（ACL 还在收敛），
+     * 不是通道类型——换顺序只是把失败挪到另一条通道上。
      */
-    let modes: boolean[] = [false, true];
+    const modes: boolean[] = [false, true];
     let lastError: ToneError | null = null;
     let silentFailures: number = 0;
     let audioRelinks: number = 0;
     /** 本次会话是否已经试过断开音频：只试一次，避免反复撞系统的拒绝 */
     let releaseTried: boolean = false;
-    /** 刚把音频断开：链路正在收敛，下一次重试不必再空等 */
-    let freshRelease: boolean = false;
     /** 下一枪是断开音频后的第一次连接：用短超时，别卡在 ACL 收敛上 */
     let probeNext: boolean = false;
     /** 音频断不开、串口也连续被拒：早点给出准确提示，别让用户白等 40 秒 */
@@ -526,20 +525,15 @@ export class ToneClient {
     /**
      * 音频还连着就先松开，别拿第一次注定失败的请求去试。
      *
-     * 真机日志连续多轮都是同一个节奏：音频连着时第一条 sppConnect 在 400~900ms 后回 -1，
-     * 断开音频后再试，加密通道 0.3 秒就通。原来要等第一条失败才去断音频，
-     * 白花 1.2 秒（失败本身 + 两次重试间隔）。
+     * 真机日志里音频连着时第一条 sppConnect 总是在 400~900ms 后回 -1，
+     * 也就是说这一枪永远打不中。先松开再连，省掉的不只是那 0.5 秒，
+     * 还包括它后面那一整个重试间隔。
      * 断开被系统拒绝也不影响流程，照样往下试——那本来就不是致命错误。
      */
     if (!releaseTried && ToneClient.releaseHint && this.audioLinked(address)) {
       releaseTried = true;
       const freed: boolean = await this.releaseAudioLink(address);
-      freshRelease = freed;
       probeNext = freed;
-      if (freed) {
-        // 断链之后真机上加密通道一次就通，非加密那条反而必失败，顺序对调
-        modes = [true, false];
-      }
       if (this.closed) {
         throw new CancelledError();
       }
@@ -565,24 +559,16 @@ export class ToneClient {
         if (round > 0 || mode > 0) {
           await sleep(Math.min(MbbSpec.CONNECT_RETRY_GAP_MS + round * 200, 1500));
         }
-        // 同一种模式给两次机会：音频刚断开时第一次连接几乎必然被拒（-1），
-        // 立刻改用加密通道反而会落进会断链的那条路
-        for (let attempt = 0; attempt < 2; attempt++) {
+        // 每种通道只试一次，失败立刻换另一种：真机上成功总是发生在「第 2 次尝试」，
+        // 而同一种通道连打两次反而会撞 2900099
+        for (let attempt = 0; attempt < MbbSpec.CONNECT_ATTEMPTS_PER_MODE; attempt++) {
           if (this.closed) {
             throw new CancelledError();
           }
           if (deadEnd || Date.now() > deadline) {
             break;
           }
-          if (attempt > 0) {
-            // 刚断开音频时已经等过链路收敛，这里不必再空等一轮
-            if (freshRelease) {
-              freshRelease = false;
-            } else {
-              await sleep(MbbSpec.CONNECT_ATTEMPT_GAP_MS);
-            }
-          }
-          this.trace(`CONNECT try secure=${modes[mode]} round=${round + 1} attempt=${attempt + 1}`);
+          this.trace(`CONNECT try secure=${modes[mode]} round=${round + 1}`);
           // 音频还没断开时先用短超时探一次：耳机可能直接不回应，
           // 不值得为一通注定被拒的连接等满 8 秒
           const audioUp: boolean = !releaseTried && this.audioLinked(address);
@@ -655,11 +641,7 @@ export class ToneClient {
             if (!releaseTried && transient) {
               releaseTried = true;
               const freed: boolean = await this.releaseAudioLink(address);
-              freshRelease = freed;
               probeNext = freed;
-              if (freed) {
-                modes = [true, false];
-              }
               if (attempt === 0) {
                 continue;
               }
@@ -682,7 +664,9 @@ export class ToneClient {
               continue;
             }
             if (failure.code === 2900099) {
-              await sleep(1200);
+              // 只是「这条请求没被受理」，间隔已经由上面统一给足，
+              // 原来额外加的 1200ms 纯属叠加（14:04 那轮因此多等了 1.7 秒）
+              await sleep(300);
             }
             break;
           }
@@ -1657,7 +1641,11 @@ export class ToneClient {
       } catch (error) {
         Logger.warn(MODULE, '关闭串口失败');
       }
-      ToneClient.lastCloseAt = Date.now();
+      // 只有「主动关掉一条活着的链路」才需要等耳机收尾。
+      // 链路已经断了（2901054）还等 1.2 秒纯属白耗——对端早就不在了
+      if (!this.broken) {
+        ToneClient.lastCloseAt = Date.now();
+      }
     }
     this.clientSocket = -1;
     this.readListener = null;
