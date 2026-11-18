@@ -806,6 +806,31 @@ export class ToneClient {
    * 旧实现连续失败两次就直接判「音频通道被占用」，导致耳机在盒里、
    * 手机没放任何音频时也永远写不进去（系统建立的音频连接常常断不掉，回 2900099）。
    */
+  /**
+   * 擦写期间把被系统连回来的音频通道再按下去。
+   *
+   * 手机系统会自动把 A2DP 连回已配对的耳机，而连接建立/握手要占用同一条 ACL，
+   * 耳机正在写闪存时被这么打断就会中止——真机上表现为「擦写停在 8x%~99%、
+   * 紧接着音频回连、音效被截断」。参考实现在 PC 上全程不碰音频，所以不会遇到。
+   */
+  private async suppressAudioLink(address: string): Promise<void> {
+    try {
+      await connection.disconnectAllowedProfiles(address);
+      this.trace('AUDIO_SUPPRESSED');
+      return;
+    } catch (error) {
+      // 2900099：这条音频是系统连的，本应用没有权限断。先认领再断一次
+      this.trace(`AUDIO_SUPPRESS_DENIED code=${ToneClient.codeOf(error)}`);
+    }
+    try {
+      await connection.connectAllowedProfiles(address);
+      await connection.disconnectAllowedProfiles(address);
+      this.trace('AUDIO_SUPPRESSED via adopt');
+    } catch (error) {
+      this.trace(`AUDIO_SUPPRESS_FAIL code=${ToneClient.codeOf(error)}`);
+    }
+  }
+
   private async releaseAudioLink(address: string): Promise<boolean> {
     // a2dp 是逐设备查的真实状态，global 是系统的汇总缓存：两者不一致时以 a2dp 为准
     this.trace(`AUDIO_STATE a2dp=${ToneClient.a2dpStateOf(address)} ` +
@@ -1338,6 +1363,9 @@ export class ToneClient {
     let sentChunks: number = 0;
     /** 目标槽位是否已在传输前选中：选中过就不必在收尾再发一次（那时串口常常已经没了） */
     let preSelected: boolean = false;
+    /** 最近一次擦写进度，超时日志里要能看出停在哪 */
+    let written: number = 0;
+    let flushTotal: number = 0;
     /** 数据是否已全部送达：之后只剩耳机擦写闪存，静默时间会很长 */
     let receivedAll: boolean = false;
     const started: number = Date.now();
@@ -1359,15 +1387,17 @@ export class ToneClient {
         return ByteUtils.byteAt(candidate, 0) === 9;
       };
       let packet: Uint8Array = new Uint8Array(0);
-      let flushAccepted: boolean = false;
       try {
         if (receivedAll) {
           /**
-           * 擦写阶段不再要求 100% 回执。
+           * 擦写阶段：必须等到进度走满（或收到 09 06）。
            *
-           * 参考实现（OpenFreebuds 的 _wait_complete）在收到 09 06、或者一段时间没有新包时
-           * 就直接判定完成往下走，从不检查擦写进度是否走满；真机上长音效也确实给不出最后一截进度。
-           * 只要数据已经全部送达，这里就按「最长静默」收口，把成功与否交给最终回读。
+           * 之前把「音频通道被连回来」当成擦写结束的信号，是错的：
+           * 手机系统会自己把 A2DP 连回去（真机每轮擦写中途都会出现 state=2），
+           * 而连接建立时耳机正在写闪存，写一半就中止——表现出来就是「快结束卡住、
+           * 然后断连、音效被截断」。参考实现全程不碰 A2DP，所以它不会遇到这件事。
+           *
+           * 现在改成：擦写期间只要发现音频被连回来，就立刻再断开，继续等进度。
            */
           const flushUntil: number = Date.now() + MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS;
           while (true) {
@@ -1383,14 +1413,12 @@ export class ToneClient {
                 throw new CancelledError();
               }
               if (this.audioLinked(this.address)) {
-                this.trace('FLUSH_AUDIO_BACK 耳机已重启音频，视为擦写结束');
-                flushAccepted = true;
-                break;
+                this.trace('AUDIO_RELINK_SUPPRESS 擦写期间音频被连回，先断开它');
+                await this.suppressAudioLink(this.address);
               }
               if (Date.now() > flushUntil) {
-                this.trace(`FLUSH_SILENT 静默超过 ${MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS}ms，视为擦写结束`);
-                flushAccepted = true;
-                break;
+                this.trace(`FLUSH_TIMEOUT_PROGRESS 停在 ${written}/${flushTotal}，静默超时`);
+                throw sliceError as Error;
               }
             }
           }
@@ -1398,12 +1426,12 @@ export class ToneClient {
           packet = await this.awaitPacket(MbbSpec.UPLOAD_IDLE_TIMEOUT_MS, isUploadPacket);
         }
       } catch (error) {
+        if (receivedAll) {
+          const flushError: ToneError = new ToneError(I18n.t('toneErr.flushTimeout'), -98);
+          flushError.reason = ToneErrorReason.FLUSH_TIMEOUT;
+          throw flushError;
+        }
         throw error as Error;
-      }
-      if (flushAccepted) {
-        this.flushUnconfirmed = true;
-        completed = true;
-        break;
       }
       const fields: Map<number, Uint8Array> = MbbProtocol.tlv(packet);
       const typeField: Uint8Array | undefined = fields.get(1);
@@ -1539,16 +1567,18 @@ export class ToneClient {
           const receivedField: Uint8Array | undefined = fields.get(2);
           const total: number = totalField !== undefined && totalField.length === 4
             ? ByteUtils.intBE(totalField) : 0;
-          const written: number = receivedField !== undefined && receivedField.length === 4
+          const progress: number = receivedField !== undefined && receivedField.length === 4
             ? ByteUtils.intBE(receivedField) : 0;
           if (total > 0) {
-            this.trace(`UPLOAD_WRITE ${written}/${total}`);
+            flushTotal = total;
+            written = progress;
+            this.trace(`UPLOAD_WRITE ${progress}/${total}`);
             // 写入阶段占 50%~95%：耳机的 total 是整包的两倍（收 + 校验写），单独一段
-            emit(0.5 + 0.45 * (written / total), I18n.t('stage.flash'));
-            if (!receivedAll && written >= data.length) {
+            emit(0.5 + 0.45 * (progress / total), I18n.t('stage.flash'));
+            if (!receivedAll && progress >= data.length) {
               receivedAll = true;
             }
-            if (written >= total) {
+            if (progress >= total) {
               completed = true;
             }
           }
