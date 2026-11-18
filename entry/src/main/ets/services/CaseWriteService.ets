@@ -298,7 +298,10 @@ export class CaseWriteService {
           };
         } catch (error) {
           const hwModel: string = CaseWriteService.rememberModel(client, deviceId);
-          failure = CaseWriteService.describeFailure(error, entry, deviceId, modelName);
+          // 会被自动重试的链路失败不算「写入失败」，日志按 warn 记，
+          // 否则诊断日志头部会堆一串其实已经自己恢复的 [E]
+          const willRetry: boolean = attempt < 2 && CaseWriteService.isLinkFailure(error);
+          failure = CaseWriteService.describeFailure(error, entry, deviceId, modelName, willRetry);
           Logger.warn(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
@@ -318,8 +321,7 @@ export class CaseWriteService {
             }
             return applied !== null ? applied : failure;
           }
-          const linkBroken: boolean = CaseWriteService.isLinkFailure(error);
-          if (attempt < 2 && linkBroken) {
+          if (willRetry) {
             Logger.warn(MODULE, `串口在传输中断开，准备重试一次 code=${client.errorCode}`);
             if (onProgress !== undefined) {
               onProgress(0.02, I18n.t('write.stageLinkRetry'));
@@ -539,7 +541,7 @@ export class CaseWriteService {
   }
 
   private static describeFailure(error: Object, entry: ToneEntry, deviceId: string,
-    modelName: string): WriteResult {
+    modelName: string, willRetry: boolean = false): WriteResult {
     const toneError: ToneError = error as ToneError;
     const declaredReason: string = toneError.reason !== undefined ? toneError.reason : '';
     // 音频断不开归到链路问题：保留可执行的重试指引，但不会触发自动整包重传
@@ -570,9 +572,15 @@ export class CaseWriteService {
     if (message.indexOf('SPP IO error') >= 0 || message.indexOf('BussinessError') >= 0) {
       message = I18n.t('write.sppError');
     }
-    Logger.exception(MODULE,
-      `写入失败 code=${code}${reason.length > 0 ? ` reason=${reason}` : ''}：${message}`,
-      error as BusinessError);
+    if (willRetry) {
+      // 马上就会自动重试，别在诊断日志里留一条其实已经恢复的 [E]
+      Logger.warn(MODULE,
+        `写入中断，准备重试 code=${code}${reason.length > 0 ? ` reason=${reason}` : ''}：${message}`);
+    } else {
+      Logger.exception(MODULE,
+        `写入失败 code=${code}${reason.length > 0 ? ` reason=${reason}` : ''}：${message}`,
+        error as BusinessError);
+    }
     return reject(code, message, reason.length > 0 ? reason : WriteReason.OTHER,
       CaseWriteService.buildDiagnostic(entry, deviceId, modelName, error));
   }

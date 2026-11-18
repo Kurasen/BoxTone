@@ -248,6 +248,26 @@ export class ToneClient {
   }
 
   /**
+   * 热会话到底还能不能用。
+   *
+   * 耳机写完闪存后会把 SPP 收掉，而沉降期内保活是停发的（插心跳会被当成中止信号），
+   * 所以「socket 还开着、最近也有收发」并不等于通道可用。
+   * 复用前发一条只读查询确认：失败只花几十毫秒，比拿一整包数据去撞强得多。
+   */
+  private async probeAlive(): Promise<boolean> {
+    if (this.clientSocket < 0 || this.broken || this.closed) {
+      return false;
+    }
+    try {
+      await this.command(ByteUtils.fromHex('2bb4010110'), MbbSpec.QUERY_TIMEOUT_MS, 1);
+      return true;
+    } catch (error) {
+      this.trace(`SESSION_PROBE_FAIL ${ToneClient.messageOf(error)}`);
+      return false;
+    }
+  }
+
+  /**
    * 取一条可用的音效会话。
    *
    * 同一台耳机上一条通道还活着就直接复用：一次 sppConnect 在真机上约 3 秒
@@ -272,6 +292,13 @@ export class ToneClient {
   /** 用完交还：留一段热连接给下一次用；已经坏掉或用户取消则直接关 */
   release(): void {
     if (this.closed || this.broken || this.clientSocket < 0) {
+      this.close();
+      return;
+    }
+    // 刚写完闪存：耳机随后会自己把 SPP 收掉（日志里稳定在写入后 3~7 秒），
+    // 留着这条会话只会让下一次操作撞在一条死 socket 上，不如直接关
+    if (ToneClient.settleLeft() > 0) {
+      Logger.info(MODULE, 'SESSION_CLOSE 刚写完闪存，不保留会话');
       this.close();
       return;
     }
@@ -457,9 +484,18 @@ export class ToneClient {
       if (this.closed) {
         throw new CancelledError();
       }
-      this.audioGate = 'reused';
-      Logger.info(MODULE, `CONNECTED reused 复用热会话 ms=0 protocol=${this.protocolUsed}`);
-      return;
+      if (await this.probeAlive()) {
+        this.audioGate = 'reused';
+        Logger.info(MODULE, `CONNECTED reused 复用热会话 ms=0 protocol=${this.protocolUsed}`);
+        return;
+      }
+      // 探测失败说明这条通道已经死了（多半是写完闪存后被耳机收回）：
+      // 关掉走正常建链，别拿整包数据去撞一条死 socket
+      Logger.info(MODULE, 'SESSION_DEAD 热会话探测无响应，改为重新建链');
+      this.broken = true;   // 让 closeSocket 不记 lastCloseAt：对端早就不在了
+      this.closeSocket();
+      this.received = [];
+      this.assembler.reset();
     }
     this.closed = false;
     this.broken = false;
