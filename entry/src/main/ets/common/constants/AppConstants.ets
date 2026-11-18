@@ -225,6 +225,8 @@ export class Changelog {
       version: 'v1.1.1',
       noteKey: 'changelog.v111.note',
       itemKeys: [
+        'changelog.v111.i10',
+        'changelog.v111.i11',
         'changelog.v111.i1',
         'changelog.v111.i2',
         'changelog.v111.i3',
