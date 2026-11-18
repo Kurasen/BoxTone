@@ -335,7 +335,8 @@ export class CaseWriteService {
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
-            message: I18n.t('write.success')
+            message: client.isFlushUnconfirmed() ?
+              I18n.t('write.successUnconfirmed') : I18n.t('write.success')
           };
         } catch (error) {
           const hwModel: string = CaseWriteService.rememberModel(client, deviceId);

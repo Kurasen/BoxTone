@@ -292,8 +292,16 @@ export class MbbSpec {
   static readonly MIN_FRAME_BYTES: number = 6;
   static readonly MAX_FRAME_BYTES: number = 65540;
 
-  /** 自定义开盒音槽位号（不同固件可能变化） */
-  static readonly TONE_CUSTOM_ID: number = 43;
+  /**
+   * 自定义开盒音槽位号。
+   *
+   * 官方音效表里 43 是出厂「口哨」（固定大小的预置槽），100~179 才是留给自建音效的区间。
+   * 参考实现（OpenFreebuds）写的是 **100**：
+   * 抓它的运行日志，上传前那条 `2BB4` 写入的 12 字节里 `[9:11] = 0x0064`。
+   * 之前我们写 43，等于一直在覆盖一个预置音效，而且它的容量明显小于自定义区
+   * （实测 3.2 秒能写满、3.5 秒就卡在擦写阶段）。
+   */
+  static readonly TONE_CUSTOM_ID: number = 100;
   /** 音效包头魔数 15470 = 0x3C6E */
   static readonly TONE_PACKAGE_MAGIC: number = 15470;
   /** 音效名称字段长度 */

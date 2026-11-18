@@ -156,6 +156,13 @@ export class ToneClient {
    * 无论取哪种值都不再单独决定成败——串口能不能建起来才算数。
    */
   private audioGate: string = 'idle';
+  /** 上一次上传的擦写回执是否没走满 100%（靠静默/音频回连收的尾） */
+  private flushUnconfirmed: boolean = false;
+
+  /** 擦写是否没拿到 100% 回执：界面据此提示用户去听一下确认 */
+  isFlushUnconfirmed(): boolean {
+    return this.flushUnconfirmed;
+  }
 
   constructor(detail: boolean = false) {
     this.detailLog = detail;
@@ -1315,6 +1322,7 @@ export class ToneClient {
     emit(0.08, I18n.t('stage.prepare'));
     // 从声明音效包开始就进入传输态：整段期间不发心跳
     this.transferring = true;
+    this.flushUnconfirmed = false;
     if (protocol === 1) {
       await this.send(ByteUtils.fromHex('2bb6010101'));
     } else {
@@ -1391,6 +1399,7 @@ export class ToneClient {
         throw error as Error;
       }
       if (flushAccepted) {
+        this.flushUnconfirmed = true;
         completed = true;
         break;
       }

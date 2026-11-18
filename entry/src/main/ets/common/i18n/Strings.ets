@@ -477,6 +477,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'write.stageWaitReady': '等待耳机就绪',
   'write.stageWaitFlash': '等待耳机完成上一次写入（约 {0} 秒）',
   'write.stageConnect': '连接耳机',
+  'write.successUnconfirmed': '已写入，但耳机没有回报擦写完成。请合盖 3 秒再开盖听一下：' +
+    '不是新音效就再写一次（多半是这一包太长，耳机那边没收尾）',
   'write.success': '已写入耳机盒。合盖 3 秒再开盖即可听到新音效；' +
     '换下一段音效前也请先合盖再开盖，让耳机把上一段写完',
   'write.successApplyOnly': '已写入耳机盒。合盖 3 秒再开盖即可听到新音效',
@@ -1084,6 +1086,8 @@ export const EN_STRINGS: Record<string, string> = {
   'write.stageWaitReady': 'Waiting for earbuds',
   'write.stageWaitFlash': 'Waiting for the earbuds to finish the last write (~{0}s)',
   'write.stageConnect': 'Connecting',
+  'write.successUnconfirmed': 'Written, but the earbuds never reported the flash write as complete. ' +
+    'Close the lid for 3 seconds, then open it and listen; if it is not the new tone, write it again.',
   'write.success': 'Written to the charging case. Close the lid for 3 seconds, then open it to hear the new tone. ' +
     'Before writing another tone, close and reopen the lid so the earbuds can finish the previous one.',
   'write.successApplyOnly': 'Written to the charging case. Close the lid for 3 seconds, then open it to hear the new tone.',
