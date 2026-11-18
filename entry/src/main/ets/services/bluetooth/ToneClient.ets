@@ -1336,6 +1336,8 @@ export class ToneClient {
     let chunkSize: number = 0;
     let completed: boolean = false;
     let sentChunks: number = 0;
+    /** 目标槽位是否已在传输前选中：选中过就不必在收尾再发一次（那时串口常常已经没了） */
+    let preSelected: boolean = false;
     /** 数据是否已全部送达：之后只剩耳机擦写闪存，静默时间会很长 */
     let receivedAll: boolean = false;
     const started: number = Date.now();
@@ -1446,6 +1448,7 @@ export class ToneClient {
          */
         try {
           await this.setTone(MbbSpec.TONE_CUSTOM_ID, true, before.volume, 1500, 1);
+          preSelected = true;
         } catch (error) {
           // 耳机对这条命令不一定回执，选中结果不影响传输，最后回读时再确认
           this.trace(`TONE_PRESELECT_IGNORED ${ToneClient.messageOf(error)}`);
@@ -1601,14 +1604,21 @@ export class ToneClient {
      */
     let status: ToneStatus =
       new ToneStatus(true, true, before.volume, MbbSpec.TONE_CUSTOM_ID, true);
-    try {
-      status = await this.confirmTone(before.volume);
-    } catch (error) {
-      if (error instanceof CancelledError) {
-        throw error as Error;
+    if (preSelected) {
+      // 传输前已经选中：这里什么都不用发。
+      // 真机上写完最后一块后耳机很快会收掉串口，再发一条只会撞 2901054，
+      // 还会顺手记一次 15 秒冷却，把下一次写入也拖慢
+      this.trace('TONE_ALREADY_SELECTED 传输前已选中，跳过收尾补发');
+    } else {
+      try {
+        status = await this.confirmTone(before.volume);
+      } catch (error) {
+        if (error instanceof CancelledError) {
+          throw error as Error;
+        }
+        // 其余一律不阻断：耳机擦写完成后会自己按已选中的槽位播放
+        this.trace(`TONE_CONFIRM_IGNORED ${ToneClient.messageOf(error)}`);
       }
-      // 其余一律不阻断：槽位已经提前选中，耳机擦写完成后自己就生效
-      this.trace(`TONE_CONFIRM_IGNORED ${ToneClient.messageOf(error)}`);
     }
     emit(1, I18n.t('stage.applied'));
     // 分片发送时用过的空档要还原，避免影响后续命令的响应速度

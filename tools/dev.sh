@@ -13,10 +13,16 @@
 #   ./tools/dev.sh log        只看应用日志（Ctrl-C 退出）
 #   ./tools/dev.sh stop       强制停止应用
 #   ./tools/dev.sh devices    列出已连接设备
+#   ./tools/dev.sh reconnect  只重连无线调试（不构建不安装）
 #
 # 可覆盖的环境变量：
-#   DEVECO_HOME   DevEco Studio 安装目录，默认 D:/App/DevEco Studio
+#   DEVECO_HOME      DevEco Studio 安装目录，默认 D:/App/DevEco Studio
 #   DEVECO_SDK_HOME  SDK 目录，默认 $DEVECO_HOME/sdk
+#   BOX_HDC_TARGET   无线调试地址 ip:port；不设则用 tools/.hdc-target 里记的上一次地址
+#   BOX_HDC_RETRY    自动重连的轮数，默认 6（每轮 1 秒）
+#
+# 无线调试地址平时会自动记住：任何一次连上后都写进 tools/.hdc-target，
+# 断了以后下次运行会自动 tconn 回去。端口变了就用 BOX_HDC_TARGET 指定一次即可。
 #
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -54,18 +60,68 @@ need_build_tools() {
   [[ -d "$DEVECO_SDK_HOME" ]] || { die "未找到 SDK：$DEVECO_SDK_HOME"; exit 1; }
 }
 
-need_device() {
+# ---------------- 设备连接（含无线调试自动重连） ----------------
+# 记住上一次连上的 ip:port。无线调试断开后 hdc 不会自己重连，
+# 每次都要手动 tconn 很烦，这里把地址缓存下来并自动重试。
+TARGET_CACHE="$PWD/tools/.hdc-target"
+
+targets_now() {
+  "$HDC" list targets 2>/dev/null | tr -d '\r' | grep -v '^\[Empty\]$' | grep -v '^$'
+}
+
+remember_target() {
+  local t="$1"
+  [[ "$t" == *:* ]] || return 0
+  printf '%s\n' "$t" > "$TARGET_CACHE" 2>/dev/null || true
+}
+
+ensure_device() {
   [[ -n "$HDC" ]] || { die "未找到 hdc（在 $DEVECO_SDK_HOME/default/openharmony/toolchains 下）"; exit 1; }
-  local targets
-  targets=$("$HDC" list targets 2>/dev/null | tr -d '\r' | grep -v '^\[Empty\]$' | grep -v '^$')
-  if [[ -z "$targets" ]]; then
-    die "没有已连接设备"
-    echo "    1. 手机开启「开发者选项 → USB 调试」"
-    echo "    2. 数据线连接后，手机上点「允许调试」"
-    echo "    3. 确认：${DIM}\"$HDC\" list targets${NC}"
-    exit 1
+
+  local current
+  current=$(targets_now)
+  if [[ -n "$current" ]]; then
+    remember_target "$(echo "$current" | head -1)"
+    ok "设备：$(echo "$current" | head -1)"
+    return 0
   fi
-  ok "设备：$(echo "$targets" | head -1)"
+
+  # 没连上：拿候选地址自动 tconn 回去
+  local candidates=()
+  [[ -n "${BOX_HDC_TARGET:-}" ]] && candidates+=("$BOX_HDC_TARGET")
+  if [[ -f "$TARGET_CACHE" ]]; then
+    local cached
+    cached=$(tr -d '\r\n' < "$TARGET_CACHE" 2>/dev/null)
+    [[ -n "$cached" ]] && candidates+=("$cached")
+  fi
+
+  if [[ ${#candidates[@]} -gt 0 ]]; then
+    info "设备未连接，尝试自动重连无线调试"
+    local round tries="${BOX_HDC_RETRY:-6}"
+    for ((round = 1; round <= tries; round++)); do
+      local key
+      for key in "${candidates[@]}"; do
+        [[ -n "$key" ]] || continue
+        printf '%s  .%s tconn %s（第 %s/%s 轮）%s\n' "$DIM" "$NC" "$key" "$round" "$tries" "$NC"
+        "$HDC" tconn "$key" >/dev/null 2>&1 || true
+        current=$(targets_now)
+        if [[ -n "$current" ]]; then
+          remember_target "$(echo "$current" | head -1)"
+          ok "已自动连上：$(echo "$current" | head -1)"
+          return 0
+        fi
+      done
+      [[ "$round" -lt "$tries" ]] && sleep 1
+    done
+  fi
+
+  die "没有已连接设备"
+  echo "    1. 手机开启「开发者选项 → 无线调试」，或插 USB 数据线"
+  echo "    2. 无线调试的端口每次重开都会变；拿到新地址后指定一次："
+  echo "       ${DIM}BOX_HDC_TARGET=192.168.x.x:xxxxx ./tools/dev.sh install${NC}"
+  echo "    3. 之后会自动记住（${DIM}$TARGET_CACHE${NC}）"
+  echo "    4. 手动确认：${DIM}\"$HDC\" list targets${NC}"
+  exit 1
 }
 
 # ---------------- 各步骤 ----------------
@@ -87,7 +143,7 @@ do_build() {
 }
 
 do_install() {
-  need_device
+  ensure_device
   [[ -f "$HAP" ]] || { die "产物不存在，先执行 ./tools/dev.sh build"; exit 1; }
   info "安装到设备"
   local out
@@ -104,7 +160,7 @@ do_install() {
 }
 
 do_run() {
-  need_device
+  ensure_device
   info "启动应用"
   "$HDC" shell aa start -a "$ABILITY" -b "$BUNDLE" >/dev/null 2>&1 \
     && ok "已启动（没反应就检查 ability 名是否正确）" \
@@ -112,7 +168,7 @@ do_run() {
 }
 
 do_reinstall() {
-  need_device
+  ensure_device
   warn "卸载会清空应用数据（音效库、设置、日志），仅在签名变更后必须重装时使用"
   info "卸载旧包"
   "$HDC" uninstall "$BUNDLE" 2>&1 | tr -d '\r' | tail -1
@@ -120,13 +176,13 @@ do_reinstall() {
 }
 
 do_log() {
-  need_device
+  ensure_device
   info "应用日志（Ctrl-C 退出）　${DIM}只看 $LOG_TAG 相关${NC}"
   "$HDC" shell hilog 2>/dev/null | tr -d '\r' | grep --line-buffered -E "$LOG_TAG|JSAPP|jscrash" || true
 }
 
 do_stop() {
-  need_device
+  ensure_device
   "$HDC" shell aa force-stop "$BUNDLE" >/dev/null 2>&1 && ok "已停止" || warn "停止失败"
 }
 
@@ -134,6 +190,19 @@ do_devices() {
   [[ -n "$HDC" ]] || { die "未找到 hdc"; exit 1; }
   info "hdc list targets"
   "$HDC" list targets 2>&1 | tr -d '\r'
+  if [[ -f "$TARGET_CACHE" ]]; then
+    echo "    ${DIM}缓存地址：$(tr -d '\r\n' < "$TARGET_CACHE")${NC}"
+  fi
+}
+
+do_reconnect() {
+  [[ -n "$HDC" ]] || { die "未找到 hdc"; exit 1; }
+  info "重连无线调试"
+  # 先断开缓存里的旧连接，再走一轮完整重连
+  local cached=""
+  [[ -f "$TARGET_CACHE" ]] && cached=$(tr -d '\r\n' < "$TARGET_CACHE" 2>/dev/null)
+  [[ -n "$cached" ]] && "$HDC" tconn "$cached" -remove >/dev/null 2>&1 || true
+  ensure_device
 }
 
 case "$MODE" in
@@ -144,6 +213,7 @@ case "$MODE" in
   log)       do_log ;;
   stop)      do_stop ;;
   devices)   do_devices ;;
+  reconnect) do_reconnect ;;
   all)
     do_build || exit 1
     do_install
