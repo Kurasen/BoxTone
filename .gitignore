@@ -30,3 +30,5 @@
 *.keystore
 # 离线自检的临时转译目录（tools/verify-logic.mjs 生成）
 /.verify-tmp
+# 商店素材与截图脚本：体积大且与代码无关，仅本地保留
+/store
