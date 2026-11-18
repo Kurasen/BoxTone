@@ -6,7 +6,7 @@ import { DateUtils } from '../common/utils/DateUtils';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
 import { ToneEntry } from '../models/ToneModel';
-import { BtSnapshot } from '../models/DeviceModel';
+import { BtDevice, BtSnapshot } from '../models/DeviceModel';
 import { BluetoothService } from './BluetoothService';
 import { ToneRepositoryService } from './ToneRepositoryService';
 import { ToneClient, ToneError, ToneErrorReason, ToneProgress } from './bluetooth/ToneClient';
@@ -83,6 +83,10 @@ export class CaseWriteService {
   private static restoreTimer: number = -1;
   /** 是否有写入正在进行：期间不能再让音频连回来 */
   private static writing: boolean = false;
+  /** 写入失败后安排的一次默认音恢复任务 */
+  private static recoverTimer: number = -1;
+  /** 正在恢复默认音：期间不允许开始新的写入 */
+  private static recovering: boolean = false;
   /**
    * 上一次通过前置检查的目标设备。
    * 刚写完音效时我们主动恢复音频，A2DP 会经历 state=0 → 1 → 2 的空档，
@@ -93,8 +97,9 @@ export class CaseWriteService {
 
   /** 写入前置检查：音效规格 + 文件 + 耳机连接状态 */
   public static check(entry: ToneEntry): WriteCheck {
-    if (CaseWriteService.writing) {
-      return CaseWriteService.checkFail(WriteCode.WRITE_FAILED, I18n.t('write.inProgress'));
+    if (CaseWriteService.writing || CaseWriteService.recovering) {
+      return CaseWriteService.checkFail(WriteCode.WRITE_FAILED,
+        I18n.t(CaseWriteService.recovering ? 'write.recovering' : 'write.inProgress'));
     }
     if (entry.byteLength <= 0 || entry.durationMs <= 0) {
       return CaseWriteService.checkFail(WriteCode.EMPTY_TONE, I18n.t('write.emptyTone'));
@@ -131,8 +136,9 @@ export class CaseWriteService {
 
   /** 设备链路检查：权限、蓝牙开关、当前输出设备、星闪拦截 */
   private static checkLink(): WriteCheck {
-    if (CaseWriteService.writing) {
-      return CaseWriteService.checkFail(WriteCode.WRITE_FAILED, I18n.t('write.inProgress'));
+    if (CaseWriteService.writing || CaseWriteService.recovering) {
+      return CaseWriteService.checkFail(WriteCode.WRITE_FAILED,
+        I18n.t(CaseWriteService.recovering ? 'write.recovering' : 'write.inProgress'));
     }
     const snapshot = BluetoothService.getSnapshot();
     if (!snapshot.authorized) {
@@ -335,8 +341,8 @@ export class CaseWriteService {
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
-            message: client.isFlushUnconfirmed() ?
-              I18n.t('write.successUnconfirmed') : I18n.t('write.success')
+            message: client.isFlushUnconfirmed() ? I18n.t('write.successUnconfirmed') :
+              I18n.t('write.success')
           };
         } catch (error) {
           const hwModel: string = CaseWriteService.rememberModel(client, deviceId);
@@ -360,8 +366,10 @@ export class CaseWriteService {
                 `btName=${modelName.length > 0 ? modelName : '未知'} ` +
                 `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
                 `result=ok via=apply-only`);
+              return applied;
             }
-            return applied !== null ? applied : failure;
+            CaseWriteService.scheduleToneRecoveryAfterFailure(client, deviceId, error);
+            return failure;
           }
           if (willRetry) {
             Logger.warn(MODULE, `串口在传输中断开，准备重试一次 code=${client.errorCode}`);
@@ -371,6 +379,7 @@ export class CaseWriteService {
             await CaseWriteService.pause(1200);
             continue;
           }
+          CaseWriteService.scheduleToneRecoveryAfterFailure(client, deviceId, error);
           return failure;
         } finally {
           client.release();
@@ -564,6 +573,64 @@ export class CaseWriteService {
       return null;
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * 写入失败且已经预选过目标槽位：先让失败结果返回，再在后台等耳机恢复后补发默认音。
+   *
+   * 失败时串口通常已经断了（2901054），立刻重连只会先等 15 秒冷却再超时，
+   * 把失败提示拖到 20 多秒后。这里改成后台任务：3 秒后第一次尝试，
+   * 失败再隔 5 秒重试，最多 3 次；期间 blocking 新写入。
+   */
+  private static scheduleToneRecoveryAfterFailure(client: ToneClient, deviceId: string,
+    error: Object): void {
+    if (!client.wasPreselected() || (error as ToneError).reason === ToneErrorReason.CANCELLED) {
+      return;
+    }
+    Logger.info(MODULE, '写入失败且已预选自定义槽，安排后台恢复默认开盒音');
+    CaseWriteService.cancelToneRecovery();
+    CaseWriteService.recovering = true;
+    CaseWriteService.recoverTryLater(deviceId, 0, 3000);
+  }
+
+  private static recoverTryLater(deviceId: string, attempt: number, delayMs: number): void {
+    CaseWriteService.recoverTimer = setTimeout(() => {
+      CaseWriteService.recoverTimer = -1;
+      CaseWriteService.runToneRecovery(deviceId, attempt);
+    }, delayMs);
+  }
+
+  private static async runToneRecovery(deviceId: string, attempt: number): Promise<void> {
+    const client: ToneClient = ToneClient.acquire(deviceId, false);
+    try {
+      await client.connect(deviceId, 8000);
+      await client.restoreDefault();
+      Logger.info(MODULE, `已恢复默认开盒音（第 ${attempt + 1} 次）`);
+      CaseWriteService.recovering = false;
+      CaseWriteService.scheduleAudioRestore(deviceId);
+      return;
+    } catch (cleanupError) {
+      const toneError: ToneError = cleanupError as ToneError;
+      Logger.warn(MODULE, `恢复默认开盒音失败（第 ${attempt + 1} 次）：` +
+        `${toneError.message !== undefined ? toneError.message : ''}`);
+    } finally {
+      client.release();
+    }
+    if (attempt < 2) {
+      CaseWriteService.recoverTryLater(deviceId, attempt + 1, 5000);
+      return;
+    }
+    CaseWriteService.recovering = false;
+    Logger.warn(MODULE, '恢复默认开盒音已放弃：耳机仍不可达');
+    // 恢复不了也要把音频通道放回来，免得用户连歌都听不了
+    CaseWriteService.scheduleAudioRestore(deviceId);
+  }
+
+  private static cancelToneRecovery(): void {
+    if (CaseWriteService.recoverTimer >= 0) {
+      clearTimeout(CaseWriteService.recoverTimer);
+      CaseWriteService.recoverTimer = -1;
     }
   }
 

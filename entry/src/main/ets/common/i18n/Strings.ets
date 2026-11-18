@@ -116,8 +116,6 @@ export const ZH_STRINGS: Record<string, string> = {
   'tone.outputSize': '输出大小',
   'tone.byteCount': '{0} 字节',
   'tone.sizeRule': '1 秒 = {0} 字节，上限 {1} 秒 / {2} 字节',
-  'tone.longToneWarn': '超过 {0} 秒属于实验特性：长包在部分固件上可能擦写失败，' +
-    '遇到失败时裁剪到 {0} 秒以内再试',
   'tone.saveButton': '生成并保存到音效库',
   'tone.exportButton': '导出 RAW 文件',
   'tone.writeHint': '写入只需在「音效库」点写入：双耳入盒开盖，通过蓝牙直接下发到充电盒',
@@ -432,6 +430,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'support.verifiedTag': '已验证',
   'support.pendingTag': '待实测',
   'support.detail.freeclip2': '协议 2 · 盒音写入实测通过；典藏版同型号平台，未单独实测',
+  'support.detail.verified': '盒音写入实测通过',
+  'support.detail.verifiedHorse': '盒音写入实测通过；马年典藏款同型号平台，未单独实测',
   'support.detail.official': '具备开盒提示音 · 盒音自定义待实测',
   'support.detail.officialHorse': '具备开盒提示音（含马年典藏款）· 盒音自定义待实测',
 
@@ -454,6 +454,7 @@ export const ZH_STRINGS: Record<string, string> = {
 
   // 写入链路
   'write.inProgress': '正在写入，请等待当前任务完成',
+  'write.recovering': '正在恢复默认开盒音，请稍候',
   'write.emptyTone': '音效数据为空，请重新生成',
   'write.tooLong': '时长 {0} 超过充电盒上限 {1} 秒',
   'write.tooLarge': '文件 {0} 超过上限 {1}',
@@ -477,7 +478,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'write.stageWaitReady': '等待耳机就绪',
   'write.stageWaitFlash': '等待耳机完成上一次写入（约 {0} 秒）',
   'write.stageConnect': '连接耳机',
-  'write.successUnconfirmed': '已写入，但耳机没有回报擦写完成。请合盖 3 秒再开盖听一下：' +
+  'write.successUnconfirmed': '已写入，但耳机没有回报擦写完成。请合盖 10 秒再开盖听一下：' +
     '不是新音效就再写一次（多半是这一包太长，耳机那边没收尾）',
   'write.success': '已写入耳机盒。合盖 3 秒再开盖即可听到新音效；' +
     '换下一段音效前也请先合盖再开盖，让耳机把上一段写完',
@@ -549,9 +550,12 @@ export const ZH_STRINGS: Record<string, string> = {
   'toneErr.ackTimeout': '等待耳机回执超时，请保持双耳入盒、盒盖打开后重试',
   'toneErr.linkDown': '蓝牙连接已中断，请重新连接耳机',
   'toneErr.timeout': '传输时间过长，请重新连接后重试',
-  'toneErr.flushTimeout': '数据已全部送达耳机，但没等到擦写完成。请合盖 3 秒再开盖后重试',
-  'toneErr.flushUnconfirmed': '数据已全部送达耳机，之后它没有再回报擦写进度（3 秒以上的长音效常见）。' +
-    '音效大概率已经写入：请合盖 3 秒再开盖听一下，确认不是新音效再重试',
+  'toneErr.flushTimeout': '数据已全部送达耳机，但没等到擦写完成。应用会在后台尝试切回默认开盒音；' +
+    '若开盖无声，请合盖再开盖。',
+  'toneErr.flushAborted': '耳机在擦写阶段自己重启了，这条音效没写进去。当前串口约 {0}KB/s。' +
+    '应用会在后台尝试切回默认开盒音；长音效的稳定上限约 2 秒。',
+  'toneErr.flushUnconfirmed': '数据已全部送达耳机，之后它没有再回报擦写进度（较长音效常见）。' +
+    '音效大概率已经写入：请合盖 10 秒再开盖听一下，确认不是新音效再重试',
   'toneErr.formatRejected': '该机型不接受当前音效格式（16700Hz / 16bit / {0} 字节），' +
     '本次没有写入任何数据。请把机型和这条日志一起反馈',
   'toneErr.noFormat': '耳机没有返回正确的音效格式',
@@ -730,8 +734,6 @@ export const EN_STRINGS: Record<string, string> = {
   'tone.outputSize': 'Output size',
   'tone.byteCount': '{0} bytes',
   'tone.sizeRule': '1 s = {0} bytes · limit {1} s / {2} bytes',
-  'tone.longToneWarn': 'Tones longer than {0} s are experimental: some firmware may fail while ' +
-    'writing flash. If that happens, trim to {0} s or less and retry.',
   'tone.saveButton': 'Generate and save to library',
   'tone.exportButton': 'Export RAW file',
   'tone.writeHint': 'To flash, open the Library and tap Write with both earbuds in the case and the lid open. Data is sent over Bluetooth.',
@@ -1042,6 +1044,8 @@ export const EN_STRINGS: Record<string, string> = {
   'support.verifiedTag': 'Verified',
   'support.pendingTag': 'Pending',
   'support.detail.freeclip2': 'Protocol 2 · Case-tone writing verified; the special edition shares the same platform but was not tested separately',
+  'support.detail.verified': 'Case-tone writing verified',
+  'support.detail.verifiedHorse': 'Case-tone writing verified; the Year of the Horse edition shares the same platform but was not tested separately',
   'support.detail.official': 'Has case-tone support · Custom case tones pending verification',
   'support.detail.officialHorse': 'Has case-tone support (incl. Year of the Horse edition) · Custom case tones pending verification',
 
@@ -1061,6 +1065,7 @@ export const EN_STRINGS: Record<string, string> = {
   'bt.readFailed': 'Failed to read Bluetooth status ({0})',
 
   'write.inProgress': 'A write is in progress. Wait for it to finish.',
+  'write.recovering': 'Restoring the default tone. Please wait.',
   'write.emptyTone': 'Tone data is empty. Generate it again.',
   'write.tooLong': 'Duration {0} exceeds the case limit of {1} s',
   'write.tooLarge': 'File {0} exceeds the {1} limit',
@@ -1087,7 +1092,7 @@ export const EN_STRINGS: Record<string, string> = {
   'write.stageWaitFlash': 'Waiting for the earbuds to finish the last write (~{0}s)',
   'write.stageConnect': 'Connecting',
   'write.successUnconfirmed': 'Written, but the earbuds never reported the flash write as complete. ' +
-    'Close the lid for 3 seconds, then open it and listen; if it is not the new tone, write it again.',
+    'Close the lid for 10 seconds, then open it and listen; if it is not the new tone, write it again.',
   'write.success': 'Written to the charging case. Close the lid for 3 seconds, then open it to hear the new tone. ' +
     'Before writing another tone, close and reopen the lid so the earbuds can finish the previous one.',
   'write.successApplyOnly': 'Written to the charging case. Close the lid for 3 seconds, then open it to hear the new tone.',
@@ -1162,9 +1167,14 @@ export const EN_STRINGS: Record<string, string> = {
   'toneErr.ackTimeout': 'Timed out waiting for the earbuds to respond. Keep both earbuds in the case with the lid open and retry.',
   'toneErr.linkDown': 'Bluetooth connection lost. Reconnect the earbuds.',
   'toneErr.timeout': 'Transfer took too long. Reconnect and retry.',
-  'toneErr.flushTimeout': 'All data reached the earbuds, but flashing did not finish. Close the lid for 3 seconds, reopen, and retry.',
+  'toneErr.flushTimeout': 'All data reached the earbuds, but flashing did not finish. ' +
+    'The app will try to switch the earbuds back to the default tone in the background; ' +
+    'if opening the case is silent, close and reopen the lid.',
+  'toneErr.flushAborted': 'The earbuds restarted while committing the flash write, so this tone was not stored. ' +
+    'This link runs at about {0} KB/s. The app will try to switch back to the default tone in the background; ' +
+    'the stable limit for long tones is about 2 seconds.',
   'toneErr.flushUnconfirmed': 'All data reached the earbuds, but they stopped reporting flash-write progress ' +
-    '(common for tones longer than 3 seconds). The tone was most likely written — close the lid for 3 seconds, ' +
+    '(common for longer tones). The tone was most likely written — close the lid for 10 seconds, ' +
     'then open it and listen; retry only if it is not the new tone.',
   'toneErr.formatRejected': 'This model rejected the tone format (16700 Hz / 16-bit / {0} bytes). No data was written. ' +
     'Please report the model and this log.',

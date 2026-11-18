@@ -17,21 +17,15 @@ export class ToneSpec {
   /** 每秒字节数 = 16700 * 2 = 33400 */
   static readonly BYTES_PER_SECOND: number = 33400;
   /**
-   * 充电盒可接受的字节上限：192000（盒端缓冲区大小，与 OpenFreebuds 的参数一致）。
+   * 可写音效的字节上限 = 2.5s × 33400 = 83500。
    *
-   * 旧版一度压到 66800（2 秒），注释写的是「5 秒包能传完但盒端写闪存会停在半途」。
-   * 复查后确认那是旧写入流程的副作用：它会在 16 秒后把 A2DP 连回来，
-   * 而 5 秒包从传输到擦写完恰好跨过这个时间点，擦写被掐断。
-   * 现在恢复逻辑只在成功后触发、且音频已连上就跳过，这条上限可以还原成硬件真实值。
+   * 不再按机型区分上限，统一 2.5 秒、以稳定优先：
+   * 实测 FreeClip 2 在 3 秒以上擦写阶段会随机重启（3.2s 时好时坏、3.5s+ 基本必挂），
+   * 2.8s 及以下一直稳定。2.5s 对「开盒提示音」这一用途足够，又留了安全余量。
    */
-  static readonly MAX_BYTES: number = 192000;
-  /** 对应时长 192000 / 33400 ≈ 5.74 秒，取 5.7 便于展示与裁剪 */
-  static readonly MAX_SECONDS: number = 5.7;
-  /**
-   * 实测稳定区间上限：超过这个时长在部分固件上仍可能擦写失败，
-   * 界面据此给出「实验特性」提醒，不拦截。
-   */
-  static readonly SAFE_SECONDS: number = 2;
+  static readonly MAX_BYTES: number = 83500;
+  /** 对应时长 83500 / 33400 = 2.5 秒 */
+  static readonly MAX_SECONDS: number = 2.5;
   /** 时长下限（秒），过短会被盒端忽略 */
   static readonly MIN_SECONDS: number = 0.2;
   /** 可选采样率列表（导入 RAW 时使用） */
@@ -90,17 +84,17 @@ export class DeviceSupport {
       detailKey: 'support.detail.official'
     },
     {
-      level: DeviceSupportLevel.OFFICIAL,
+      level: DeviceSupportLevel.VERIFIED,
       names: ['HUAWEI FreeBuds Pro 5', 'HUAWEI FreeBuds Pro 5 悦彰耳机',
         'HUAWEI FreeBuds Pro 5 马年典藏款', '华为 FreeBuds Pro 5'],
       modelCodes: ['BTFT0023'],
-      detailKey: 'support.detail.officialHorse'
+      detailKey: 'support.detail.verifiedHorse'
     },
     {
-      level: DeviceSupportLevel.OFFICIAL,
+      level: DeviceSupportLevel.VERIFIED,
       names: ['HUAWEI FreeBuds 7', 'HUAWEI FreeBuds 7 悦彰耳机', '华为 FreeBuds 7'],
       modelCodes: ['BTFT0028'],
-      detailKey: 'support.detail.official'
+      detailKey: 'support.detail.verified'
     }
   ];
 
@@ -309,18 +303,32 @@ export class MbbSpec {
 
   /** 串口写入分片（协议栈缓冲建议值） */
   static readonly SPP_WRITE_CHUNK: number = 480;
-  /** 分包写入之间的空档：耳机接收缓冲有限，连发会丢包 */
-  static readonly SPP_WRITE_GAP_MS: number = 10;
+  /** 分包写入之间的空档：耳机接收缓冲有限，连发会丢包（仅在整窗合并写失败时才会用到） */
+  static readonly SPP_WRITE_GAP_MS: number = 4;
+  /**
+   * 一个分片组（8 帧）合并成一次写入的上限。
+   *
+   * 参考实现（Windows/OpenFreebuds）用的是阻塞 socket，8 次 send 只是把数据塞进内核缓冲，
+   * 真正发送由驱动连续排完；鸿蒙每次 sppWriteAsync 都是一次跨线程往返（实测 ~7ms），
+   * 再叠加每帧空档，一个窗口本地就要 130ms 以上，比耳机自己的处理时间还长。
+   */
+  static readonly BULK_WRITE_BYTES: number = 8192;
   /** 串口服务 UUID（标准 SPP） */
   static readonly SPP_UUID: string = '00001101-0000-1000-8000-00805F9B34FB';
 
-  /** 单次建链超时 */
-  static readonly CONNECT_TIMEOUT_MS: number = 8000;
+  /**
+   * 单次建链超时。
+   *
+   * 实测健康的耳机 0.3~3 秒内必然回包（连上或回 -1），8 秒只在
+   * 「耳机完全不回应」时才会走满——那种局面下等 8 秒除了拖慢体验没有别的收益，
+   * 因为下一轮重试反正也要等。压到 4 秒让「无响应」的失败来得更早、重试更密集。
+   */
+  static readonly CONNECT_TIMEOUT_MS: number = 4000;
   /**
    * 音频通道还连着时的试探超时。
-   * 这类局面下耳机有可能直接不回应，用完整 8 秒去等一次注定被拒的连接太贵。
+   * 这类局面下耳机有可能直接不回应，用完整超时去等一次注定被拒的连接太贵。
    */
-  static readonly CONNECT_PROBE_TIMEOUT_MS: number = 4500;
+  static readonly CONNECT_PROBE_TIMEOUT_MS: number = 3000;
   /**
    * 刚断开音频后的第一枪超时。
    * ACL 拆链还没收敛时，sppConnect 有时既不回调成功也不回调失败，
@@ -328,8 +336,14 @@ export class MbbSpec {
    * 这里封顶 3 秒，失败后立刻重试，比干等更有用。
    */
   static readonly CONNECT_POST_RELEASE_MS: number = 3000;
-  /** 建链总预算 */
-  static readonly CONNECT_TOTAL_BUDGET_MS: number = 40000;
+  /**
+   * 建链总预算。
+   *
+   * 旧值 40 秒几乎等于「死等」：耳机连续几轮不回包时用户只能干看转圈。
+   * 缩到 15 秒——覆盖健康耳机（2~3 秒）和「耳机忙但最终回应」（实测 ~13 秒），
+   * 真无响应则尽快失败并给出「合盖再开盖」的明确指引，而不是耗满 40 秒。
+   */
+  static readonly CONNECT_TOTAL_BUDGET_MS: number = 15000;
   /** 建链重试间隔（换通道模式时） */
   static readonly CONNECT_RETRY_GAP_MS: number = 500;
   /**
@@ -394,15 +408,33 @@ export class MbbSpec {
   static readonly QUERY_TIMEOUT_MS: number = 1200;
   static readonly QUERY_ATTEMPTS: number = 4;
 
-  /** 整包上传预算与空闲超时（耳机擦闪存时会静默数秒，别太急） */
+  /** 整包上传预算与空闲超时 */
   static readonly UPLOAD_TOTAL_TIMEOUT_MS: number = 180000;
-  static readonly UPLOAD_IDLE_TIMEOUT_MS: number = 18000;
   /**
-   * 数据全部送达后的擦写等待。
-   * 28KB 的包约 1.5 秒写完；167KB 要先擦多个 flash 块，期间耳机一个进度包都不发，
-   * 按 18 秒的空闲超时会被误判成失败。
+   * 数据阶段（耳机还没收完整包）的空闲超时。
+   *
+   * 健康传输里每个 8 帧分片组 300~500ms 就回一次包，18 秒意味着要连续丢
+   * 三四十个回执才判失败——真机里「音频被系统连回来打断传输」时，正是
+   * 这个 18 秒让用户干等（20:22 那轮 31.2s 卡到 49.2s）。压到 8 秒，
+   * 既不误伤正常传输（仍有 16 倍余量），又能让「链路被掐」快速收场去重试。
    */
-  static readonly UPLOAD_FLUSH_TIMEOUT_MS: number = 60000;
+  static readonly UPLOAD_IDLE_TIMEOUT_MS: number = 8000;
+  /**
+   * 数据全部送达后的擦写静默预算。
+   *
+   * 擦写进度每 ~82ms 一包；停在 62%~99% 不动、随后系统把 A2DP 连回来，
+   * 是耳机在收尾阶段重启/放弃本轮写入的表现。静默预算给到 30 秒，
+   * 期间发现音频回连就主动压下去让擦写继续；真断链仍由 toneErr.linkDown 立即上抛。
+   */
+  static readonly UPLOAD_FLUSH_TIMEOUT_MS: number = 30000;
+  /**
+   * 擦写进度到 100% 后，再等耳机最终确认（09 06）的时间。
+   *
+   * Windows 版 100% 后约 3 秒会再补一条 09 06；FreeClip 2 实测从不补，
+   * 每次都等到静默超时（20:33 两轮都是 confirm=silent）。留 3 秒对齐 Windows，
+   * 既给会补 09 06 的机型留出确认窗口，又不让 FreeClip 2 白等 5 秒。
+   */
+  static readonly UPLOAD_FLUSH_CONFIRM_MS: number = 3000;
 }
 
 export class AppStorageKey {

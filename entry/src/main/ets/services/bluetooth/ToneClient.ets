@@ -52,8 +52,7 @@ export class CancelledError extends ToneError {
   }
 }
 
-/** 回执超时：命令可能刚发出去就被耳机忽略，值得原样重发一次 */
-export class AckTimeoutError extends ToneError {
+/** 回执超时：命令可能刚发出去就被耳机忽略，值得原样重发一次 */export class AckTimeoutError extends ToneError {
   constructor() {
     super(I18n.t('toneErr.ackTimeout'), -98);
     this.name = 'AckTimeoutError';
@@ -97,8 +96,7 @@ export class ToneClient {
   private static session: ToneClient | null = null;
   /** 热会话的回收定时器 */
   private static sweepTimer: number = -1;
-  /**
-   * 上一次主动断开音频是否成功。
+  /** 上一次主动断开音频是否成功。
    * 成功过才敢在连接前抢跑（省掉一次注定失败的请求）；失败过就退回
    * 「先试再说」的老路，免得在系统不让断开时白等一次 AUDIO_DROP_WAIT_MS。
    */
@@ -125,8 +123,13 @@ export class ToneClient {
   private broken: boolean = false;
   private retiredAt: number = 0;
   private writeChunk: number = MbbSpec.SPP_WRITE_CHUNK;
-  /** 帧间空档：耳机侧接收缓冲不大，连发会丢包 */
+  /** 帧间空档：耳机侧接收缓冲不大，连发会丢包（仅在整窗合并写不可用时使用） */
   private writeGap: number = MbbSpec.SPP_WRITE_GAP_MS;
+  /**
+   * 一个分片组的 8 帧能否合并成一次写入。
+   * 协议栈拒收过大的包时自动降级为逐帧写，并在本次会话内不再尝试。
+   */
+  private batchWrite: boolean = true;
   private useAsyncWrite: boolean = true;
   private detailLog: boolean = false;
   private lastErrorCode: number = 0;
@@ -152,16 +155,24 @@ export class ToneClient {
   private neutralHints: boolean = false;
   /**
    * 本次会话对音频通道的处理结果，只作诊断：
-   * idle=本来没连，released=已断开，kept=系统拒绝断开且仍在连，reused=复用了热会话没动过音频。
+   * idle=本来没连，released=已断开，kept=系统拒绝断开且仍在连，reused=复用了热会话没动过音频，
+   * restored=传数据前主动把音频连了回来。
    * 无论取哪种值都不再单独决定成败——串口能不能建起来才算数。
    */
   private audioGate: string = 'idle';
   /** 上一次上传的擦写回执是否没走满 100%（靠静默/音频回连收的尾） */
   private flushUnconfirmed: boolean = false;
+  /** 本次上传是否已经预选过目标槽位：失败时要回滚默认音，避免停在空的 100 号槽 */
+  private preselected: boolean = false;
 
   /** 擦写是否没拿到 100% 回执：界面据此提示用户去听一下确认 */
   isFlushUnconfirmed(): boolean {
     return this.flushUnconfirmed;
+  }
+
+  /** 上传是否已经发过「选中自定义槽位」：失败清理据此决定要不要恢复默认音 */
+  wasPreselected(): boolean {
+    return this.preselected;
   }
 
   constructor(detail: boolean = false) {
@@ -265,6 +276,7 @@ export class ToneClient {
     if (this.clientSocket < 0 || this.broken || this.closed) {
       return false;
     }
+    this.dropStatusPackets();
     try {
       await this.command(ByteUtils.fromHex('2bb4010110'), MbbSpec.QUERY_TIMEOUT_MS, 1);
       return true;
@@ -812,22 +824,17 @@ export class ToneClient {
    * 手机系统会自动把 A2DP 连回已配对的耳机，而连接建立/握手要占用同一条 ACL，
    * 耳机正在写闪存时被这么打断就会中止——真机上表现为「擦写停在 8x%~99%、
    * 紧接着音频回连、音效被截断」。参考实现在 PC 上全程不碰音频，所以不会遇到。
+   *
+   * 这里只发断开，不再走「先 connectAllowedProfiles 认领再断」：
+   * 认领本身会建立音频连接，在擦写期间等于主动去撞闪存；断不掉就让它去，
+   * 由擦写静默超时统一收口。
    */
   private async suppressAudioLink(address: string): Promise<void> {
     try {
       await connection.disconnectAllowedProfiles(address);
       this.trace('AUDIO_SUPPRESSED');
-      return;
     } catch (error) {
-      // 2900099：这条音频是系统连的，本应用没有权限断。先认领再断一次
       this.trace(`AUDIO_SUPPRESS_DENIED code=${ToneClient.codeOf(error)}`);
-    }
-    try {
-      await connection.connectAllowedProfiles(address);
-      await connection.disconnectAllowedProfiles(address);
-      this.trace('AUDIO_SUPPRESSED via adopt');
-    } catch (error) {
-      this.trace(`AUDIO_SUPPRESS_FAIL code=${ToneClient.codeOf(error)}`);
     }
   }
 
@@ -969,7 +976,15 @@ export class ToneClient {
     this.trace(`TX_CONFIG chunk=${this.writeChunk} hint=${chunkSize}`);
   }
 
-  private async writeOnce(chunk: Uint8Array, paced: boolean = false): Promise<void> {
+  /**
+   * 写一次串口。
+   *
+   * `soft` 用于「试探性」写入（例如把整个分片组合并成一次写）：
+   * 失败时不重试、不判链路已死，直接抛给调用方去走降级路径——
+   * 否则一次参数被拒就会把整条链路标记成 broken，代价太大。
+   */
+  private async writeOnce(chunk: Uint8Array, paced: boolean = false,
+    soft: boolean = false): Promise<void> {
     const buffer: ArrayBuffer = ByteUtils.toArrayBuffer(chunk);
     let attempt: number = 0;
     while (true) {
@@ -991,6 +1006,9 @@ export class ToneClient {
         const code: number = ToneClient.codeOf(error);
         this.trace(`WRITE_FAIL attempt=${attempt} bytes=${chunk.length} code=${code} ` +
           `${ToneClient.messageOf(error)}`);
+        if (soft) {
+          throw error as Error;
+        }
         if (attempt === 1 && this.useAsyncWrite && (code === 801 || code === 202)) {
           // 该机型没有异步写接口，退回同步写
           this.useAsyncWrite = false;
@@ -1014,6 +1032,48 @@ export class ToneClient {
         }
         await sleep(24);
       }
+    }
+  }
+
+  /**
+   * 把一个分片组的 8 帧写出去。
+   *
+   * 优先合并成一整块（≈7.8KB）一次写：参考实现能跑到 ~63KB/s，靠的就是
+   * "8 次 send 只是塞进缓冲"，而鸿蒙这边每次 sppWriteAsync 都是一次跨线程往返。
+   * 合并失败（协议栈拒收大包）就退回逐帧写，并把空档压到 4ms。
+   */
+  private async writeFrames(frames: Uint8Array[], bulk: boolean = true): Promise<void> {
+    if (frames.length === 0) {
+      return;
+    }
+    if (this.closed) {
+      throw new CancelledError();
+    }
+    if (frames.length > 1 && bulk && this.batchWrite) {
+      let total: number = 0;
+      for (let i = 0; i < frames.length; i++) {
+        total += frames[i].length;
+      }
+      if (total <= MbbSpec.BULK_WRITE_BYTES) {
+        const merged: Uint8Array = ByteUtils.concat(frames);
+        const at: number = Date.now();
+        try {
+          await this.writeOnce(merged, false, true);
+          this.trace(`BULK_WRITE frames=${frames.length} bytes=${merged.length} ms=${Date.now() - at}`);
+          return;
+        } catch (error) {
+          // 大包被拒：本次会话后续窗口一律逐帧写，避免每个窗口都白撞一次
+          this.batchWrite = false;
+          this.trace(`BULK_WRITE_FALLBACK frames=${frames.length} bytes=${merged.length} ` +
+            `ms=${Date.now() - at} code=${ToneClient.codeOf(error)}`);
+        }
+      }
+    }
+    for (let i = 0; i < frames.length; i++) {
+      if (this.closed) {
+        throw new CancelledError();
+      }
+      await this.writeOnce(frames[i], true);
     }
   }
 
@@ -1074,6 +1134,18 @@ export class ToneClient {
     this.received = keep;
   }
 
+  /**
+   * 清掉队列里旧的 2B B4 状态包。
+   * 连接/A2DP 回连过程中耳机可能主动推状态包；如果探活或 query 直接匹配到旧包，
+   * 会误判「串口还活着」并把真正的查询超时掩盖掉。
+   */
+  private dropStatusPackets(): void {
+    this.received = this.received.filter((packet: Uint8Array): boolean => {
+      return !(packet.length >= 2 && ByteUtils.byteAt(packet, 0) === 0x2b &&
+        ByteUtils.byteAt(packet, 1) === 0xb4);
+    });
+  }
+
   private async awaitPacket(timeout: number, predicate: (packet: Uint8Array) => boolean): Promise<Uint8Array> {
     const deadline: number = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -1089,7 +1161,8 @@ export class ToneClient {
       if (packet !== null) {
         return packet;
       }
-      await sleep(15);
+      // 传输中耳机每 ~100ms 就回一包，15ms 的轮询粒度会白白多等一格
+      await sleep(this.transferring ? 5 : 15);
     }
     if (this.closed) {
       throw new CancelledError();
@@ -1146,16 +1219,16 @@ export class ToneClient {
   }
 
   async query(): Promise<ToneStatus> {
-    // 刚建链时耳机可能丢掉第一条命令，用短超时多次重发
+    // 刚建链时耳机可能丢掉第一条命令，用短超时多次重发；
+    // 先清旧状态包，避免把连接期推送的 2B B4 当成这次查询的回执
+    this.dropStatusPackets();
     const payload: Uint8Array = ByteUtils.fromHex('2bb4010110');
     return MbbProtocol.parseStatus(await this.command(payload, MbbSpec.QUERY_TIMEOUT_MS, MbbSpec.QUERY_ATTEMPTS));
   }
 
   /** 轻量探活：1.5 秒内拿不到状态就认为这条串口已经失效 */
   async probe(): Promise<void> {
-    this.received = this.received.filter((packet: Uint8Array): boolean => {
-      return !(packet.length >= 2 && ByteUtils.byteAt(packet, 0) === 0x2b && ByteUtils.byteAt(packet, 1) === 0xb4);
-    });
+    this.dropStatusPackets();
     const payload: Uint8Array = ByteUtils.fromHex('2bb4010110');
     await this.send(payload);
     await this.awaitPacket(1500, (packet: Uint8Array): boolean => {
@@ -1348,6 +1421,7 @@ export class ToneClient {
     // 从声明音效包开始就进入传输态：整段期间不发心跳
     this.transferring = true;
     this.flushUnconfirmed = false;
+    this.preselected = false;
     if (protocol === 1) {
       await this.send(ByteUtils.fromHex('2bb6010101'));
     } else {
@@ -1368,7 +1442,16 @@ export class ToneClient {
     let flushTotal: number = 0;
     /** 数据是否已全部送达：之后只剩耳机擦写闪存，静默时间会很长 */
     let receivedAll: boolean = false;
+    /** 上一个分片组的回执时刻：用来量「发完到耳机要下一组」的间隔 */
+    let lastAckAt: number = 0;
+    /** 最近一次收到擦写进度的时刻：用来区分「耳机还在写」和「耳机已经重启」 */
+    let lastProgressAt: number = 0;
+    /** 数据传完的时刻：用于算这条链路实际跑多快 */
+    let receivedAt: number = 0;
+    /** 擦写进度首次到 100% 的时刻：之后再等一小段最终确认（09 06） */
+    let flushedAt: number = 0;
     const started: number = Date.now();
+    lastProgressAt = started;
 
     while (!completed) {
       if (this.closed) {
@@ -1390,16 +1473,14 @@ export class ToneClient {
       try {
         if (receivedAll) {
           /**
-           * 擦写阶段：必须等到进度走满（或收到 09 06）。
+           * 擦写阶段：等到进度走满。
            *
-           * 之前把「音频通道被连回来」当成擦写结束的信号，是错的：
-           * 手机系统会自己把 A2DP 连回去（真机每轮擦写中途都会出现 state=2），
-           * 而连接建立时耳机正在写闪存，写一半就中止——表现出来就是「快结束卡住、
-           * 然后断连、音效被截断」。参考实现全程不碰 A2DP，所以它不会遇到这件事。
-           *
-           * 现在改成：擦写期间只要发现音频被连回来，就立刻再断开，继续等进度。
+           * 新真机日志里会话从 09 01 算起能活 13~27 秒，停下来的直接原因是
+           * 系统把 A2DP 连回来、占用 ACL 打断闪存，而不是「9.2 秒预算」。
+           * 所以这里只等静默超时，不再因为音频回连就立刻判死；
+           * 音频能被主动压住就压住，压不住也让擦写自己再试一会儿。
            */
-          const flushUntil: number = Date.now() + MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS;
+          const flushUntil: number = lastProgressAt + MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS;
           while (true) {
             try {
               packet = await this.awaitPacket(600, isUploadPacket);
@@ -1416,9 +1497,21 @@ export class ToneClient {
                 this.trace('AUDIO_RELINK_SUPPRESS 擦写期间音频被连回，先断开它');
                 await this.suppressAudioLink(this.address);
               }
+              if (flushedAt > 0 && Date.now() >= flushedAt + MbbSpec.UPLOAD_FLUSH_CONFIRM_MS) {
+                // 100% 后没再等到 09 06：数据已写满，按「未确认成功」返回，
+                // 让用户合盖几秒再开盖确认，而不是立刻宣称写入完成
+                this.flushUnconfirmed = true;
+                completed = true;
+                packet = new Uint8Array(0);
+                this.trace('UPLOAD_FLUSH_SILENT 100% 后未再收到 09 06，按未确认成功返回');
+                break;
+              }
               if (Date.now() > flushUntil) {
                 this.trace(`FLUSH_TIMEOUT_PROGRESS 停在 ${written}/${flushTotal}，静默超时`);
-                throw sliceError as Error;
+                const silent: ToneError = new ToneError(
+                  I18n.f('toneErr.flushAborted', [`${ToneClient.transferRate(data.length, receivedAt - started)}`]), -98);
+                silent.reason = ToneErrorReason.FLUSH_TIMEOUT;
+                throw silent;
               }
             }
           }
@@ -1427,6 +1520,10 @@ export class ToneClient {
         }
       } catch (error) {
         if (receivedAll) {
+          // 已经判定的具体结局（耳机重启 / 进度停在 X/Y）原样上抛，别被通用超时盖掉
+          if (error instanceof ToneError && (error as ToneError).reason === ToneErrorReason.FLUSH_TIMEOUT) {
+            throw error as Error;
+          }
           const flushError: ToneError = new ToneError(I18n.t('toneErr.flushTimeout'), -98);
           flushError.reason = ToneErrorReason.FLUSH_TIMEOUT;
           throw flushError;
@@ -1477,6 +1574,7 @@ export class ToneClient {
         try {
           await this.setTone(MbbSpec.TONE_CUSTOM_ID, true, before.volume, 1500, 1);
           preSelected = true;
+          this.preselected = true;
         } catch (error) {
           // 耳机对这条命令不一定回执，选中结果不影响传输，最后回读时再确认
           this.trace(`TONE_PRESELECT_IGNORED ${ToneClient.messageOf(error)}`);
@@ -1526,6 +1624,9 @@ export class ToneClient {
           throw new ToneError(I18n.t('toneErr.noAck'));
         }
         const bitmap: number = ByteUtils.byteAt(bitmapField, 0);
+        const windowAt: number = Date.now();
+        const framesOut: Uint8Array[] = [];
+        let retx: number = 0;
         for (let index = 0; index < 8; index++) {
           if (this.closed) {
             throw new CancelledError();
@@ -1533,6 +1634,7 @@ export class ToneClient {
           const at: number = offset + index * chunkSize;
           const missing: boolean = (bitmap & (1 << index)) === 0;
           if (missing && at < data.length) {
+            retx++;
             const chunk: Uint8Array = ByteUtils.slice(data, at, Math.min(at + chunkSize, data.length));
             if (protocol === 1) {
               const payload: Uint8Array = ByteUtils.concat([
@@ -1546,18 +1648,26 @@ export class ToneClient {
                 MbbProtocol.field(2, payload)]), true);
               sentChunks++;
             } else {
-              await this.send(ByteUtils.concat([
+              const parts: Uint8Array[] = MbbProtocol.frames(ByteUtils.concat([
                 ByteUtils.fromHex('0904ff'),
                 offsetField,
                 new Uint8Array([index]),
                 chunk
-              ]), true);
+              ]));
+              for (let f = 0; f < parts.length; f++) {
+                framesOut.push(parts[f]);
+              }
               sentChunks++;
             }
           }
         }
+        if (framesOut.length > 0) {
+          await this.writeFrames(framesOut);
+        }
         this.trace(`UPLOAD_CHUNKS sent=${sentChunks} offset=${offset}/${data.length} ` +
-          `elapsed=${Date.now() - started}ms`);
+          `elapsed=${Date.now() - started}ms send=${Date.now() - windowAt}ms ` +
+          `ackLag=${lastAckAt === 0 ? -1 : windowAt - lastAckAt}ms retx=${retx}`);
+        lastAckAt = Date.now();
         // 传输阶段占 8%~50%：一个分包组是 8 个 chunk，按下一次要写的偏移估算
         const sentBytes: number = Math.min(data.length, offset + chunkSize * 8);
         emit(0.08 + 0.42 * (sentBytes / data.length), I18n.t('stage.transfer'));
@@ -1572,14 +1682,21 @@ export class ToneClient {
           if (total > 0) {
             flushTotal = total;
             written = progress;
+            lastProgressAt = Date.now();
             this.trace(`UPLOAD_WRITE ${progress}/${total}`);
             // 写入阶段占 50%~95%：耳机的 total 是整包的两倍（收 + 校验写），单独一段
             emit(0.5 + 0.45 * (progress / total), I18n.t('stage.flash'));
             if (!receivedAll && progress >= data.length) {
               receivedAll = true;
+              receivedAt = Date.now();
             }
-            if (progress >= total) {
-              completed = true;
+            if (progress >= total && flushedAt === 0) {
+              // 100% 先记时刻，不立刻收工：耳机可能还要几秒才补最终 09 06
+              flushedAt = Date.now();
+              this.trace('UPLOAD_FLUSH_100 等耳机最终确认');
+              // 落盘已满，接下来只是等最终回执：进度往前顶一档，
+              // 别让界面停在 95% 上显得像卡死
+              emit(0.96, I18n.t('stage.flushing'));
             }
           }
         } else {
@@ -1599,10 +1716,16 @@ export class ToneClient {
             throw new ToneError(ToneStatusCodec.errorText(result), result);
           }
           completed = true;
+        } else if (flushedAt > 0) {
+          // 100% 之后收到的 09 06 才是最终确认；早到的那条只代表数据已收完
+          completed = true;
+          this.trace('UPLOAD_FLUSH_CONFIRMED 收到 09 06');
         } else {
           // 协议 2 的 type=6 表示整包数据已收完，耳机转入闪存擦写。
           // 擦写大包时可能几十秒不发任何进度，按普通空闲超时处理会误判失败。
           receivedAll = true;
+          receivedAt = Date.now();
+          lastProgressAt = Date.now();
           Logger.info(MODULE, `UPLOAD_RECEIVED_ALL bytes=${data.length} elapsed=${Date.now() - started}ms`);
           onProgress(shown, I18n.t('stage.flushing'));
         }
@@ -1625,7 +1748,8 @@ export class ToneClient {
 
     const elapsed: number = Date.now() - started;
     Logger.info(MODULE, `UPLOAD_DONE bytes=${data.length} elapsed=${elapsed}ms ` +
-      `rate=${Math.round(data.length / Math.max(1, elapsed))}KB/s chunk=${this.writeChunk}`);
+      `rate=${Math.round(data.length / Math.max(1, elapsed))}KB/s chunk=${this.writeChunk} ` +
+      `confirm=${this.flushUnconfirmed ? 'silent' : '09 06'}`);
     emit(0.97, I18n.t('stage.apply'));
     /**
      * 目标槽位在传输开始前就已经选中，所以这里只是「尽力确认」，不再是成败门槛：
@@ -1713,6 +1837,7 @@ export class ToneClient {
     this.retiredAt = Date.now();
     this.transferring = false;
     ToneClient.settleUntil = Date.now() + MbbSpec.SESSION_SETTLE_MS;
+    // 音频一直没断开（系统不让断）时不能拿「音频自己回来」当擦写完的信号
     ToneClient.settleAudioWasDown = !this.audioLinked(this.address);
     Logger.info(MODULE, `TONE_SETTLED settle=${MbbSpec.SESSION_SETTLE_MS}ms ` +
       `audioDown=${ToneClient.settleAudioWasDown}`);
@@ -1762,6 +1887,14 @@ export class ToneClient {
       return min;
     }
     return Math.max(min, Math.min(max, value));
+  }
+
+  /** 数据阶段的实测速率（KB/s，整数）：放进错误提示，用户一眼能看出是不是链路慢 */
+  private static transferRate(bytes: number, ms: number): number {
+    if (ms <= 0) {
+      return 0;
+    }
+    return Math.max(1, Math.round(bytes / ms));
   }
 
   private closeSocket(): void {
