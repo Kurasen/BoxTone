@@ -329,8 +329,14 @@ export class MbbSpec {
   static readonly CONNECT_ATTEMPTS_PER_MODE: number = 1;
   /** 关掉串口后留给耳机收尾的时间 */
   static readonly SOCKET_SETTLE_MS: number = 1200;
-  /** 连上后等耳机主动开口的时间 */
-  static readonly LINK_READY_TIMEOUT_MS: number = 1500;
+  /**
+   * 连上后等耳机主动开口的时间。
+   *
+   * 真机上耳机一旦可用，连接后 23~31ms 就会推状态包；而「连上但一声不吭」的连接
+   * 是 ACL 还没收敛时的半死通道（14:53 那轮等了 1502ms 才判定，白耗 1.5 秒）。
+   * 600ms 对正常通道仍有近 20 倍余量，判死后换一种通道重连只要 0.3 秒。
+   */
+  static readonly LINK_READY_TIMEOUT_MS: number = 600;
   /** 耳机收掉通道后的冷却时间 */
   static readonly LINK_COOLDOWN_MS: number = 15000;
   /**

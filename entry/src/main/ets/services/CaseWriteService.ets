@@ -83,6 +83,13 @@ export class CaseWriteService {
   private static restoreTimer: number = -1;
   /** 是否有写入正在进行：期间不能再让音频连回来 */
   private static writing: boolean = false;
+  /**
+   * 上一次通过前置检查的目标设备。
+   * 刚写完音效时我们主动恢复音频，A2DP 会经历 state=0 → 1 → 2 的空档，
+   * 这段时间 getConnectedDevices 为空、系统虚拟化地址还可能让配对表出现重复项，
+   * 用户连点两次都会被判「未连接到耳机」。用上一次的设备兜底即可。
+   */
+  private static lastDeviceId: string = '';
 
   /** 写入前置检查：音效规格 + 文件 + 耳机连接状态 */
   public static check(entry: ToneEntry): WriteCheck {
@@ -144,6 +151,12 @@ export class CaseWriteService {
           CaseWriteService.nearLinkHint(snapshot.nearLinkName));
       }
       deviceId = BluetoothService.pairedAudioId();
+      // 音频正在连回来的空档里两台兜底都可能取不到；上一次写过的设备仍在配对表就沿用
+      if (deviceId.length === 0 && CaseWriteService.lastDeviceId.length > 0 &&
+        CaseWriteService.isPaired(snapshot, CaseWriteService.lastDeviceId)) {
+        deviceId = CaseWriteService.lastDeviceId;
+        Logger.info(MODULE, `前置检查沿用上一次的设备 ${FormatUtils.maskAddress(deviceId)}`);
+      }
     }
     if (deviceId.length === 0) {
       return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.noEarbud'));
@@ -163,6 +176,7 @@ export class CaseWriteService {
     }
     // 型号来自固件，改名不影响；名称只在型号未识别时兜底。未命中只提醒，协议探测才是门槛
     const warn: string = CaseWriteService.compatWarn(deviceId, snapshot.activeName);
+    CaseWriteService.lastDeviceId = deviceId;
 
     const ok: WriteCheck = {
       ok: true,
@@ -177,6 +191,17 @@ export class CaseWriteService {
   private static checkFail(code: number, message: string): WriteCheck {
     const check: WriteCheck = { ok: false, code: code, message: message, warn: '', deviceId: '' };
     return check;
+  }
+
+  /** 地址是否仍在配对表里（系统返回的大小写不一致，按忽略大小写比较） */
+  private static isPaired(snapshot: BtSnapshot, address: string): boolean {
+    const target: string = address.toUpperCase();
+    for (let i = 0; i < snapshot.pairedDevices.length; i++) {
+      if (snapshot.pairedDevices[i].deviceId.toUpperCase() === target) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** 未收录机型用中性串口提示，避免把非华为耳机误判成智慧音频占用 */

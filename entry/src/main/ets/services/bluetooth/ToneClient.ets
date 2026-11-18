@@ -621,7 +621,6 @@ export class ToneClient {
             }
             this.clientSocket = id;
             this.secureLink = modes[mode];
-            ToneClient.secureCache.set(address, modes[mode]);
             this.bindReader(id);
             this.resolveWriteChunk();
             this.trace(`CONNECTED id=${id} secure=${modes[mode]} chunk=${this.writeChunk} ` +
@@ -645,6 +644,9 @@ export class ToneClient {
               }
               throw new ToneError(I18n.t('toneErr.silentReconnect'));
             }
+            // 只记「真的能用」的通道：14:53 那轮 secure=false 连上了却一声不吭，
+            // 把它当成成功模式缓存下来会误导后续轮次
+            ToneClient.secureCache.set(address, modes[mode]);
             this.startKeepAlive();
             return;
           } catch (error) {
