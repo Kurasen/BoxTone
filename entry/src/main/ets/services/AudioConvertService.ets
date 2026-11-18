@@ -195,8 +195,8 @@ export class AudioConvertService {
     const shaped: Float32Array = AudioConvertService.applyGainAndFade(resampled,
       options.gainDb, options.fadeInMs, options.fadeOutMs);
 
-    // 硬性限制规格上限
-    const maxFrames: number = ToneSpec.SAMPLE_RATE * ToneSpec.MAX_SECONDS;
+    // 硬性限制规格上限：按字节上限换算帧数，避免时长与字节两个口径打架
+    const maxFrames: number = Math.floor(ToneSpec.MAX_BYTES / ToneSpec.BYTES_PER_FRAME);
     let finalSamples: Float32Array = shaped;
     let trimmed: boolean = false;
     if (shaped.length > maxFrames) {

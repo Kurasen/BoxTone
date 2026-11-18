@@ -672,6 +672,14 @@ export struct TonePage {
         .fontSize(10)
         .fontColor(Palette.TEXT_TERTIARY)
         .margin({ top: 8 })
+
+      if (this.durationMs > ToneSpec.SAFE_SECONDS * 1000) {
+        Text(I18n.f('tone.longToneWarn', [`${ToneSpec.SAFE_SECONDS}`]))
+          .fontSize(10)
+          .fontColor(Palette.WARNING)
+          .lineHeight(16)
+          .margin({ top: 6 })
+      }
     }
   }
 

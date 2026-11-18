@@ -116,6 +116,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'tone.outputSize': '输出大小',
   'tone.byteCount': '{0} 字节',
   'tone.sizeRule': '1 秒 = {0} 字节，上限 {1} 秒 / {2} 字节',
+  'tone.longToneWarn': '超过 {0} 秒属于实验特性：长包在部分固件上可能擦写失败，' +
+    '遇到失败时裁剪到 {0} 秒以内再试',
   'tone.saveButton': '生成并保存到音效库',
   'tone.exportButton': '导出 RAW 文件',
   'tone.writeHint': '写入只需在「音效库」点写入：双耳入盒开盖，通过蓝牙直接下发到充电盒',
@@ -724,6 +726,8 @@ export const EN_STRINGS: Record<string, string> = {
   'tone.outputSize': 'Output size',
   'tone.byteCount': '{0} bytes',
   'tone.sizeRule': '1 s = {0} bytes · limit {1} s / {2} bytes',
+  'tone.longToneWarn': 'Tones longer than {0} s are experimental: some firmware may fail while ' +
+    'writing flash. If that happens, trim to {0} s or less and retry.',
   'tone.saveButton': 'Generate and save to library',
   'tone.exportButton': 'Export RAW file',
   'tone.writeHint': 'To flash, open the Library and tap Write with both earbuds in the case and the lid open. Data is sent over Bluetooth.',

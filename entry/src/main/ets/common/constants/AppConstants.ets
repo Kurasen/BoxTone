@@ -16,10 +16,22 @@ export class ToneSpec {
   static readonly BYTES_PER_FRAME: number = 2;
   /** 每秒字节数 = 16700 * 2 = 33400 */
   static readonly BYTES_PER_SECOND: number = 33400;
-  /** 充电盒可接受的时长上限（秒）：实测 5 秒包能传完但盒端写闪存会停在半途，2 秒在安全范围内 */
-  static readonly MAX_SECONDS: number = 2;
-  /** 对应字节上限 66800 */
-  static readonly MAX_BYTES: number = 66800;
+  /**
+   * 充电盒可接受的字节上限：192000（盒端缓冲区大小，与 OpenFreebuds 的参数一致）。
+   *
+   * 旧版一度压到 66800（2 秒），注释写的是「5 秒包能传完但盒端写闪存会停在半途」。
+   * 复查后确认那是旧写入流程的副作用：它会在 16 秒后把 A2DP 连回来，
+   * 而 5 秒包从传输到擦写完恰好跨过这个时间点，擦写被掐断。
+   * 现在恢复逻辑只在成功后触发、且音频已连上就跳过，这条上限可以还原成硬件真实值。
+   */
+  static readonly MAX_BYTES: number = 192000;
+  /** 对应时长 192000 / 33400 ≈ 5.74 秒，取 5.7 便于展示与裁剪 */
+  static readonly MAX_SECONDS: number = 5.7;
+  /**
+   * 实测稳定区间上限：超过这个时长在部分固件上仍可能擦写失败，
+   * 界面据此给出「实验特性」提醒，不拦截。
+   */
+  static readonly SAFE_SECONDS: number = 2;
   /** 时长下限（秒），过短会被盒端忽略 */
   static readonly MIN_SECONDS: number = 0.2;
   /** 可选采样率列表（导入 RAW 时使用） */
