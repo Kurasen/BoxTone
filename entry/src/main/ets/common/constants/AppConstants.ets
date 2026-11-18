@@ -357,8 +357,17 @@ export class MbbSpec {
    * 不再固定 sleep：真机上 A2DP 掉链约 300~800ms，轮询能在掉下去的那一刻就往下走。
    */
   static readonly AUDIO_DROP_WAIT_MS: number = 2600;
-  /** A2DP 掉链到能建串口之间的余量（ACL 拆链还没彻底收敛时会拿到 -1） */
-  static readonly AUDIO_SETTLE_MS: number = 500;
+  /**
+   * A2DP 掉链到能建串口之间的余量。
+   *
+   * 「A2DP profile 已断开」不等于「ACL 已拆完」：真机上把这一枪发在断开后 500ms，
+   * 要么被回 2900099（协议栈直接拒，51ms）、要么拿到一个连得上却不吭声的半死 socket
+   * （14:53 那轮 1406ms 连上、之后 1.5 秒零回包）。
+   * 把多轮日志按「断开音频 → 连接成功」对齐，**每一次成功都发生在 1000ms 之后**
+   * （1051ms / 1690ms / 2177ms…），没有一次是 500ms 那一枪打中的。
+   * 所以这里等到 1 秒再发第一枪：宁可多等 0.5 秒，也别白打一枪（0.05~1.4 秒）再补一次。
+   */
+  static readonly AUDIO_SETTLE_MS: number = 1000;
 
   /** 普通命令回执超时 */
   static readonly ACK_TIMEOUT_MS: number = 3000;
