@@ -303,8 +303,9 @@ export class CaseWriteService {
               stage = I18n.t('write.stageReconnect');
             } else if (settling > 0) {
               // 刚写完上一条时耳机要擦闪存，这段静默常有 10 秒以上；
-              // 显示成「连接耳机」会让用户以为卡在建链上，其实是耳机在收尾
-              stage = I18n.t('write.stageWaitFlash');
+              // 显示成「连接耳机」会让用户以为卡在建链上，其实是耳机在收尾。
+              // 把剩余秒数带上，用户知道要等多久，而不是以为卡住了
+              stage = I18n.f('write.stageWaitFlash', [`${Math.max(1, Math.ceil(settling / 1000))}`]);
             } else if (cooling > 0) {
               stage = I18n.t('write.stageWaitReady');
             }

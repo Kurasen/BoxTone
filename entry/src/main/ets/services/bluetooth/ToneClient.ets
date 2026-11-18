@@ -1395,11 +1395,19 @@ export class ToneClient {
         throw error as Error;
       }
       if (audioRestarted) {
-        // 音频被耳机拉回来 = 它认为这一包已经处理完，不会再补发擦写进度。
-        // 但拿不到「100%」这个回执，就不能替用户声明成功，如实给出可执行的提示
+        /**
+         * 音频被耳机拉回来 = 它已经把这包处理完，不会再补发擦写进度。
+         *
+         * 参考实现（OpenFreebuds）在擦写阶段根本不要求 100% 回执：
+         * 收到 09 06 或「一段时间内没有新包」就直接往下走，补发选中命令后以回读为准。
+         * 我们原来的判据是「written 必须等于 2×包长」，长音效永远等不到，于是必然失败。
+         * 这里改成把结果标成「数据已落盘、只差选中」，交给上层重连补选并回读确认。
+         */
         this.trace('FLUSH_AUDIO_BACK 耳机已重启音频，未再回报擦写进度');
+        // 这条 socket 已经没用了：标记 broken 让 release() 直接关掉，别把死会话留在池子里
+        this.broken = true;
         const unconfirmed: ToneError = new ToneError(I18n.t('toneErr.flushUnconfirmed'), -98);
-        unconfirmed.reason = ToneErrorReason.FLUSH_TIMEOUT;
+        unconfirmed.reason = ToneErrorReason.DATA_WRITTEN;
         throw unconfirmed;
       }
       const fields: Map<number, Uint8Array> = MbbProtocol.tlv(packet);

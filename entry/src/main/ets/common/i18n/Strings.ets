@@ -475,7 +475,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'write.nearLinkFallbackName': '耳机',
   'write.stageReconnect': '重新连接耳机',
   'write.stageWaitReady': '等待耳机就绪',
-  'write.stageWaitFlash': '等待耳机完成上一次写入',
+  'write.stageWaitFlash': '等待耳机完成上一次写入（约 {0} 秒）',
   'write.stageConnect': '连接耳机',
   'write.success': '已写入耳机盒。合盖 3 秒再开盖即可听到新音效；' +
     '换下一段音效前也请先合盖再开盖，让耳机把上一段写完',
@@ -1082,7 +1082,7 @@ export const EN_STRINGS: Record<string, string> = {
   'write.nearLinkFallbackName': 'The earbuds',
   'write.stageReconnect': 'Reconnecting',
   'write.stageWaitReady': 'Waiting for earbuds',
-  'write.stageWaitFlash': 'Waiting for the earbuds to finish the last write',
+  'write.stageWaitFlash': 'Waiting for the earbuds to finish the last write (~{0}s)',
   'write.stageConnect': 'Connecting',
   'write.success': 'Written to the charging case. Close the lid for 3 seconds, then open it to hear the new tone. ' +
     'Before writing another tone, close and reopen the lid so the earbuds can finish the previous one.',
