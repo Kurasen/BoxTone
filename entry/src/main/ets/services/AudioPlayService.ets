@@ -4,6 +4,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ToneSpec } from '../common/constants/AppConstants';
 import { Logger } from '../common/utils/Logger';
+import { PcmAudio } from '../models/ToneModel';
 import { AudioConvertService } from './AudioConvertService';
 
 const MODULE: string = 'AudioPlay';
@@ -33,6 +34,9 @@ export class AudioPlayService {
   /** 上一次升采样用的 PCM 与其 48kHz 结果：同一段音效重复试听不再重采样 */
   private static previewSource: ArrayBuffer | undefined = undefined;
   private static previewOutput: ArrayBuffer | undefined = undefined;
+  /** 短音试听使用 duck 焦点：压低后台音乐，播完自动恢复 */
+  private static sessionManager: audio.AudioSessionManager | undefined = undefined;
+  private static sessionActive: boolean = false;
 
   public static isPlaying(): boolean {
     return AudioPlayService.playing;
@@ -42,9 +46,53 @@ export class AudioPlayService {
     return AudioPlayService.renderer !== undefined;
   }
 
+  /**
+   * 短音、瞬态音使用 duck 焦点：后台音乐/听书短暂压低，播完自动恢复。
+   * duck 不可用时退回 share（并发播放），避免直接打断其他音频。
+   */
+  private static async beginSession(): Promise<void> {
+    if (AudioPlayService.sessionActive) {
+      return;
+    }
+    try {
+      if (AudioPlayService.sessionManager === undefined) {
+        AudioPlayService.sessionManager = audio.getAudioManager().getSessionManager();
+      }
+      try {
+        await AudioPlayService.sessionManager.activateAudioSession({
+          concurrencyMode: audio.AudioConcurrencyMode.CONCURRENCY_DUCK_OTHERS
+        });
+      } catch (duckError) {
+        Logger.warn(MODULE, `duck 焦点申请失败 code=${(duckError as BusinessError).code}，改用 share`);
+        await AudioPlayService.sessionManager.activateAudioSession({
+          concurrencyMode: audio.AudioConcurrencyMode.CONCURRENCY_MIX_WITH_OTHERS
+        });
+      }
+      AudioPlayService.sessionActive = true;
+      Logger.info(MODULE, '试听音频焦点已申请');
+    } catch (error) {
+      Logger.warn(MODULE, `申请音频焦点失败 code=${(error as BusinessError).code}`);
+    }
+  }
+
+  /** 释放短音焦点，让被压低的背景音频恢复 */
+  private static async endSession(): Promise<void> {
+    if (!AudioPlayService.sessionActive || AudioPlayService.sessionManager === undefined) {
+      return;
+    }
+    AudioPlayService.sessionActive = false;
+    try {
+      await AudioPlayService.sessionManager.deactivateAudioSession();
+      Logger.info(MODULE, '试听音频焦点已释放');
+    } catch (error) {
+      Logger.warn(MODULE, `释放音频焦点失败 code=${(error as BusinessError).code}`);
+    }
+  }
+
   /** 播放音频文件 */
   public static async playFile(path: string, onEnd: () => void): Promise<void> {
     await AudioPlayService.stop();
+    await AudioPlayService.beginSession();
     AudioPlayService.playing = true;
     try {
       const file: fs.File = fs.openSync(path, fs.OpenMode.READ_ONLY);
@@ -63,19 +111,24 @@ export class AudioPlayService {
           });
         } else if (state === 'completed') {
           AudioPlayService.playing = false;
-          onEnd();
+          AudioPlayService.endSession().then(() => {
+            onEnd();
+          });
         }
       });
       player.on('error', (error: BusinessError) => {
         Logger.exception(MODULE, 'AVPlayer 异常', error);
         AudioPlayService.playing = false;
-        onEnd();
+        AudioPlayService.endSession().then(() => {
+          onEnd();
+        });
       });
 
       player.url = `fd://${file.fd}`;
       Logger.info(MODULE, `开始播放源文件 ${path}`);
     } catch (error) {
       AudioPlayService.playing = false;
+      await AudioPlayService.endSession();
       Logger.exception(MODULE, '打开音频失败', error as BusinessError);
       throw error as Error;
     }
@@ -96,22 +149,41 @@ export class AudioPlayService {
    */
   public static async playRaw(buffer: ArrayBuffer, onEnd: () => void): Promise<void> {
     await AudioPlayService.stop();
+    let output: ArrayBuffer;
+    if (AudioPlayService.previewSource === buffer && AudioPlayService.previewOutput !== undefined) {
+      output = AudioPlayService.previewOutput;
+    } else {
+      const pcm: Float32Array = AudioConvertService.decodeInt16(buffer);
+      const upsampled: Float32Array =
+        AudioConvertService.resample(pcm, ToneSpec.SAMPLE_RATE, PREVIEW_RATE);
+      output = AudioConvertService.encodeInt16(upsampled);
+      AudioPlayService.previewSource = buffer;
+      AudioPlayService.previewOutput = output;
+    }
+    await AudioPlayService.playEncoded(output, onEnd);
+  }
+
+  /**
+   * 播放素材的原始 PCM（内置音色的“原声”）。
+   * 内置音色以 48kHz 合成，这里按原始采样率渲染，不做 16700Hz 盒音转换。
+   */
+  public static async playSourcePcm(source: PcmAudio, onEnd: () => void): Promise<void> {
+    await AudioPlayService.stop();
+    const mono: Float32Array = AudioConvertService.toMono(source);
+    const atPreview: Float32Array = source.sampleRate === PREVIEW_RATE
+      ? mono : AudioConvertService.resample(mono, source.sampleRate, PREVIEW_RATE);
+    const output: ArrayBuffer = AudioConvertService.encodeInt16(atPreview);
+    await AudioPlayService.playEncoded(output, onEnd);
+  }
+
+  /** 统一播放已编码的 48kHz 单声道 16bit PCM */
+  private static async playEncoded(output: ArrayBuffer, onEnd: () => void): Promise<void> {
     const token: number = await AudioPlayService.beginPlayback();
     try {
-      let output: ArrayBuffer;
-      if (AudioPlayService.previewSource === buffer && AudioPlayService.previewOutput !== undefined) {
-        output = AudioPlayService.previewOutput;
-      } else {
-        const pcm: Float32Array = AudioConvertService.decodeInt16(buffer);
-        const upsampled: Float32Array =
-          AudioConvertService.resample(pcm, ToneSpec.SAMPLE_RATE, PREVIEW_RATE);
-        output = AudioConvertService.encodeInt16(upsampled);
-        AudioPlayService.previewSource = buffer;
-        AudioPlayService.previewOutput = output;
-      }
       if (token !== AudioPlayService.generation) {
         return;
       }
+      await AudioPlayService.beginSession();
 
       const renderer: audio.AudioRenderer = await AudioPlayService.ensureRenderer();
       if (token !== AudioPlayService.generation) {
@@ -137,9 +209,12 @@ export class AudioPlayService {
             restarted = true;
             try {
               await renderer.start();
-              Logger.warn(MODULE, '盒音渲染器意外停止，已重新启动');
+              Logger.warn(MODULE, '试听渲染器意外停止，已重新启动');
             } catch (error) {
               Logger.warn(MODULE, `重启渲染器失败 code=${(error as BusinessError).code}`);
+              // 渲染器状态已经不可恢复：释放掉，下一轮试听重新创建
+              AudioPlayService.releaseRenderer();
+              break;
             }
           }
           if (stalls > 50) {
@@ -155,9 +230,15 @@ export class AudioPlayService {
         return;
       }
       if (written < total) {
-        Logger.warn(MODULE, `盒音试听未写完 ${written}/${total} 字节`);
+        const missing: number = total - written;
+        if (missing > 4) {
+          Logger.warn(MODULE, `试听未写完 ${written}/${total} 字节`);
+        } else {
+          // 尾部一两个采样点没写进去听不出来，渲染器停止时不必按异常刷日志
+          Logger.info(MODULE, `试听写入完成，尾部 ${missing} 字节跳过`);
+        }
       } else {
-        Logger.info(MODULE, `盒音试听写入 ${written}/${total} 字节`);
+        Logger.info(MODULE, `试听写入 ${written}/${total} 字节`);
       }
       /**
        * write 只是把数据塞进渲染缓冲，立刻 stop 会把还没播完的尾巴切掉。
@@ -170,12 +251,14 @@ export class AudioPlayService {
         return;
       }
       AudioPlayService.playing = false;
+      await AudioPlayService.endSession();
       await AudioPlayService.quietRenderer();
       onEnd();
     } catch (error) {
       if (token === AudioPlayService.generation) {
         AudioPlayService.playing = false;
-        Logger.exception(MODULE, '盒音试听失败', error as BusinessError);
+        Logger.exception(MODULE, '试听失败', error as BusinessError);
+        await AudioPlayService.endSession();
         await AudioPlayService.quietRenderer();
         onEnd();
       }
@@ -291,6 +374,7 @@ export class AudioPlayService {
         Logger.exception(MODULE, '关闭文件失败', error as BusinessError);
       }
     }
+    await AudioPlayService.endSession();
     AudioPlayService.scheduleIdleRelease();
   }
 

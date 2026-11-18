@@ -10,7 +10,9 @@ import { AppBackdrop } from '../components/AppBackdrop';
 import { GhostButton } from '../components/GhostButton';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { BluetoothService } from '../services/BluetoothService';
-import { DemoService } from '../services/DemoService';
+import { AppBootstrap } from '../services/AppBootstrap';
+import { PrivacyConsentService } from '../services/PrivacyConsentService';
+import { PrivacyLinkService } from '../services/PrivacyLinkService';
 import { DevicePage } from './main/DevicePage';
 import { LibraryPage } from './main/LibraryPage';
 import { TonePage } from './main/TonePage';
@@ -45,8 +47,7 @@ struct Index {
   @State showChangelog: boolean = false;
   @State feedbackStep: number = 0;
   @State busyText: string = '';
-  @State demoActive: boolean = false;
-  @State showDemoGuide: boolean = false;
+  @State privacyReady: boolean = false;
   private tabsController: HdsTabsController = new HdsTabsController();
   private logHandler: SimpleHandler | undefined = undefined;
   private feedbackHandler: SimpleHandler | undefined = undefined;
@@ -57,33 +58,39 @@ struct Index {
 
   aboutToAppear(): void {
     this.measureInsets();
-    this.demoActive = DemoService.isActive();
-    this.showDemoGuide = DemoService.shouldShowGuide();
+    this.privacyReady = AppBootstrap.isInitialized();
     this.logHandler = (): void => {
-      this.showLog = true;
+      this.animateOverlay((): void => {
+        this.showLog = true;
+      });
     };
     EventBus.on(AppEvent.OPEN_LOG, this.logHandler);
     this.feedbackHandler = (): void => {
-      this.feedbackStep = 0;
-      this.showFeedback = true;
+      this.animateOverlay((): void => {
+        this.feedbackStep = 0;
+        this.showFeedback = true;
+      });
     };
     EventBus.on(AppEvent.OPEN_FEEDBACK, this.feedbackHandler);
     this.supportHandler = (): void => {
-      this.showDeviceSupport = true;
+      this.animateOverlay((): void => {
+        this.showDeviceSupport = true;
+      });
     };
     EventBus.on(AppEvent.OPEN_DEVICE_SUPPORT, this.supportHandler);
     this.changelogHandler = (): void => {
-      this.showChangelog = true;
+      this.animateOverlay((): void => {
+        this.showChangelog = true;
+      });
     };
     EventBus.on(AppEvent.OPEN_CHANGELOG, this.changelogHandler);
     this.busyHandler = (text: string): void => {
       this.busyText = text;
     };
     EventBus.onText(AppEvent.BUSY_CHANGED, this.busyHandler);
-    // 托管弹窗可能在页面构建之后才被同意，届时补读演示状态
+    // 托管弹窗可能在页面构建之后才被同意
     this.privacyHandler = (): void => {
-      this.demoActive = DemoService.isActive();
-      this.showDemoGuide = DemoService.shouldShowGuide();
+      this.privacyReady = true;
     };
     EventBus.on(AppEvent.PRIVACY_READY, this.privacyHandler);
   }
@@ -115,34 +122,47 @@ struct Index {
     }
   }
 
+  /** 显式动画上下文：条件渲染的 transition 只有在 animateTo 里改状态才会播放位移 */
+  private animateOverlay(update: () => void): void {
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, update);
+  }
+
   /** 侧滑返回：日志/反馈都是 Stack 里的浮层，没有路由可退，先关浮层而不是退出应用 */
   onBackPress(): boolean {
-    // 首次引导必须明确选择，避免误触侧滑跳过
-    if (this.showDemoGuide) {
-      return true;
+    // 未同意隐私声明时没有业务页面可退，直接允许系统退出
+    if (!this.privacyReady) {
+      return false;
     }
     // 全屏遮罩期间手势也吃掉，避免把正在进行的工作连同应用一起退掉
     if (this.busyText.length > 0) {
       return true;
     }
     if (this.showChangelog) {
-      this.showChangelog = false;
+      this.animateOverlay((): void => {
+        this.showChangelog = false;
+      });
       return true;
     }
     if (this.showFeedback) {
       if (this.feedbackStep !== 0) {
         this.feedbackStep = 0;
       } else {
-        this.showFeedback = false;
+        this.animateOverlay((): void => {
+          this.showFeedback = false;
+        });
       }
       return true;
     }
     if (this.showLog) {
-      this.showLog = false;
+      this.animateOverlay((): void => {
+        this.showLog = false;
+      });
       return true;
     }
     if (this.showDeviceSupport) {
-      this.showDeviceSupport = false;
+      this.animateOverlay((): void => {
+        this.showDeviceSupport = false;
+      });
       return true;
     }
     return false;
@@ -170,8 +190,9 @@ struct Index {
     Stack({ alignContent: Alignment.TopStart }) {
       AppBackdrop()
 
-      Column() {
-        HdsTabs({ controller: this.tabsController }) {
+      if (this.privacyReady) {
+        Column() {
+          HdsTabs({ controller: this.tabsController }) {
           TabContent() {
             DevicePage()
           }
@@ -231,16 +252,21 @@ struct Index {
         .barHeight(58)
         .width('100%')
         .height('100%')
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ top: this.topInset })
+      } else {
+        this.buildPrivacyGate()
       }
-      .width('100%')
-      .height('100%')
-      .padding({ top: this.topInset })
 
       if (this.showLog) {
         LogPage({
           topInset: this.topInset,
           onClose: (): void => {
-            this.showLog = false;
+            this.animateOverlay((): void => {
+              this.showLog = false;
+            });
           }
         })
           .width('100%')
@@ -255,7 +281,9 @@ struct Index {
           topInset: this.topInset,
           step: $feedbackStep,
           onClose: (): void => {
-            this.showFeedback = false;
+            this.animateOverlay((): void => {
+              this.showFeedback = false;
+            });
           }
         })
           .width('100%')
@@ -269,7 +297,9 @@ struct Index {
         SupportedDevicesPage({
           topInset: this.topInset,
           onClose: (): void => {
-            this.showDeviceSupport = false;
+            this.animateOverlay((): void => {
+              this.showDeviceSupport = false;
+            });
           }
         })
           .width('100%')
@@ -283,7 +313,9 @@ struct Index {
         ChangelogPage({
           topInset: this.topInset,
           onClose: (): void => {
-            this.showChangelog = false;
+            this.animateOverlay((): void => {
+              this.showChangelog = false;
+            });
           }
         })
           .width('100%')
@@ -313,144 +345,104 @@ struct Index {
         })
         .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
       }
-
-      if (this.demoActive) {
-        this.buildDemoBadge()
-      }
-
-      if (this.showDemoGuide) {
-        this.buildDemoGuide()
-      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(Palette.BG_TOP)
   }
 
-  private startDemo(): void {
-    DemoService.markGuideSeen();
-    DemoService.setActive(true);
-    this.demoActive = true;
-    this.showDemoGuide = false;
-    BluetoothService.refresh().catch((error: BusinessError) => {
-      Logger.warn(MODULE, '刷新演示设备状态失败');
-    });
-  }
-
-  private skipDemoGuide(): void {
-    DemoService.markGuideSeen();
-    this.showDemoGuide = false;
-  }
-
-  private confirmExitDemo(): void {
-    this.getUIContext().showAlertDialog({
-      title: I18n.t('index.demo.exitTitle'),
-      message: I18n.t('index.demo.exitMessage'),
-      primaryButton: {
-        value: I18n.t('index.demo.keep'),
-        action: (): void => {
-        }
-      },
-      secondaryButton: {
-        value: I18n.t('index.demo.exit'),
-        fontColor: Palette.DANGER,
-        action: (): void => {
-          DemoService.setActive(false);
-          this.demoActive = false;
-          BluetoothService.refresh().catch((error: BusinessError) => {
-            Logger.warn(MODULE, '刷新设备状态失败');
-          });
-        }
-      }
-    });
-  }
-
-  /** 演示模式常驻小标：让审核员和用户始终清楚当前是模拟设备 */
   @Builder
-  buildDemoBadge() {
-    Column() {
-      Row({ space: 8 }) {
-        Text(I18n.t('index.demo.badge'))
-          .fontSize(11)
-          .fontColor(Palette.ACCENT)
-        Text(I18n.t('index.demo.exit'))
-          .fontSize(11)
+  buildPrivacyGate() {
+    Column({ space: 16 }) {
+      Image($r('app.media.app_icon'))
+        .width(76)
+        .height(76)
+        .borderRadius(20)
+
+      Column({ space: 8 }) {
+        Text(I18n.t('app.name'))
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Palette.TEXT_PRIMARY)
+        Text(I18n.t('privacy.gateBody'))
+          .fontSize(13)
           .fontColor(Palette.TEXT_SECONDARY)
+          .textAlign(TextAlign.Center)
+          .lineHeight(20)
       }
-      .padding({ left: 14, right: 14, top: 7, bottom: 7 })
-      .borderRadius(999)
-      .backgroundColor('rgba(78, 216, 255, 0.14)')
-      .border({ width: 1, color: 'rgba(78, 216, 255, 0.3)' })
-      .onClick(() => {
-        this.confirmExitDemo();
+      .width('100%')
+
+      Text(I18n.t('privacy.viewStatement'))
+        .fontSize(12)
+        .fontColor(Palette.ACCENT_TEXT)
+        .onClick(() => {
+          this.openPrivacyStatement();
+        })
+
+      PrimaryButton({
+        btnLabel: I18n.t('privacy.consent'),
+        btnEnabled: true,
+        btnLoading: false,
+        onTap: (): void => {
+          this.requestPrivacyConsent();
+        }
+      })
+        .width('100%')
+        .margin({ top: 6 })
+
+      GhostButton({
+        ghostLabel: I18n.t('privacy.exit'),
+        onTap: (): void => {
+          this.exitApp();
+        }
       })
     }
     .width('100%')
     .height('100%')
-    .alignItems(HorizontalAlign.Center)
-    .justifyContent(FlexAlign.End)
-    .padding({ bottom: this.naviIndicatorHeight + 100 })
-    .hitTestBehavior(HitTestMode.Transparent)
-    .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
+    .justifyContent(FlexAlign.Center)
+    .padding({
+      left: 32,
+      right: 32,
+      top: this.topInset,
+      bottom: this.naviIndicatorHeight + 24
+    })
   }
 
-  @Builder
-  buildDemoGuide() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('rgba(5, 8, 14, 0.86)')
-        .onClick(() => {
-        })
+  private toast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 });
+  }
 
-      Column({ space: 14 }) {
-        Row({ space: 8 }) {
-          Image($r('app.media.ic_sparkle'))
-            .width(18)
-            .height(18)
-            .fillColor(Palette.ACCENT)
-          Text(I18n.t('index.demo.guideTitle'))
-            .fontSize(19)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(Palette.TEXT_PRIMARY)
-        }
-        .width('100%')
-
-        Text(I18n.t('index.demo.guideBody'))
-          .fontSize(12)
-          .fontColor(Palette.TEXT_SECONDARY)
-          .lineHeight(19)
-          .width('100%')
-
-        Row({ space: 10 }) {
-          GhostButton({
-            ghostLabel: I18n.t('index.demo.useDirectly'),
-            onTap: (): void => {
-              this.skipDemoGuide();
-            }
-          })
-            .layoutWeight(1)
-          PrimaryButton({
-            btnLabel: I18n.t('index.demo.start'),
-            onTap: (): void => {
-              this.startDemo();
-            }
-          })
-            .layoutWeight(1)
-        }
-        .width('100%')
+  private openPrivacyStatement(): void {
+    const context: common.UIAbilityContext =
+      this.getUIContext().getHostContext() as common.UIAbilityContext;
+    PrivacyLinkService.open(context).then((opened: boolean) => {
+      if (!opened) {
+        this.toast(I18n.t('profile.privacyUnavailable'));
       }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 20, bottom: 28 })
-      .borderRadius({ topLeft: 24, topRight: 24 })
-      .backgroundColor(Palette.BG_END)
-      .border({ width: 1, color: Palette.STROKE })
-    }
-    .width('100%')
-    .height('100%')
+    });
   }
 
+  private async requestPrivacyConsent(): Promise<void> {
+    const context: common.UIAbilityContext =
+      this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      const agreed: boolean = await PrivacyConsentService.requestConsent(context);
+      if (!agreed) {
+        this.toast(I18n.t('privacy.consentRequired'));
+      }
+    } catch (error) {
+      Logger.exception(MODULE, '拉起系统隐私弹窗失败', error as BusinessError);
+      this.toast(I18n.t('privacy.consentFailed'));
+    }
+  }
+
+  private exitApp(): void {
+    const context: common.UIAbilityContext =
+      this.getUIContext().getHostContext() as common.UIAbilityContext;
+    context.terminateSelf().catch((error: BusinessError) => {
+      Logger.warn(MODULE, `退出应用失败 code=${error.code}`);
+    });
+  }
 
   @Builder
   tabItem(index: number, tabLabel: string, tabIcon: Resource) {
@@ -458,7 +450,7 @@ struct Index {
       Image(tabIcon)
         .width(20)
         .height(20)
-        .fillColor(this.activeIndex === index ? Palette.ACCENT : Palette.TEXT_TERTIARY)
+        .fillColor(this.activeIndex === index ? Palette.ACCENT_TEXT : Palette.TEXT_TERTIARY)
         .scale({
           x: this.activeIndex === index ? 1.08 : 1.0,
           y: this.activeIndex === index ? 1.08 : 1.0
@@ -468,7 +460,7 @@ struct Index {
       Text(tabLabel)
         .fontSize(10)
         .fontWeight(this.activeIndex === index ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.activeIndex === index ? Palette.ACCENT : Palette.TEXT_TERTIARY)
+        .fontColor(this.activeIndex === index ? Palette.ACCENT_TEXT : Palette.TEXT_TERTIARY)
     }
     .width('100%')
     .height(46)

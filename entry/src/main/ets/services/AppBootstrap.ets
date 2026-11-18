@@ -1,7 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { Logger } from '../common/utils/Logger';
 import { BluetoothService } from './BluetoothService';
-import { DemoService } from './DemoService';
 import { FeedbackService } from './FeedbackService';
 import { LogService } from './LogService';
 import { SettingsService } from './SettingsService';
@@ -16,6 +15,10 @@ const MODULE: string = 'Bootstrap';
 export class AppBootstrap {
   private static initialized: boolean = false;
 
+  public static isInitialized(): boolean {
+    return AppBootstrap.initialized;
+  }
+
   public static init(context: common.UIAbilityContext): void {
     if (AppBootstrap.initialized) {
       return;
@@ -25,7 +28,6 @@ export class AppBootstrap {
     LogService.getInstance().init(context);
     Logger.info(MODULE, '应用启动');
     SettingsService.init(context);
-    DemoService.init(context);
     ToneRepositoryService.init(context);
     BluetoothService.init(context);
     FeedbackService.init(context);

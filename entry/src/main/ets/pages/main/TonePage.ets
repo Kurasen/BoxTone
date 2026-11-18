@@ -181,8 +181,17 @@ export struct TonePage {
       return;
     }
     if (current.path.length === 0) {
-      // 内置音色没有源文件，直接试听转换后的结果
-      await this.playTone();
+      // 内置音色没有源文件，但合成 PCM 本身就是“原声”，按 48kHz 直接试听
+      this.playingSource = true;
+      this.playingTone = false;
+      try {
+        await AudioPlayService.playSourcePcm(current.pcm, (): void => {
+          this.playingSource = false;
+        });
+      } catch (error) {
+        this.playingSource = false;
+        this.toast(I18n.t('tone.previewFailed'));
+      }
       return;
     }
     this.playingSource = true;
@@ -405,7 +414,7 @@ export struct TonePage {
           Image($r('app.media.ic_upload'))
             .width(24)
             .height(24)
-            .fillColor(Palette.ACCENT)
+            .fillColor(Palette.ACCENT_TEXT)
         }
         Text(I18n.t('tone.importTitle'))
           .fontSize(15)
@@ -437,7 +446,7 @@ export struct TonePage {
             Image($r('app.media.ic_tab_tone'))
               .width(20)
               .height(20)
-              .fillColor(Palette.ACCENT)
+              .fillColor(Palette.ACCENT_TEXT)
           }
 
           Column({ space: 4 }) {
@@ -459,7 +468,7 @@ export struct TonePage {
 
           Text(I18n.t('tone.replace'))
             .fontSize(11)
-            .fontColor(Palette.ACCENT)
+            .fontColor(Palette.ACCENT_TEXT)
             .padding({ left: 10, right: 10, top: 5, bottom: 5 })
             .borderRadius(999)
             .backgroundColor(Palette.ACCENT_SOFT)
@@ -792,7 +801,7 @@ struct SliderBlock {
         Text(this.blockText)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.ACCENT)
+          .fontColor(Palette.ACCENT_TEXT)
       }
       .width('100%')
 

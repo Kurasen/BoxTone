@@ -35,7 +35,8 @@ export class ThemeService {
     const stored: number = SettingsService.getThemeMode();
     ThemeService.mode = stored === ThemeMode.LIGHT ? ThemeMode.LIGHT :
       (stored === ThemeMode.SYSTEM ? ThemeMode.SYSTEM : ThemeMode.DARK);
-    ThemeService.apply();
+    // 此时窗口还没创建，系统栏属性由 EntryAbility.onWindowStageCreate 设置
+    ThemeService.apply(false);
     Logger.info(MODULE, `外观初始化 mode=${ThemeService.mode} dark=${ThemeService.dark}`);
   }
 
@@ -84,7 +85,7 @@ export class ThemeService {
     ThemeService.refreshUI();
   }
 
-  private static apply(): void {
+  private static apply(updateBars: boolean = true): void {
     const context: common.UIAbilityContext | undefined = ThemeService.context;
     if (context === undefined) {
       return;
@@ -109,7 +110,9 @@ export class ThemeService {
     } catch (error) {
       Logger.exception(MODULE, '设置应用外观失败', error as BusinessError);
     }
-    ThemeService.updateSystemBars();
+    if (updateBars) {
+      ThemeService.updateSystemBars();
+    }
     ThemeService.refreshUI();
   }
 

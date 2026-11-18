@@ -12,12 +12,10 @@ import { BtDevice, BtSnapshot, createEmptySnapshot } from '../models/DeviceModel
 import { I18n } from '../common/i18n/I18n';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
-import { DemoService } from './DemoService';
 import { NearLinkService, NearLinkSnapshot } from './NearLinkService';
 
 const MODULE: string = 'Bluetooth';
 const PERMISSION_BLUETOOTH: Permissions = 'ohos.permission.ACCESS_BLUETOOTH';
-const PERMISSION_NEARLINK: Permissions = 'ohos.permission.ACCESS_NEARLINK';
 /** 扫描自动停止时间 */
 const SCAN_TIMEOUT_MS: number = 15000;
 
@@ -114,9 +112,6 @@ export class BluetoothService {
   }
 
   public static getSnapshot(): BtSnapshot {
-    if (DemoService.isActive()) {
-      return BluetoothService.demoSnapshot();
-    }
     return BluetoothService.snapshot;
   }
 
@@ -135,34 +130,6 @@ export class BluetoothService {
     }
     const model: string | undefined = BluetoothService.modelCache.get(deviceId.toUpperCase());
     return model !== undefined ? model : '';
-  }
-
-  /** 演示模式下的模拟设备：状态卡、写入前置检查都读这里的一致性快照 */
-  private static demoSnapshot(): BtSnapshot {
-    const device: BtDevice = {
-      deviceId: 'AA:BB:CC:DD:EE:FF',
-      name: I18n.t('bt.demoDeviceName'),
-      paired: true,
-      audio: true,
-      connected: true,
-      nearLink: false
-    };
-    const snapshot: BtSnapshot = {
-      supported: true,
-      enabled: true,
-      authorized: true,
-      pairedDevices: [device],
-      nearbyDevices: [],
-      scanning: false,
-      activeName: device.name,
-      activeId: device.deviceId,
-      statusText: I18n.t('bt.demoConnected'),
-      nearLinkSupported: false,
-      nearLinkEnabled: false,
-      nearLinkName: '',
-      nearLinkBtId: ''
-    };
-    return snapshot;
   }
 
   public static onChange(listener: BtChangeListener): void {
@@ -184,9 +151,6 @@ export class BluetoothService {
 
   /** 申请蓝牙权限，已授权时直接返回 true */
   public static async ensurePermission(): Promise<boolean> {
-    if (DemoService.isActive()) {
-      return true;
-    }
     const context: common.UIAbilityContext | undefined = BluetoothService.context;
     if (context === undefined) {
       return false;
@@ -194,19 +158,12 @@ export class BluetoothService {
     if (BluetoothService.hasPermission()) {
       BluetoothService.snapshot.authorized = true;
       BluetoothService.registerListeners();
-      // 蓝牙早已授权时也必须补问星闪权限：否则星闪连接检测永远是"未授权"，
-      // 表现为耳机明明连着，应用却显示未连接
-      if (NearLinkService.isSupported() && !NearLinkService.hasPermission()) {
-        await NearLinkService.ensurePermission();
-      }
       return true;
     }
     try {
+      // 蓝牙与星闪属于同一“设备发现和连接”权限组，系统会合并授权；
+      // 这里只申请蓝牙，避免同组权限被当成批量申请。
       const permissions: Permissions[] = [PERMISSION_BLUETOOTH];
-      // 星闪是可选能力：仅在设备支持且未授权时一并申请，拒绝与否不影响蓝牙主流程
-      if (NearLinkService.isSupported() && !NearLinkService.hasPermission()) {
-        permissions.push(PERMISSION_NEARLINK);
-      }
       const manager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
       const result: PermissionRequestResult =
         await manager.requestPermissionsFromUser(context, permissions);
@@ -220,6 +177,30 @@ export class BluetoothService {
       return granted;
     } catch (error) {
       Logger.exception(MODULE, '申请蓝牙权限失败', error as BusinessError);
+      return false;
+    }
+  }
+
+  /** 用户首次拒绝后，再次申请必须拉起权限设置页（系统不会再弹标准授权框） */
+  public static async ensurePermissionOnSetting(): Promise<boolean> {
+    const context: common.UIAbilityContext | undefined = BluetoothService.context;
+    if (context === undefined) {
+      return false;
+    }
+    try {
+      const manager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
+      const statuses: Array<abilityAccessCtrl.GrantStatus> =
+        await manager.requestPermissionOnSetting(context, [PERMISSION_BLUETOOTH]);
+      const granted: boolean = statuses.length > 0 &&
+        statuses[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+      if (granted) {
+        BluetoothService.snapshot.authorized = true;
+        BluetoothService.registerListeners();
+      }
+      Logger.info(MODULE, granted ? '蓝牙权限已在设置中开启' : '蓝牙权限仍未开启');
+      return granted;
+    } catch (error) {
+      Logger.exception(MODULE, '拉起权限设置失败', error as BusinessError);
       return false;
     }
   }
@@ -260,6 +241,24 @@ export class BluetoothService {
     }
     const snapshotId: string = BluetoothService.snapshot.activeId;
     return snapshotId;
+  }
+
+  /**
+   * 已配对但音频未连接时的兜底目标：仅在只有一个音频类已配对设备时返回。
+   * 用于系统拒绝断开 A2DP 时，让用户先在系统蓝牙中断开音频再写入。
+   */
+  public static pairedAudioId(): string {
+    const paired: BtDevice[] = BluetoothService.snapshot.pairedDevices;
+    let found: string = '';
+    let count: number = 0;
+    for (let i = 0; i < paired.length; i++) {
+      if (!paired[i].audio) {
+        continue;
+      }
+      found = paired[i].deviceId;
+      count++;
+    }
+    return count === 1 ? found : '';
   }
 
   /** 指定设备的音频通道（A2DP）是否已连上：用于避免重复 connect 触发系统连接横幅 */
@@ -341,11 +340,6 @@ export class BluetoothService {
 
   /** 刷新蓝牙状态与设备列表 */
   public static async refresh(): Promise<BtSnapshot> {
-    if (DemoService.isActive()) {
-      const demo: BtSnapshot = BluetoothService.demoSnapshot();
-      BluetoothService.commit(demo);
-      return demo;
-    }
     const snapshot: BtSnapshot = createEmptySnapshot();
     snapshot.supported = true;
     try {

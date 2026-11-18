@@ -30,7 +30,7 @@ export class ToneSpec {
 export enum DeviceSupportLevel {
   /** 盒音写入实测通过 */
   VERIFIED = 1,
-  /** 华为官方支持开盒提示音，但本应用的盒音自定义尚未实测 */
+  /** 具备开盒提示音机型，但本应用的盒音自定义尚未实测 */
   OFFICIAL = 2,
   /** 未收录 */
   UNKNOWN = 3
@@ -38,7 +38,7 @@ export enum DeviceSupportLevel {
 
 /** 支持列表条目 */
 export interface SupportedDevice {
-  /** 兼容性等级：实测通过 = 1，官方支持待实测 = 2 */
+  /** 兼容性等级：实测通过 = 1，支持开盒提示音待实测 = 2 */
   level: DeviceSupportLevel;
   /** 系统里可能出现的产品名（含典藏版等变体） */
   names: string[];
@@ -231,7 +231,6 @@ export class Changelog {
         'changelog.v111.i4',
         'changelog.v111.i5',
         'changelog.v111.i6',
-        'changelog.v111.i7',
         'changelog.v111.i8',
         'changelog.v111.i9'
       ]
@@ -295,16 +294,41 @@ export class MbbSpec {
 
   /** 单次建链超时 */
   static readonly CONNECT_TIMEOUT_MS: number = 8000;
+  /**
+   * 音频通道还连着时的试探超时。
+   * 这类局面下耳机有可能直接不回应，用完整 8 秒去等一次注定被拒的连接太贵。
+   */
+  static readonly CONNECT_PROBE_TIMEOUT_MS: number = 4500;
+  /**
+   * 刚断开音频后的第一枪超时。
+   * ACL 拆链还没收敛时，sppConnect 有时既不回调成功也不回调失败，
+   * 真机日志里出现整整卡满 8 秒的情况（同一份代码另一轮又只用了 0.3 秒）。
+   * 这里封顶 3 秒，失败后立刻重试，比干等更有用。
+   */
+  static readonly CONNECT_POST_RELEASE_MS: number = 3000;
   /** 建链总预算 */
   static readonly CONNECT_TOTAL_BUDGET_MS: number = 40000;
-  /** 建链重试间隔 */
-  static readonly CONNECT_RETRY_GAP_MS: number = 1100;
+  /** 建链重试间隔（换通道模式时） */
+  static readonly CONNECT_RETRY_GAP_MS: number = 500;
+  /**
+   * 同一种通道模式下两次尝试的间隔。
+   * 真机日志显示耳机要「被请求到第 6 次」才肯开串口（两轮写入都是第 6 次成功），
+   * 原来的 1300ms 让这 6 次白等到 14 秒；缩短到 700ms 能在 5~7 秒内走完同样的次数。
+   */
+  static readonly CONNECT_ATTEMPT_GAP_MS: number = 700;
   /** 关掉串口后留给耳机收尾的时间 */
   static readonly SOCKET_SETTLE_MS: number = 1200;
   /** 连上后等耳机主动开口的时间 */
   static readonly LINK_READY_TIMEOUT_MS: number = 1500;
   /** 耳机收掉通道后的冷却时间 */
   static readonly LINK_COOLDOWN_MS: number = 15000;
+  /**
+   * 断开音频通道后等它真的掉下来的上限。
+   * 不再固定 sleep：真机上 A2DP 掉链约 300~800ms，轮询能在掉下去的那一刻就往下走。
+   */
+  static readonly AUDIO_DROP_WAIT_MS: number = 2600;
+  /** A2DP 掉链到能建串口之间的余量（ACL 拆链还没彻底收敛时会拿到 -1） */
+  static readonly AUDIO_SETTLE_MS: number = 500;
 
   /** 普通命令回执超时 */
   static readonly ACK_TIMEOUT_MS: number = 3000;
@@ -329,8 +353,6 @@ export class AppStorageKey {
   static readonly KEY_LOG_LEVEL: string = 'log_level';
   static readonly KEY_AUTO_NORMALIZE: string = 'auto_normalize';
   static readonly KEY_FEEDBACK_RECORDS: string = 'feedback_records';
-  static readonly KEY_DEMO_MODE: string = 'demo_mode';
-  static readonly KEY_DEMO_GUIDE_SEEN: string = 'demo_guide_seen';
   static readonly KEY_THEME_MODE: string = 'theme_mode';
   /** AppStorage 主题纪元：切换外观时自增，触发组件重绘 */
   static readonly THEME_EPOCH: string = 'themeEpoch';

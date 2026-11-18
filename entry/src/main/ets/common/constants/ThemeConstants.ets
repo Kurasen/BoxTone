@@ -64,7 +64,7 @@ export class Palette {
   }
 
   static get TEXT_TERTIARY(): string {
-    return ThemeService.isDark() ? '#5E697B' : '#8A96A8';
+    return ThemeService.isDark() ? '#5E697B' : '#667286';
   }
 
   static get TEXT_FAINT(): string {
@@ -74,6 +74,11 @@ export class Palette {
   // 品牌
   static get ACCENT(): string {
     return ThemeService.isDark() ? '#4ED8FF' : '#0E9FC5';
+  }
+
+  /** 浅色背景上的强调文字/图标：比 ACCENT 更深，保证对比度 */
+  static get ACCENT_TEXT(): string {
+    return ThemeService.isDark() ? '#4ED8FF' : '#006E8A';
   }
 
   static get ACCENT_DEEP(): string {
@@ -98,7 +103,7 @@ export class Palette {
 
   // 语义
   static get SUCCESS(): string {
-    return ThemeService.isDark() ? '#43D6A0' : '#0FA97C';
+    return ThemeService.isDark() ? '#43D6A0' : '#0B7A5A';
   }
 
   static get SUCCESS_SOFT(): string {
@@ -106,7 +111,7 @@ export class Palette {
   }
 
   static get WARNING(): string {
-    return ThemeService.isDark() ? '#FFB84D' : '#C07A00';
+    return ThemeService.isDark() ? '#FFB84D' : '#8A5600';
   }
 
   static get WARNING_SOFT(): string {
@@ -114,7 +119,7 @@ export class Palette {
   }
 
   static get DANGER(): string {
-    return ThemeService.isDark() ? '#FF6B7A' : '#DE4A5E';
+    return ThemeService.isDark() ? '#FF6B7A' : '#C7354A';
   }
 
   static get DANGER_SOFT(): string {

@@ -26,14 +26,12 @@ export struct ProfilePage {
   @State toneBytes: number = 0;
   @State logCount: number = 0;
   @State logBytes: number = 0;
-  @State privacyUrl: string = '';
   @State showAbout: boolean = false;
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
     this.refresh();
     this.readVersion();
-    this.privacyUrl = PrivacyLinkService.statementUrl();
     this.changeHandler = (): void => {
       this.refresh();
     };
@@ -208,7 +206,7 @@ export struct ProfilePage {
     }
   }
 
-  /** 支持机型入口摘要："官方支持待实测"为 0 时省略这一段 */
+  /** 支持机型入口摘要："支持开盒提示音机型待实测"为 0 时省略这一段 */
   private supportSummary(): string {
     const official: number = DeviceSupport.countOf(DeviceSupportLevel.OFFICIAL);
     const officialPart: string = official > 0 ? I18n.f('profile.supportSummaryOfficial', [`${official}`]) : '';
@@ -245,20 +243,6 @@ export struct ProfilePage {
           this.showAbout = true;
         }
       })
-      // 托管链接由 AGC 下发；本地调试或非市场安装时取不到，直接隐藏入口
-      if (this.privacyUrl.length > 0) {
-        Divider()
-          .color(Palette.FILL_FAINT)
-          .margin({ left: 16, right: 16 })
-        ActionRow({
-          rowTitle: I18n.t('profile.privacy'),
-          rowDesc: I18n.t('profile.privacyDesc'),
-          rowIcon: $r('app.media.ic_info'),
-          onTap: (): void => {
-            this.openPrivacy();
-          }
-        })
-      }
     }
   }
 
@@ -358,6 +342,17 @@ export struct ProfilePage {
               // 捐赠图片暂未提供：入口先保持无响应，后续在同一点击事件里打开图片
             }
           })
+          Divider()
+            .color(Palette.FILL_FAINT)
+            .margin({ left: 8, right: 8 })
+          AboutLinkRow({
+            rowTitle: I18n.t('profile.privacy'),
+            rowAction: I18n.t('profile.view'),
+            rowIcon: $r('app.media.ic_info'),
+            onTap: (): void => {
+              this.openPrivacy();
+            }
+          })
         }
       }
 
@@ -402,7 +397,7 @@ export struct ProfilePage {
             Text(I18n.t('profile.why16700'))
               .fontSize(12)
               .fontWeight(FontWeight.Medium)
-              .fontColor(Palette.ACCENT)
+              .fontColor(Palette.ACCENT_TEXT)
             Text(I18n.t('profile.why16700Body'))
               .fontSize(11)
               .fontColor(Palette.TEXT_SECONDARY)
@@ -419,22 +414,12 @@ export struct ProfilePage {
       }
 
       ListItem() {
-        Column({ space: 10 }) {
-          Text(I18n.t('profile.disclaimer'))
-            .fontSize(10)
-            .fontColor(Palette.TEXT_TERTIARY)
-            .lineHeight(16)
-          if (this.privacyUrl.length > 0) {
-            Text(I18n.t('profile.viewPrivacy'))
-              .fontSize(12)
-              .fontColor(Palette.ACCENT)
-              .onClick(() => {
-                this.openPrivacy();
-              })
-          }
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
+        Text(I18n.t('profile.disclaimer'))
+          .fontSize(10)
+          .fontColor(Palette.TEXT_TERTIARY)
+          .lineHeight(17)
+          .width('100%')
+          .textAlign(TextAlign.Center)
       }
 
         ListItem() {
@@ -507,11 +492,11 @@ export struct ProfilePage {
 
   @Builder
   buildAbout() {
-    Column({ space: 8 }) {
+    Column({ space: 12 }) {
       Row({ space: 8 }) {
         Image($r('app.media.ic_info'))
-          .width(13)
-          .height(13)
+          .width(9)
+          .height(9)
           .fillColor(Palette.TEXT_TERTIARY)
         Text(I18n.t('profile.writeInfo'))
           .fontSize(10)
@@ -520,14 +505,17 @@ export struct ProfilePage {
           .layoutWeight(1)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .alignItems(VerticalAlign.Center)
 
-      Text(I18n.t('profile.rights'))
-        .fontSize(9)
-        .fontColor(Palette.TEXT_FAINT)
+      Text(I18n.t('profile.disclaimer'))
+        .fontSize(10)
+        .fontColor(Palette.TEXT_TERTIARY)
+        .lineHeight(17)
+        .width('100%')
+        .textAlign(TextAlign.Center)
     }
     .width('100%')
-    .padding({ left: 4, right: 4, top: 4 })
+    .padding({ left: 4, right: 4, top: 4, bottom: 8 })
   }
 }
 
@@ -667,11 +655,11 @@ struct AboutLinkRow {
         .layoutWeight(1)
       Text(this.rowAction)
         .fontSize(12)
-        .fontColor(Palette.ACCENT)
+        .fontColor(Palette.ACCENT_TEXT)
       Image($r('app.media.ic_chevron_right'))
         .width(12)
         .height(12)
-        .fillColor(Palette.ACCENT)
+        .fillColor(Palette.ACCENT_TEXT)
     }
     .width('100%')
     .height(48)

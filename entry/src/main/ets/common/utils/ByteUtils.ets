@@ -76,7 +76,8 @@ export class ByteUtils {
   }
 
   static utf8(text: string): Uint8Array {
-    const out: Uint8Array = new Uint8Array(text.length);
+    // UTF-8 单字符最多 3 字节，按 text.length 分配会被中文撑爆而静默截断
+    const out: Uint8Array = new Uint8Array(text.length * 3);
     let length: number = 0;
     for (let i = 0; i < text.length; i++) {
       const code: number = text.charCodeAt(i);

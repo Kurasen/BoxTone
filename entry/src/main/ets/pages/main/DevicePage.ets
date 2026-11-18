@@ -10,9 +10,8 @@ import { GlassCard } from '../../components/GlassCard';
 import { SectionTitle } from '../../components/SectionTitle';
 import { StatPill } from '../../components/StatPill';
 import { BtDevice, BtSnapshot, createEmptySnapshot } from '../../models/DeviceModel';
-import { BtChangeListener, BluetoothService } from '../../services/BluetoothService';
+import { BluetoothService, BtChangeListener } from '../../services/BluetoothService';
 import { CaseWriteService } from '../../services/CaseWriteService';
-import { DemoService } from '../../services/DemoService';
 import { NearLinkService, NearLinkSnapshot } from '../../services/NearLinkService';
 
 const MODULE: string = 'DevicePage';
@@ -81,17 +80,8 @@ export struct DevicePage {
     }
   }
 
-  /** 首次进入：未授权则发起一次授权，再拉取状态 */
+  /** 首次进入只读取状态，不主动弹权限；用户点“去授权”时再申请 */
   private async bootstrap(): Promise<void> {
-    if (DemoService.isActive()) {
-      this.snapshot = await BluetoothService.refresh();
-      return;
-    }
-    const granted: boolean = await BluetoothService.ensurePermission();
-    if (!granted) {
-      this.snapshot = await BluetoothService.refresh();
-      return;
-    }
     await this.load();
   }
 
@@ -114,9 +104,6 @@ export struct DevicePage {
 
   /** 检测到音频走星闪时提醒一次：每次（重新）连上只弹一次，断开后复位 */
   private warnNearLinkOnce(): void {
-    if (DemoService.isActive()) {
-      return;
-    }
     const name: string = this.snapshot.nearLinkName;
     if (name.length === 0) {
       this.nearLinkNotified = '';
@@ -130,27 +117,55 @@ export struct DevicePage {
     NearLinkAlert.show(this.getUIContext(), CaseWriteService.nearLinkHint(name));
   }
 
-  /** 演示模式只是模拟设备，任何真实蓝牙操作都拦在这里 */
-  private guardDemo(): boolean {
-    if (!DemoService.isActive()) {
-      return false;
-    }
-    this.toast(I18n.t('device.demoGuard'));
-    return true;
-  }
-
   private statusActionLabel(): string {
-    if (DemoService.isActive()) {
-      return I18n.t('device.demoStatus');
-    }
     return this.snapshot.enabled ? I18n.t('device.openSettings') : I18n.t('device.enableBt');
   }
 
-  private async requestPermission(): Promise<void> {
-    if (this.guardDemo()) {
+  /** 状态卡的“开启蓝牙”：未授权时先授权，授权后若仍未开再拉起系统开启框 */
+  private async requestPermissionAndEnable(): Promise<void> {
+    const granted: boolean = await BluetoothService.ensurePermission();
+    if (!granted) {
+      this.showPermissionDenied();
       return;
     }
+    await this.load();
+    if (!this.snapshot.enabled) {
+      await this.enableBluetooth();
+    }
+  }
+
+  private async requestPermission(): Promise<void> {
     const granted: boolean = await BluetoothService.ensurePermission();
+    if (granted) {
+      await this.load();
+      this.toast(I18n.t('device.permGranted'));
+      return;
+    }
+    this.showPermissionDenied();
+  }
+
+  /** 首次拒绝后系统不再弹标准授权框，引导到权限设置页 */
+  private showPermissionDenied(): void {
+    this.getUIContext().showAlertDialog({
+      title: I18n.t('device.needPermission'),
+      message: I18n.t('device.permissionSettingsDesc'),
+      primaryButton: {
+        value: I18n.t('common.cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: I18n.t('device.goSettings'),
+        fontColor: Palette.ACCENT_TEXT,
+        action: (): void => {
+          this.openPermissionSettings();
+        }
+      }
+    });
+  }
+
+  private async openPermissionSettings(): Promise<void> {
+    const granted: boolean = await BluetoothService.ensurePermissionOnSetting();
     if (granted) {
       await this.load();
       this.toast(I18n.t('device.permGranted'));
@@ -160,9 +175,6 @@ export struct DevicePage {
   }
 
   private async openSettings(): Promise<void> {
-    if (this.guardDemo()) {
-      return;
-    }
     try {
       await BluetoothService.openSystemBluetoothSettings();
     } catch (error) {
@@ -171,9 +183,6 @@ export struct DevicePage {
   }
 
   private async enableBluetooth(): Promise<void> {
-    if (this.guardDemo()) {
-      return;
-    }
     try {
       await BluetoothService.requestEnable();
     } catch (error) {
@@ -182,9 +191,6 @@ export struct DevicePage {
   }
 
   private async connectDevice(device: BtDevice): Promise<void> {
-    if (this.guardDemo()) {
-      return;
-    }
     this.busy = true;
     try {
       await BluetoothService.connect(device.deviceId);
@@ -197,9 +203,6 @@ export struct DevicePage {
   }
 
   private async disconnectDevice(device: BtDevice): Promise<void> {
-    if (this.guardDemo()) {
-      return;
-    }
     this.busy = true;
     try {
       await BluetoothService.disconnect(device.deviceId);
@@ -212,9 +215,6 @@ export struct DevicePage {
   }
 
   private async pairDevice(device: BtDevice): Promise<void> {
-    if (this.guardDemo()) {
-      return;
-    }
     this.busy = true;
     try {
       await BluetoothService.pair(device.deviceId);
@@ -357,7 +357,9 @@ export struct DevicePage {
       GhostButton({
         ghostLabel: this.statusActionLabel(),
         onTap: (): void => {
-          if (this.snapshot.enabled) {
+          if (!this.snapshot.authorized) {
+            this.requestPermissionAndEnable();
+          } else if (this.snapshot.enabled) {
             this.openSettings();
           } else {
             this.enableBluetooth();
@@ -370,12 +372,12 @@ export struct DevicePage {
 
   @Builder
   buildPermissionCard() {
-    GlassCard({ cardBg: Palette.WARNING_SOFT, cardStroke: 'rgba(255, 184, 77, 0.28)' }) {
+    GlassCard({ cardBg: Palette.ACCENT_SOFT, cardStroke: Palette.ACCENT_LINE }) {
       Row({ space: 10 }) {
         Image($r('app.media.ic_alert'))
           .width(18)
           .height(18)
-          .fillColor(Palette.WARNING)
+          .fillColor(Palette.ACCENT_TEXT)
         Column({ space: 4 }) {
           Text(I18n.t('device.needPermission'))
             .fontSize(14)
@@ -392,13 +394,13 @@ export struct DevicePage {
 
       Text(I18n.t('device.grant'))
         .fontSize(13)
-        .fontColor('#10151F')
+        .fontColor('#05080E')
         .fontWeight(FontWeight.Medium)
         .textAlign(TextAlign.Center)
         .width('100%')
         .height(38)
         .borderRadius(12)
-        .backgroundColor(Palette.WARNING)
+        .backgroundColor(Palette.ACCENT)
         .margin({ top: 12 })
         .onClick(() => {
           this.requestPermission();
@@ -464,9 +466,6 @@ export struct DevicePage {
         .borderRadius(999)
         .backgroundColor(this.snapshot.scanning ? Palette.DANGER_SOFT : Palette.ACCENT_SOFT)
         .onClick(() => {
-          if (this.guardDemo()) {
-            return;
-          }
           if (this.snapshot.scanning) {
             BluetoothService.stopScan();
           } else {
@@ -524,7 +523,7 @@ export struct DevicePage {
       Text(order)
         .fontSize(11)
         .fontWeight(FontWeight.Medium)
-        .fontColor(Palette.ACCENT)
+        .fontColor(Palette.ACCENT_TEXT)
         .width(22)
         .height(22)
         .textAlign(TextAlign.Center)

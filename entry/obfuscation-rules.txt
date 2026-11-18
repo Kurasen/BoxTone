@@ -5,3 +5,6 @@
 -enable-export-obfuscation
 -keep-global-name
 AppStorage,LocalStorage,PersistentStorage
+# libaudiodec.so 由 C++ 导出，函数名和返回对象属性都不能被混淆
+-keep-property-name
+decodeAudio,probeAudio,ok,error,stage,frames,sampleRate,channels,frameCount,truncated,mime,durationMs

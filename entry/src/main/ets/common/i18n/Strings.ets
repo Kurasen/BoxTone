@@ -18,27 +18,15 @@ export const ZH_STRINGS: Record<string, string> = {
   'common.processing': '处理中…',
   'common.copyFailed': '复制失败',
 
-  // 演示模式
-  'index.demo.badge': '演示模式 · 模拟耳机',
-  'index.demo.exit': '退出',
-  'index.demo.exitTitle': '退出演示模式',
-  'index.demo.exitMessage': '退出后将恢复真实蓝牙设备状态，模拟耳机会消失。',
-  'index.demo.keep': '继续演示',
-  'index.demo.guideTitle': '没有耳机也能先体验',
-  'index.demo.guideBody': '开启演示模式后会显示一台模拟的演示耳机：音效制作、试听、生成和导出都能照常使用，' +
-    '不会申请蓝牙权限，也不会写入真实设备。随时可以在页面底部退出演示。',
-  'index.demo.useDirectly': '直接使用',
-  'index.demo.start': '开始演示',
-
   // 设备页
   'device.title': '设备',
-  'device.subtitle': '连接你的华为耳机，准备写入开盖音效',
-  'device.demoGuard': '演示模式不操作真实蓝牙',
-  'device.demoStatus': '演示模式（不操作真实蓝牙）',
+  'device.subtitle': '连接你的蓝牙耳机，准备写入开盖音效',
   'device.openSettings': '打开系统蓝牙设置',
   'device.enableBt': '开启蓝牙',
   'device.permGranted': '蓝牙权限已开启',
   'device.permDenied': '未授予蓝牙权限，无法搜索耳机',
+  'device.permissionSettingsDesc': '蓝牙权限已被拒绝。请点击“去设置”，在「附近设备」中允许盒音工坊访问。',
+  'device.goSettings': '去设置',
   'device.openSettingsFailed': '无法打开系统蓝牙设置',
   'device.enableManual': '请手动在系统设置中开启蓝牙',
   'device.connecting': '正在连接 {0}',
@@ -145,6 +133,12 @@ export const ZH_STRINGS: Record<string, string> = {
   'preset.wood.desc': '马林巴质感，温暖厚实',
   'preset.glass.name': '琉璃',
   'preset.glass.desc': '长尾泛音，空间感强',
+  'preset.rain.name': '雨声',
+  'preset.rain.desc': '柔和雨幕与水滴',
+  'preset.windchime.name': '风铃',
+  'preset.windchime.desc': '五声音阶风铃',
+  'preset.birds.name': '晨鸟',
+  'preset.birds.desc': '清晨鸟鸣与微风',
 
   // 音效库
   'lib.title': '音效库',
@@ -176,7 +170,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'lib.writeHint': '写入会把数据直接下发到充电盒，过程中会临时断开耳机与手机的音频连接。',
   'lib.writeTitle': '准备写入充电盒',
   'lib.writeMessage': '{0}\n\n请确认双耳已放入盒内并打开盒盖，然后继续。\n\n' +
-    '其他机型不兼容时会被盒子拒绝，不会损坏设备。写入期间请勿切走应用或关闭蓝牙。',
+    '其他机型不兼容时会被盒子拒绝，不会损坏设备。写入期间请勿切走应用或关闭蓝牙。' +
+    '如果手机正在播放视频或音乐，请先暂停；外放也会让系统重新占用耳机音频通道，导致连接变慢或失败。',
   'lib.startWrite': '开始写入',
   'lib.stageConnect': '连接耳机',
   'lib.stageApplied': '已应用',
@@ -212,7 +207,7 @@ export const ZH_STRINGS: Record<string, string> = {
   // 我的
   'profile.title': '我的',
   'profile.subtitle': '应用信息、支持机型与诊断工具',
-  'profile.appTagline': 'v{0} · 为华为充电盒定制提示音',
+  'profile.appTagline': 'v{0} · 为蓝牙耳机充电盒定制提示音',
   'profile.statTone': '音效',
   'profile.statStorage': '存储',
   'profile.statLog': '日志',
@@ -229,10 +224,10 @@ export const ZH_STRINGS: Record<string, string> = {
   'profile.light': '浅色',
   'profile.system': '跟随系统',
   'profile.supportSummary': '{0} 款实测{1} · 查看列表',
-  'profile.supportSummaryOfficial': ' · {0} 款官方支持待实测',
+  'profile.supportSummaryOfficial': ' · {0} 款支持开盒提示音机型待实测',
   'profile.supportCompat': '支持与兼容',
   'profile.supportedModels': '支持机型',
-  'profile.legal': '关于与协议',
+  'profile.legal': '关于',
   'profile.about': '关于盒音工坊',
   'profile.aboutDesc': 'v{0} · 产品介绍与版本信息',
   'profile.privacy': '隐私政策',
@@ -240,7 +235,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'profile.version': '版本',
   'profile.versionBuild': 'v{0}（Build {1}）',
   'profile.versionBuildLong': '版本 v{0}（Build {1}）',
-  'profile.aboutBody': '把喜欢的旋律做成华为耳机充电盒的开盒提示音。音效在本机生成并直接写入充电盒，不上传任何音频。',
+  'profile.aboutBody': '把喜欢的旋律做成蓝牙耳机充电盒的开盒提示音。音效在本机生成并直接写入充电盒，不上传任何音频。',
   'profile.modelCount': '收录机型',
   'profile.modelCountValue': '{0} 款 · 持续增加',
   'profile.feedbackEmail': '反馈邮箱',
@@ -266,15 +261,22 @@ export const ZH_STRINGS: Record<string, string> = {
     '若直接放入 16000Hz 素材，播放时音调会整体升高；按 16700Hz 导出可保持原本听感。',
   'profile.sizeRuleBody': '文件大小 = 声道数 × 位深 × 采样率 × 时长 ÷ 8，1 秒固定为 33400 字节。' +
     '因无文件头，时长与体积严格成正比，超长文件无法写入充电盒。',
-  'profile.disclaimer': '本应用为个人开发作品，与华为无关；华为、FreeBuds、FreeClip 等商标归华为技术有限公司所有。',
+  'profile.disclaimer': '本应用为个人独立开发作品，与华为技术有限公司及其关联公司无任何关联。' +
+    '华为、FreeBuds、FreeClip 等商标均为华为技术有限公司或其关联公司的注册商标，' +
+    '仅用于说明本应用搭配上述型号蓝牙耳机的操作与体验。音效素材请确保拥有合法使用权。',
   'profile.viewPrivacy': '查看隐私政策',
   'profile.aboutTitle': '关于',
   'profile.galleryMissing': '应用市场链接暂未配置',
   'profile.galleryFailed': '无法打开应用市场',
   'profile.privacyUnavailable': '隐私政策链接暂不可用，请稍后重试',
+  'privacy.gateBody': '使用盒音工坊前，请先阅读并同意隐私声明。同意后才会初始化蓝牙、星闪和日志功能。',
+  'privacy.consent': '阅读并同意',
+  'privacy.exit': '退出应用',
+  'privacy.viewStatement': '查看隐私声明',
+  'privacy.consentRequired': '需要同意隐私声明后才能继续使用',
+  'privacy.consentFailed': '隐私声明打开失败，请稍后重试',
   'profile.writeInfo': '开盒音通过蓝牙串口（SPP）直接写入充电盒，无需导出文件。' +
     '写入时请把双耳放入盒内并打开盒盖，过程中会临时断开音频通道。',
-  'profile.rights': '本应用与华为无关，音效素材请确保拥有合法使用权',
 
   // 反馈
   'fb.title': '反馈与建议',
@@ -313,6 +315,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'fb.contact': '联系方式',
   'fb.contactPlaceholder': 'QQ / 邮箱，仅用于需要补充信息时联系',
   'fb.agree': '我已阅读并同意',
+  'fb.agreeNoLink': '我已阅读并同意提交内容仅用于问题排查',
   'fb.privacyDoc': '《隐私政策》',
   'fb.send': '提交反馈',
   'fb.empty': '还没有提交过反馈',
@@ -387,7 +390,6 @@ export const ZH_STRINGS: Record<string, string> = {
   'changelog.v111.i4': '日志自动清理：仅保留最近 7 天、最多 2MB',
   'changelog.v111.i5': '音效索引改为原子写入，并能自动恢复索引外的音频文件',
   'changelog.v111.i6': '反馈截图临时文件随用随清，不再长期占用缓存',
-  'changelog.v111.i7': '设备页「写入方式」更正为「蓝牙直写」',
   'changelog.v111.i8': '优化蓝牙状态刷新：连续事件合并处理，减少重复查询',
   'changelog.v111.i9': '界面文案支持中英文自动切换，按系统地区生效',
   'changelog.v110.note': '上一版本',
@@ -408,13 +410,13 @@ export const ZH_STRINGS: Record<string, string> = {
   'support.title': '支持机型',
   'support.subtitle': '型号识别 + 协议探测，列表供参考',
   'support.verified': '实测通过机型',
-  'support.official': '官方支持开盒提示音',
+  'support.official': '具备开盒提示音机型',
   'support.count': '{0} 款',
   'support.how': '兼容性如何判断',
   'support.note1': '写入前会先通过耳机私有协议读取自报型号：只解析型号字段，不读取 SN；' +
     '型号来自固件，用户改名不受影响。',
   'support.note2': '型号优先匹配；型号未识别时回退蓝牙名。典藏版、同平台变体按基础型号前缀匹配。',
-  'support.note3': '“官方支持开盒提示音”只说明该机型具备官方功能，' +
+  'support.note3': '“具备开盒提示音机型”只说明该机型具备该功能，' +
     '盒音自定义仍需协议能力探测和格式确认。',
   'support.note4': '格式确认发生在第一个数据包之前：耳机不接受 16700Hz / 16bit 音效格式时会直接拒绝，' +
     '本次不会写入任何数据，也不会损坏设备。',
@@ -424,8 +426,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'support.verifiedTag': '已验证',
   'support.pendingTag': '待实测',
   'support.detail.freeclip2': '协议 2 · 盒音写入实测通过；典藏版同型号平台，未单独实测',
-  'support.detail.official': '官方支持开盒提示音 · 盒音自定义待实测',
-  'support.detail.officialHorse': '官方支持开盒提示音（含马年典藏款）· 盒音自定义待实测',
+  'support.detail.official': '具备开盒提示音 · 盒音自定义待实测',
+  'support.detail.officialHorse': '具备开盒提示音（含马年典藏款）· 盒音自定义待实测',
 
   // 设备行
   'row.nearLink': '星闪连接 · {0}',
@@ -436,7 +438,6 @@ export const ZH_STRINGS: Record<string, string> = {
   // 蓝牙状态
   'bt.off': '蓝牙未开启',
   'bt.needPermission': '需要蓝牙权限',
-  'bt.demoConnected': '演示模式：模拟耳机已连接',
   'bt.nearLinkConnected': '星闪已连接',
   'bt.audioConnected': '音频通道已连接',
   'bt.nearLinkConnectedNoBt': '星闪已连接（未配对经典蓝牙）',
@@ -444,10 +445,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'bt.notPaired': '尚未配对耳机',
   'bt.unsupported': '当前设备不支持蓝牙接口',
   'bt.readFailed': '蓝牙状态读取失败（{0}）',
-  'bt.demoDeviceName': '演示耳机 BoxTone',
 
   // 写入链路
-  'write.demoMode': '演示模式使用模拟耳机，不会写入真实设备。退出演示并连接耳机后再试',
   'write.inProgress': '正在写入，请等待当前任务完成',
   'write.emptyTone': '音效数据为空，请重新生成',
   'write.tooLong': '时长 {0} 超过充电盒上限 {1} 秒',
@@ -466,6 +465,7 @@ export const ZH_STRINGS: Record<string, string> = {
     '写入时会自动记录耳机型号，之后按型号比对。',
   'write.nearLinkHint': '「{0}」当前通过星闪方式连接。盒音写入只支持经典蓝牙通道：' +
     '请在设备页和系统「星闪和蓝牙」设置中把耳机切换为经典蓝牙连接（关闭星闪音频）后，再进行数据写入操作。',
+  'write.nearLinkSwitchHint': '系统星闪开关仍处于开启状态。写入期间「{0}」可能自动切回星闪连接，导致串口写入卡住。请先在系统「星闪和蓝牙」设置中关闭星闪开关，再回来写入。',
   'write.nearLinkFallbackName': '耳机',
   'write.stageReconnect': '重新连接耳机',
   'write.stageWaitReady': '等待耳机就绪',
@@ -512,11 +512,15 @@ export const ZH_STRINGS: Record<string, string> = {
   'toneErr.notAccepted': '耳机没有接受串口连接：通道可能被智慧音频占用，请把它从后台移除，' +
     '再把双耳放回盒内、打开盒盖后重试',
   'toneErr.notAcceptedNeutral': '耳机没有接受串口连接：可能被其他应用占用，或这款耳机不支持盒音自定义。' +
-    '请关闭占用连接的应用后重试；非华为耳机不支持本功能',
+    '请关闭占用连接的应用后重试；非华为耳机可能暂不支持本功能',
   'toneErr.linkLost': '蓝牙串口通信中断，请合盖后再开盖后重试',
   'toneErr.rejected': '耳机拒绝了这次串口连接：通道可能被智慧音频占用，请把它从后台移除后再试',
+  'toneErr.audioBusy': '音频通道未能断开，耳机可能正被智慧音频或其他应用占用。请关闭智慧音频，或在系统蓝牙设置中先断开耳机音频后重试。',
+  'toneErr.audioHeld': '串口连接被拒绝了，同时耳机音频通道一直保持连接（系统不允许本应用断开它）。' +
+    '请合盖 5 秒后再开盖，或在系统蓝牙设置里先断开这副耳机后重试。',
+  'toneErr.audioReclaimed': '检测到音频通道被其他应用重新占用。请暂停视频/音乐或关闭智慧音频后重试。',
   'toneErr.rejectedNeutral': '耳机拒绝了这次串口连接：可能被其他应用占用，或这款耳机不支持盒音自定义。' +
-    '请关闭占用连接的应用后重试；非华为耳机不支持本功能',
+    '请关闭占用连接的应用后重试；非华为耳机可能暂不支持本功能',
   'toneErr.badAddress': '设备地址无效，请在系统蓝牙设置中取消配对后重新配对',
   'toneErr.serialFailed': '串口连接失败',
   'toneErr.serialFailedWith': '串口连接失败（{0}）',
@@ -529,7 +533,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'toneErr.cannotConnect': '无法连接耳机：请双耳入盒并打开盒盖，合盖 5 秒后再开盖，' +
     '并关闭智慧生活等占用连接的应用',
   'toneErr.cannotConnectNeutral': '无法连接耳机：请双耳入盒并打开盒盖，合盖 5 秒后再开盖；' +
-    '如果这不是华为耳机，本功能不支持',
+    '如果这不是华为耳机，本功能可能暂不支持',
   'toneErr.cancelled': '已取消',
   'toneErr.ackTimeout': '等待耳机回执超时，请保持双耳入盒、盒盖打开后重试',
   'toneErr.linkDown': '蓝牙连接已中断，请重新连接耳机',
@@ -617,25 +621,14 @@ export const EN_STRINGS: Record<string, string> = {
   'common.processing': 'Working…',
   'common.copyFailed': 'Copy failed',
 
-  'index.demo.badge': 'Demo mode · Simulated earbuds',
-  'index.demo.exit': 'Exit',
-  'index.demo.exitTitle': 'Exit demo mode',
-  'index.demo.exitMessage': 'Real Bluetooth device status will be restored and the simulated earbuds will disappear.',
-  'index.demo.keep': 'Keep using demo',
-  'index.demo.guideTitle': 'Try it without earbuds',
-  'index.demo.guideBody': 'Demo mode shows a simulated pair of earbuds. You can create, preview, generate and export tones as usual. ' +
-    'No Bluetooth permission is requested and nothing is written to a real device. You can leave demo mode at the bottom of the screen anytime.',
-  'index.demo.useDirectly': 'Use without demo',
-  'index.demo.start': 'Start demo',
-
   'device.title': 'Devices',
-  'device.subtitle': 'Connect your HUAWEI earbuds to get ready to flash a case tone',
-  'device.demoGuard': 'Demo mode does not control real Bluetooth',
-  'device.demoStatus': 'Demo mode (real Bluetooth disabled)',
+  'device.subtitle': 'Connect your Bluetooth earbuds to get ready to flash a case tone',
   'device.openSettings': 'Open Bluetooth settings',
   'device.enableBt': 'Turn on Bluetooth',
   'device.permGranted': 'Bluetooth permission granted',
   'device.permDenied': 'Bluetooth permission denied; cannot search for earbuds',
+  'device.permissionSettingsDesc': 'Bluetooth permission was denied. Tap "Open settings" and allow BoxTone under Nearby devices.',
+  'device.goSettings': 'Open settings',
   'device.openSettingsFailed': 'Cannot open Bluetooth settings',
   'device.enableManual': 'Please turn on Bluetooth in system settings',
   'device.connecting': 'Connecting to {0}',
@@ -740,6 +733,12 @@ export const EN_STRINGS: Record<string, string> = {
   'preset.wood.desc': 'Marimba-like, warm and full',
   'preset.glass.name': 'Glass',
   'preset.glass.desc': 'Long shimmering tail with air',
+  'preset.rain.name': 'Rain',
+  'preset.rain.desc': 'Soft rain bed with droplets',
+  'preset.windchime.name': 'Wind chime',
+  'preset.windchime.desc': 'Random pentatonic chimes',
+  'preset.birds.name': 'Morning birds',
+  'preset.birds.desc': 'Light bird calls over a breeze',
 
   'lib.title': 'Tone Library',
   'lib.subtitle': 'Generated tones are stored on this device and can be exported anytime',
@@ -770,7 +769,8 @@ export const EN_STRINGS: Record<string, string> = {
   'lib.writeHint': 'Writing sends data directly to the charging case and temporarily disconnects the earbud audio link.',
   'lib.writeTitle': 'Ready to flash the case',
   'lib.writeMessage': '{0}\n\nMake sure both earbuds are in the case with the lid open, then continue.\n\n' +
-    'An incompatible model will be rejected by the case without damage. Do not leave the app or turn off Bluetooth while writing.',
+    'An incompatible model will be rejected by the case without damage. Do not leave the app or turn off Bluetooth while writing. ' +
+    'If video or music is playing, pause it first; speaker output can still make the system reclaim the earbud audio link and slow down or fail the connection.',
   'lib.startWrite': 'Start writing',
   'lib.stageConnect': 'Connecting',
   'lib.stageApplied': 'Applied',
@@ -804,7 +804,7 @@ export const EN_STRINGS: Record<string, string> = {
 
   'profile.title': 'Me',
   'profile.subtitle': 'App info, supported models and diagnostics',
-  'profile.appTagline': 'v{0} · Custom case tones for HUAWEI earbuds',
+  'profile.appTagline': 'v{0} · Custom case tones for Bluetooth earbuds',
   'profile.statTone': 'Tones',
   'profile.statStorage': 'Storage',
   'profile.statLog': 'Logs',
@@ -821,10 +821,10 @@ export const EN_STRINGS: Record<string, string> = {
   'profile.light': 'Light',
   'profile.system': 'System',
   'profile.supportSummary': '{0} verified{1} · View list',
-  'profile.supportSummaryOfficial': ' · {0} officially supported, pending verification',
+  'profile.supportSummaryOfficial': ' · {0} models with case tones, pending verification',
   'profile.supportCompat': 'Support & compatibility',
   'profile.supportedModels': 'Supported models',
-  'profile.legal': 'About & legal',
+  'profile.legal': 'About',
   'profile.about': 'About BoxTone',
   'profile.aboutDesc': 'v{0} · Product info and version',
   'profile.privacy': 'Privacy policy',
@@ -832,7 +832,7 @@ export const EN_STRINGS: Record<string, string> = {
   'profile.version': 'Version',
   'profile.versionBuild': 'v{0} (Build {1})',
   'profile.versionBuildLong': 'Version v{0} (Build {1})',
-  'profile.aboutBody': 'Turn a favorite melody into the opening tone of your HUAWEI earbud charging case. ' +
+  'profile.aboutBody': 'Turn a favorite melody into the opening tone of your Bluetooth earbud charging case. ' +
     'Tones are generated on-device and written straight to the case; no audio is uploaded.',
   'profile.modelCount': 'Known models',
   'profile.modelCountValue': '{0} and growing',
@@ -859,16 +859,24 @@ export const EN_STRINGS: Record<string, string> = {
     'Audio prepared at 16000 Hz plays back with a higher pitch; exporting at 16700 Hz preserves the original sound.',
   'profile.sizeRuleBody': 'File size = channels × bit depth × sample rate × duration ÷ 8. One second is always 33400 bytes. ' +
     'With no header, duration and size scale exactly; files that are too long cannot be written to the case.',
-  'profile.disclaimer': 'This app is an independent project and is not affiliated with HUAWEI. ' +
-    'HUAWEI, FreeBuds, FreeClip and related marks belong to Huawei Technologies Co., Ltd.',
+  'profile.disclaimer': 'This app is an independent personal project and is not affiliated with ' +
+    'Huawei Technologies Co., Ltd. or its affiliates in any way. ' +
+    'HUAWEI, FreeBuds, FreeClip and other marks are registered trademarks of Huawei Technologies Co., Ltd. ' +
+    'or its affiliates. They are used only to describe how this app works with the earbud models mentioned above. ' +
+    'Make sure you have the rights to any audio you use.',
   'profile.viewPrivacy': 'View privacy policy',
   'profile.aboutTitle': 'About',
   'profile.galleryMissing': 'AppGallery link is not configured yet',
   'profile.galleryFailed': 'Cannot open AppGallery',
   'profile.privacyUnavailable': 'Privacy policy link is unavailable. Try again later.',
+  'privacy.gateBody': 'Please read and agree to the privacy statement before using BoxTone. Bluetooth, NearLink and logs are initialized only after you agree.',
+  'privacy.consent': 'Read and agree',
+  'privacy.exit': 'Exit app',
+  'privacy.viewStatement': 'View privacy statement',
+  'privacy.consentRequired': 'Agree to the privacy statement to continue',
+  'privacy.consentFailed': 'Could not open the privacy statement. Try again later.',
   'profile.writeInfo': 'Case tones are written over Bluetooth SPP; no file export is needed. ' +
     'Put both earbuds in the case with the lid open; the audio link will disconnect temporarily.',
-  'profile.rights': 'Not affiliated with HUAWEI. Make sure you have the rights to any audio you use.',
 
   'fb.title': 'Feedback',
   'fb.submitTitle': 'Send feedback',
@@ -906,6 +914,7 @@ export const EN_STRINGS: Record<string, string> = {
   'fb.contact': 'Contact',
   'fb.contactPlaceholder': 'QQ / email, only if we need more details',
   'fb.agree': 'I have read and agree to',
+  'fb.agreeNoLink': 'I agree that the submitted content is used only for troubleshooting',
   'fb.privacyDoc': 'the Privacy Policy',
   'fb.send': 'Send feedback',
   'fb.empty': 'No feedback submitted yet',
@@ -977,7 +986,6 @@ export const EN_STRINGS: Record<string, string> = {
   'changelog.v111.i4': 'Logs are cleaned automatically, keeping the last 7 days and up to 2 MB',
   'changelog.v111.i5': 'Tone index writes are atomic, and audio files missing from the index are recovered automatically',
   'changelog.v111.i6': 'Feedback screenshot temp files are cleaned up after use',
-  'changelog.v111.i7': 'Corrected the Devices "Write mode" label to "Bluetooth direct"',
   'changelog.v111.i8': 'Improved Bluetooth status refresh by merging consecutive events to avoid duplicate queries',
   'changelog.v111.i9': 'The interface now switches between Chinese and English automatically based on the system region',
   'changelog.v110.note': 'Previous version',
@@ -997,14 +1005,14 @@ export const EN_STRINGS: Record<string, string> = {
   'support.title': 'Supported models',
   'support.subtitle': 'Model detection + protocol probing; list for reference',
   'support.verified': 'Verified models',
-  'support.official': 'Officially supports case tones',
+  'support.official': 'Models with case tones',
   'support.count': '{0}',
   'support.how': 'How compatibility is determined',
   'support.note1': 'Before writing, the app reads the model reported by the earbuds over their private protocol. ' +
     'Only the model field is parsed; the serial number is not read. The model comes from firmware, so renaming the device does not affect it.',
   'support.note2': 'The model is matched first, with the Bluetooth name as a fallback. ' +
     'Special editions and platform variants match by base model prefix.',
-  'support.note3': '"Officially supports case tones" only means the model has the official feature. ' +
+  'support.note3': '"Models with case tones" only means the model has this feature. ' +
     'Custom case tones still require protocol capability probing and format confirmation.',
   'support.note4': 'Format confirmation happens before the first data packet. If the earbuds do not accept ' +
     '16700 Hz / 16-bit audio, they reject it immediately with no data written and no damage.',
@@ -1015,8 +1023,8 @@ export const EN_STRINGS: Record<string, string> = {
   'support.verifiedTag': 'Verified',
   'support.pendingTag': 'Pending',
   'support.detail.freeclip2': 'Protocol 2 · Case-tone writing verified; the special edition shares the same platform but was not tested separately',
-  'support.detail.official': 'Official case-tone support · Custom case tones pending verification',
-  'support.detail.officialHorse': 'Official case-tone support (incl. Year of the Horse edition) · Custom case tones pending verification',
+  'support.detail.official': 'Has case-tone support · Custom case tones pending verification',
+  'support.detail.officialHorse': 'Has case-tone support (incl. Year of the Horse edition) · Custom case tones pending verification',
 
   'row.nearLink': 'NearLink · {0}',
   'row.connected': 'Connected · {0}',
@@ -1025,7 +1033,6 @@ export const EN_STRINGS: Record<string, string> = {
 
   'bt.off': 'Bluetooth is off',
   'bt.needPermission': 'Bluetooth permission needed',
-  'bt.demoConnected': 'Demo mode: simulated earbuds connected',
   'bt.nearLinkConnected': 'Connected via NearLink',
   'bt.audioConnected': 'Audio link connected',
   'bt.nearLinkConnectedNoBt': 'Connected via NearLink (no classic Bluetooth pairing)',
@@ -1033,9 +1040,7 @@ export const EN_STRINGS: Record<string, string> = {
   'bt.notPaired': 'No earbuds paired',
   'bt.unsupported': 'This device does not support the Bluetooth API',
   'bt.readFailed': 'Failed to read Bluetooth status ({0})',
-  'bt.demoDeviceName': 'Demo Earbuds BoxTone',
 
-  'write.demoMode': 'Demo mode uses simulated earbuds and does not write to a real device. Exit demo mode and connect your earbuds first.',
   'write.inProgress': 'A write is in progress. Wait for it to finish.',
   'write.emptyTone': 'Tone data is empty. Generate it again.',
   'write.tooLong': 'Duration {0} exceeds the case limit of {1} s',
@@ -1056,6 +1061,7 @@ export const EN_STRINGS: Record<string, string> = {
   'write.nearLinkHint': '"{0}" is connected via NearLink. Case-tone writing only works over classic Bluetooth: ' +
     'switch the earbuds to classic Bluetooth (turn off NearLink audio) on the Devices page and in system ' +
     '"NearLink & Bluetooth" settings, then try again.',
+  'write.nearLinkSwitchHint': 'The system NearLink switch is still on. During writing, "{0}" may switch back to NearLink and stall the serial transfer. Turn off NearLink in system "NearLink & Bluetooth" settings, then try again.',
   'write.nearLinkFallbackName': 'The earbuds',
   'write.stageReconnect': 'Reconnecting',
   'write.stageWaitReady': 'Waiting for earbuds',
@@ -1102,13 +1108,18 @@ export const EN_STRINGS: Record<string, string> = {
     'remove it from recents, put both earbuds back in the case and open the lid, then retry.',
   'toneErr.notAcceptedNeutral': 'The earbuds did not accept the serial connection. Another app may be using it, ' +
     'or this model does not support custom case tones. Close the app using the connection and retry. ' +
-    'Non-HUAWEI earbuds are not supported.',
+    'Non-HUAWEI earbuds may not be supported yet.',
   'toneErr.linkLost': 'Bluetooth serial communication was interrupted. Close and reopen the lid, then retry.',
   'toneErr.rejected': 'The earbuds rejected the serial connection. The channel may be held by AI Life; ' +
     'remove it from recents and retry.',
+  'toneErr.audioBusy': 'The audio link could not be released. The earbuds may be held by AI Life or another app. Close AI Life, or disconnect the earbud audio in system Bluetooth settings, then retry.',
+  'toneErr.audioHeld': 'The serial connection was refused while the earbud audio link stayed connected ' +
+    '(the system does not let this app disconnect it). Close the case for 5 seconds and open it again, ' +
+    'or disconnect the earbuds in system Bluetooth settings and retry.',
+  'toneErr.audioReclaimed': 'The audio link was reclaimed by another app. Pause video or music, or close AI Life, then retry.',
   'toneErr.rejectedNeutral': 'The earbuds rejected the serial connection. Another app may be using it, ' +
     'or this model does not support custom case tones. Close the app using the connection and retry. ' +
-    'Non-HUAWEI earbuds are not supported.',
+    'Non-HUAWEI earbuds may not be supported yet.',
   'toneErr.badAddress': 'Invalid device address. Unpair and pair again in system Bluetooth settings.',
   'toneErr.serialFailed': 'Serial connection failed',
   'toneErr.serialFailedWith': 'Serial connection failed ({0})',
@@ -1122,7 +1133,7 @@ export const EN_STRINGS: Record<string, string> = {
   'toneErr.cannotConnect': 'Cannot connect to the earbuds. Put both in the case and open the lid, close and reopen ' +
     'the lid after 5 seconds, and close apps such as AI Life that use the connection.',
   'toneErr.cannotConnectNeutral': 'Cannot connect to the earbuds. Put both in the case and open the lid; close it ' +
-    'for 5 seconds and reopen. This feature is not supported on non-HUAWEI earbuds.',
+    'for 5 seconds and reopen. This feature may not be supported on non-HUAWEI earbuds yet.',
   'toneErr.cancelled': 'Cancelled',
   'toneErr.ackTimeout': 'Timed out waiting for the earbuds to respond. Keep both earbuds in the case with the lid open and retry.',
   'toneErr.linkDown': 'Bluetooth connection lost. Reconnect the earbuds.',

@@ -1,5 +1,5 @@
 import { BusinessError } from '@kit.BasicServicesKit';
-import { connection, constant, socket } from '@kit.ConnectivityKit';
+import { a2dp, connection, constant, socket } from '@kit.ConnectivityKit';
 import { MbbSpec } from '../../common/constants/AppConstants';
 import { I18n } from '../../common/i18n/I18n';
 import { ByteUtils } from '../../common/utils/ByteUtils';
@@ -36,6 +36,8 @@ export class ToneErrorReason {
   static readonly UNSUPPORTED: string = 'unsupported';
   static readonly FORMAT: string = 'format';
   static readonly LINK: string = 'link';
+  /** 音频通道断不开且串口被拒：重传也不会好，先让用户断开音频再试 */
+  static readonly AUDIO_HELD: string = 'audioHeld';
   static readonly ACK_TIMEOUT: string = 'ackTimeout';
   static readonly FLUSH_TIMEOUT: string = 'flushTimeout';
   static readonly DATA_WRITTEN: string = 'dataWritten';
@@ -126,6 +128,12 @@ export class ToneClient {
   private infoQueryUntil: number = 0;
   /** 未收录品牌/机型：串口失败时不套用「智慧音频」等华为专属指引 */
   private neutralHints: boolean = false;
+  /**
+   * 本次会话对音频通道的处理结果，只作诊断：
+   * idle=本来没连，released=已断开，kept=系统拒绝断开且仍在连。
+   * 无论取哪种值都不再单独决定成败——串口能不能建起来才算数。
+   */
+  private audioGate: string = 'idle';
 
   constructor(detail: boolean = false) {
     this.detailLog = detail;
@@ -173,6 +181,11 @@ export class ToneClient {
   /** 未收录机型用中性失败提示，避免把非华为耳机误判成智慧音频占用 */
   setNeutralHints(neutral: boolean): void {
     this.neutralHints = neutral;
+  }
+
+  /** 音频通道处理结果（idle/released/kept）：写进 DEVICE_MATRIX，方便日后定位同类问题 */
+  get audioGateState(): string {
+    return this.audioGate;
   }
 
   static cooldownLeft(): number {
@@ -266,7 +279,8 @@ export class ToneClient {
    * 蓝牙栈在设备无响应时可能永远不回调，所以自己加超时；
    * 超时后才成功的连接必须立刻关闭，否则 socket 泄漏并占住串口。
    */
-  private connectOnce(address: string, secure: boolean): Promise<number> {
+  private connectOnce(address: string, secure: boolean,
+    timeoutMs: number = MbbSpec.CONNECT_TIMEOUT_MS): Promise<number> {
     return new Promise<number>((resolve: (value: number) => void, reject: (reason: Object) => void) => {
       let settled: boolean = false;
       const timer: number = setTimeout(() => {
@@ -275,7 +289,7 @@ export class ToneClient {
         }
         settled = true;
         reject(new ToneError(I18n.t('toneErr.connectTimeout')));
-      }, MbbSpec.CONNECT_TIMEOUT_MS);
+      }, timeoutMs);
       const options: socket.SppOptions = {
         uuid: MbbSpec.SPP_UUID,
         secure: secure,
@@ -312,6 +326,12 @@ export class ToneClient {
    *
    * 真机日志里 FreeClip 2 只接受非加密通道居多，secure=true 经常直接返回 -1，
    * 所以优先用上一次成功的取值，其余取值作为兜底。
+   *
+   * 音频通道（A2DP/HFP）只在耳机拒绝串口时才动手断开，断不掉也不算失败：
+   * 双耳放回盒里、手机没有任何播放时，系统仍会把 A2DP 报成「已连接」，
+   * 而 disconnectAllowedProfiles 在音频是系统自己连上的场景下经常直接回 2900099。
+   * 旧版把这个回包当致命错误，于是出现「耳机在盒里、没放任何音频，
+   * 却提示音频通道被占用」的死结——真正被拒的是断开音频，不是串口。
    */
   async connect(address: string, budgetMs: number = MbbSpec.CONNECT_TOTAL_BUDGET_MS): Promise<void> {
     this.closed = false;
@@ -322,6 +342,7 @@ export class ToneClient {
     this.rxCount = 0;
     this.deviceModelCode = '';
     this.address = address;
+    this.audioGate = 'idle';
     const startedAt: number = Date.now();
     /**
      * 通道模式顺序固定为「非加密优先」。
@@ -329,14 +350,21 @@ export class ToneClient {
      * 实测（FreeClip 2）：secure=true 的通道能连上、也能传前 30KB，
      * 但大包传到一半会被耳机掐掉并回 2901054（SPP IO error）。
      * 之前按"上次成功的模式"排序，导致成功/失败交替出现——
-     * 因为断开 A2DP 后第一次连接必然返回 -1，第二次就轮到加密通道。
+     * 因为音频通道重连后第一次连接必然返回 -1，第二次就轮到加密通道。
      */
     const modes: boolean[] = [false, true];
     let lastError: ToneError | null = null;
     let silentFailures: number = 0;
-
-    // 耳机连着手机音频（A2DP/HFP）时串口基本连不上，先替用户断开
-    await this.releaseAudioLink(address);
+    let audioRelinks: number = 0;
+    /** 本次会话是否已经试过断开音频：只试一次，避免反复撞系统的拒绝 */
+    let releaseTried: boolean = false;
+    /** 刚把音频断开：链路正在收敛，下一次重试不必再空等 */
+    let freshRelease: boolean = false;
+    /** 下一枪是断开音频后的第一次连接：用短超时，别卡在 ACL 收敛上 */
+    let probeNext: boolean = false;
+    /** 音频断不开、串口也连续被拒：早点给出准确提示，别让用户白等 40 秒 */
+    let deadEnd: boolean = false;
+    let rejected: number = 0;
 
     const cooling: number = ToneClient.cooldownLeft();
     if (cooling > 0) {
@@ -348,7 +376,7 @@ export class ToneClient {
          * 「合盖再开盖」正是这个时机——用户按智慧音频的习惯这么操作时，
          * 不必再白等十几秒冷却。
          */
-        if (this.audioLinkUp()) {
+        if (this.audioLinked(address)) {
           this.trace('LINK_COOLDOWN_SKIP 音频通道已恢复');
           break;
         }
@@ -367,34 +395,47 @@ export class ToneClient {
     }
 
     for (let round = 0; round < 40; round++) {
-      if (round > 0 && round % 2 === 0) {
-        await this.releaseAudioLink(address);
+      if (deadEnd) {
+        break;
       }
       for (let mode = 0; mode < modes.length; mode++) {
         if (this.closed) {
           throw new CancelledError();
         }
-        if (Date.now() > deadline) {
+        if (deadEnd || Date.now() > deadline) {
           break;
         }
         if (round > 0 || mode > 0) {
-          await sleep(Math.min(MbbSpec.CONNECT_RETRY_GAP_MS + round * 350, 3000));
+          await sleep(Math.min(MbbSpec.CONNECT_RETRY_GAP_MS + round * 200, 1500));
         }
-        // 同一种模式给两次机会：刚断开音频时第一次连接几乎必然被拒（-1），
+        // 同一种模式给两次机会：音频刚断开时第一次连接几乎必然被拒（-1），
         // 立刻改用加密通道反而会落进会断链的那条路
         for (let attempt = 0; attempt < 2; attempt++) {
           if (this.closed) {
             throw new CancelledError();
           }
-          if (Date.now() > deadline) {
+          if (deadEnd || Date.now() > deadline) {
             break;
           }
           if (attempt > 0) {
-            await sleep(1300);
+            // 刚断开音频时已经等过链路收敛，这里不必再空等一轮
+            if (freshRelease) {
+              freshRelease = false;
+            } else {
+              await sleep(MbbSpec.CONNECT_ATTEMPT_GAP_MS);
+            }
           }
           this.trace(`CONNECT try secure=${modes[mode]} round=${round + 1} attempt=${attempt + 1}`);
+          // 音频还没断开时先用短超时探一次：耳机可能直接不回应，
+          // 不值得为一通注定被拒的连接等满 8 秒
+          const audioUp: boolean = !releaseTried && this.audioLinked(address);
+          // 刚断开音频后的第一枪同样短超时：ACL 拆链未收敛时这条请求会彻底卡住
+          const postRelease: boolean = probeNext;
+          probeNext = false;
           try {
-            const id: number = await this.connectOnce(address, modes[mode]);
+            const id: number = await this.connectOnce(address, modes[mode],
+              audioUp ? MbbSpec.CONNECT_PROBE_TIMEOUT_MS :
+                (postRelease ? MbbSpec.CONNECT_POST_RELEASE_MS : MbbSpec.CONNECT_TIMEOUT_MS));
             if (this.closed) {
               socket.sppCloseClientSocket(id);
               throw new CancelledError();
@@ -435,11 +476,48 @@ export class ToneClient {
             this.lastErrorCode = failure.code;
             lastError = failure;
             this.trace(`CONNECT_FAILED secure=${modes[mode]} code=${failure.code} ${failure.message}`);
+            // 只有「刚断开音频又被连回来」才算被别的应用抢走；
+            // 音频一直没断开的情况下不算，否则耳机在盒里也会被误报成被占用
+            if (this.audioGate === 'released' && this.audioLinked(address)) {
+              audioRelinks++;
+              this.trace(`AUDIO_RELINK ${audioRelinks}`);
+              if (audioRelinks >= 2) {
+                const reclaimed: ToneError = new ToneError(I18n.t('toneErr.audioReclaimed'), 2900099);
+                reclaimed.reason = ToneErrorReason.LINK;
+                throw reclaimed;
+              }
+            }
             if (this.broken) {
               throw failure;
             }
-            // -1 是「还没准备好」，值得原样再来一次；其它错误直接换模式
-            const transient: boolean = failure.code === -1 || failure.code === 2900099;
+            // -1 是「还没准备好」，2900099 是「通道忙」：这两种才值得先松开音频再试一次。
+            // 音频还连着时的连接超时同理——耳机被动挂着音频时可能干脆不回应。
+            // 权限、地址、蓝牙开关这类错误断音频也没用，直接换模式
+            const transient: boolean = failure.code === -1 || failure.code === 2900099 ||
+              failure.code === 2900004 || (audioUp && failure.code === 0);
+            if (!releaseTried && transient) {
+              releaseTried = true;
+              const freed: boolean = await this.releaseAudioLink(address);
+              freshRelease = freed;
+              probeNext = freed;
+              if (attempt === 0) {
+                continue;
+              }
+              break;
+            }
+            if (releaseTried) {
+              rejected++;
+              /**
+               * 音频断不开、串口又连续被拒，基本就是真的没路可走了。
+               * 只在这种「音频还被占着」的局面上提前收手（约 15 秒），
+               * 音频已经断开的场景仍然跑满整个预算，不抢走耳机刚唤醒时的机会。
+               * 门槛必须远高于真机观察到的「第 6 次请求才开门」，否则会把成功拦在门外。
+               */
+              if (this.audioGate === 'kept' && rejected >= 14) {
+                deadEnd = true;
+                break;
+              }
+            }
             if (attempt === 0 && transient) {
               continue;
             }
@@ -455,46 +533,163 @@ export class ToneClient {
       }
     }
     this.broken = true;
-    throw lastError !== null ? lastError as ToneError :
-      new ToneError(this.neutralHints
-        ? I18n.t('toneErr.cannotConnectNeutral')
-        : I18n.t('toneErr.cannotConnect'));
-  }
-
-  /** 耳机是否又把音频通道连回来了 */
-  private audioLinkUp(): boolean {
-    try {
-      return connection.getProfileConnectionState() ===
-        constant.ProfileConnectionState.STATE_CONNECTED;
-    } catch (error) {
-      return false;
-    }
+    throw this.finalLinkError(address, lastError);
   }
 
   /**
-   * 断开耳机与手机的音频通道（A2DP/HFP）。
-   * 真机上只要耳机还连着音频，sppConnect 就会一直返回 -1 或 2900099。
+   * 建链彻底失败时的归因。
+   * 音频通道确实还被占着，和「耳机根本没响应」是两种完全不同的处置方式，
+   * 不能都笼统地报「被智慧音频占用」。
    */
-  private async releaseAudioLink(address: string): Promise<void> {
-    let state: number = -1;
+  private finalLinkError(address: string, lastError: ToneError | null): ToneError {
+    if (lastError === null) {
+      return new ToneError(this.neutralHints
+        ? I18n.t('toneErr.cannotConnectNeutral')
+        : I18n.t('toneErr.cannotConnect'));
+    }
+    if (this.audioGate === 'kept' && this.audioLinked(address)) {
+      const held: ToneError = new ToneError(I18n.t('toneErr.audioHeld'),
+        lastError.code !== 0 ? lastError.code : 2900099);
+      held.reason = ToneErrorReason.AUDIO_HELD;
+      held.diagnostic = `AUDIO_GATE=kept last_code=${lastError.code}`;
+      return held;
+    }
+    if (lastError.code === 2900099) {
+      const notAccepted: ToneError = new ToneError(this.neutralHints
+        ? I18n.t('toneErr.notAcceptedNeutral')
+        : I18n.t('toneErr.notAccepted'), 2900099);
+      notAccepted.reason = ToneErrorReason.LINK;
+      return notAccepted;
+    }
+    return lastError;
+  }
+
+  /**
+   * 目标设备的 A2DP 到底连没连：1=连着 0=没连 -1=查不到。
+   * 不用全局 getProfileConnectionState()：它在链路断开后仍会回缓存值，
+   * 耳机放进盒里、早就没有音频通道时它依然报「已连接」。
+   */
+  private static a2dpStateOf(address: string): number {
     try {
-      state = connection.getProfileConnectionState();
+      const profile: a2dp.A2dpSourceProfile = a2dp.createA2dpSrcProfile();
+      const ids: string[] = profile.getConnectedDevices();
+      if (ids.length === 0) {
+        return 0;
+      }
+      for (let i = 0; i < ids.length; i++) {
+        if (ids[i].length > 0 && ids[i].toUpperCase() === address.toUpperCase()) {
+          return 1;
+        }
+      }
+      // 有 A2DP 连接但地址对不上：系统会虚拟化地址，不能据此断言目标设备没连
+      return -1;
     } catch (error) {
-      this.trace(`AUDIO_STATE_FAIL code=${ToneClient.codeOf(error)}`);
-      return;
+      return -1;
     }
-    this.trace(`AUDIO_LINK state=${state}`);
-    if (state !== constant.ProfileConnectionState.STATE_CONNECTED) {
-      return;
+  }
+
+  /** 全局 profile 状态：只作兜底与诊断，耳机放进盒里后它仍会回缓存值 */
+  private static globalProfileState(): number {
+    try {
+      return connection.getProfileConnectionState();
+    } catch (error) {
+      return -1;
     }
+  }
+
+  /** 音频通道是否还占着这台耳机；精确状态取不到时退回全局状态 */
+  private audioLinked(address: string): boolean {
+    const precise: number = ToneClient.a2dpStateOf(address);
+    if (precise === 1) {
+      return true;
+    }
+    if (precise === 0) {
+      return false;
+    }
+    return ToneClient.globalProfileState() === constant.ProfileConnectionState.STATE_CONNECTED;
+  }
+
+  /**
+   * 尽力断开耳机与手机的音频通道（A2DP/HFP）。
+   *
+   * 返回值只表示「音频是否真的断开了」，不再抛错：
+   * 断不掉是要走串口的理由，不是终止写入的理由。
+   * 旧实现连续失败两次就直接判「音频通道被占用」，导致耳机在盒里、
+   * 手机没放任何音频时也永远写不进去（系统建立的音频连接常常断不掉，回 2900099）。
+   */
+  private async releaseAudioLink(address: string): Promise<boolean> {
+    // a2dp 是逐设备查的真实状态，global 是系统的汇总缓存：两者不一致时以 a2dp 为准
+    this.trace(`AUDIO_STATE a2dp=${ToneClient.a2dpStateOf(address)} ` +
+      `global=${ToneClient.globalProfileState()}`);
+    if (!this.audioLinked(address)) {
+      this.audioGate = 'idle';
+      this.trace('AUDIO_LINK_IDLE 音频通道本来就没连');
+      return true;
+    }
+    const startedAt: number = Date.now();
+    let accepted: boolean = false;
     try {
       await connection.disconnectAllowedProfiles(address);
-      this.trace('AUDIO_LINK_RELEASED');
-      // ACL 拆链要一点时间，立刻 sppConnect 必然拿到 -1（实测约 300ms 内）
-      await sleep(1300);
+      accepted = true;
+      this.trace('AUDIO_LINK_RELEASE_SENT');
     } catch (error) {
-      this.trace(`AUDIO_RELEASE_FAIL code=${ToneClient.codeOf(error)} ${ToneClient.messageOf(error)}`);
+      /**
+       * 2900099：这条音频连接不是本应用发起的（通常是开盖后系统自动连的），
+       * 系统不允许第三方断开它。
+       *
+       * 但 connectAllowedProfiles 会把这台设备的 profile「记到本应用名下」，
+       * 之后同一份连接就能被 disconnectAllowedProfiles 断开——
+       * 日志里两次「音频断不开 → 等 14 秒」和一次「断开只用 6ms」的差别正是这个。
+       */
+      this.trace(`AUDIO_RELEASE_DENIED code=${ToneClient.codeOf(error)} ` +
+        `${ToneClient.messageOf(error)}`);
+      try {
+        await connection.connectAllowedProfiles(address);
+        this.trace('AUDIO_ADOPT_OK 已把音频连接认领到本应用');
+        await sleep(250);
+        await connection.disconnectAllowedProfiles(address);
+        accepted = true;
+        this.trace('AUDIO_LINK_RELEASE_SENT adopt=true');
+      } catch (adoptError) {
+        this.trace(`AUDIO_ADOPT_FAIL code=${ToneClient.codeOf(adoptError)} ` +
+          `${ToneClient.messageOf(adoptError)}`);
+      }
     }
+    let dropped: boolean = false;
+    if (accepted) {
+      dropped = await this.waitAudioDrop(address, MbbSpec.AUDIO_DROP_WAIT_MS);
+    }
+    if (dropped) {
+      this.audioGate = 'released';
+      this.trace(`AUDIO_LINK_RELEASED ms=${Date.now() - startedAt}`);
+      // A2DP 掉链到能建串口之间还有一点收敛时间（实测 300ms 内拿不到通道）
+      await sleep(MbbSpec.AUDIO_SETTLE_MS);
+      return true;
+    }
+    this.audioGate = 'kept';
+    // 请求都被拒的情况下不必再等：音频不会掉，等下去只是白耗时间
+    this.trace(accepted ? 'AUDIO_LINK_KEPT 断开请求已受理但通道仍在，改为直接尝试串口' :
+      'AUDIO_LINK_KEPT 音频通道仍在，改为直接尝试串口');
+    return false;
+  }
+
+  /**
+   * 等音频通道真的掉下来：比固定 sleep 快，也不会在它还连着时误判成已断开。
+   *
+   * 掉链是分几拍完成的（日志里 state 先 3 再 0 连报好几次），
+   * 所以要求连续两次读到未连接才认账，免得在 ACL 还在拆的时候就去连串口——
+   * 那种时机下的 sppConnect 会既不成功也不失败，一直挂到超时。
+   */
+  private async waitAudioDrop(address: string, timeoutMs: number): Promise<boolean> {
+    const until: number = Date.now() + timeoutMs;
+    while (Date.now() < until && !this.closed) {
+      if (!this.audioLinked(address)) {
+        await sleep(180);
+        return !this.audioLinked(address);
+      }
+      await sleep(120);
+    }
+    return false;
   }
 
   private bindReader(id: number): void {

@@ -53,7 +53,7 @@ export struct DeviceRow {
       if (this.showAction && this.actionLabel.length > 0) {
         Text(this.actionLabel)
           .fontSize(12)
-          .fontColor(Palette.ACCENT)
+          .fontColor(Palette.ACCENT_TEXT)
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           .borderRadius(999)
           .backgroundColor(Palette.ACCENT_SOFT)

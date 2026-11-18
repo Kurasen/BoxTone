@@ -11,7 +11,7 @@ export struct StatPill {
 
   private textColor(): string {
     if (this.pillTone === 'accent') {
-      return Palette.ACCENT;
+      return Palette.ACCENT_TEXT;
     }
     if (this.pillTone === 'success') {
       return Palette.SUCCESS;

@@ -1,4 +1,5 @@
 import { LogLevel } from '../common/constants/AppConstants';
+import { Palette } from '../common/constants/ThemeConstants';
 import { I18n } from '../common/i18n/I18n';
 
 export interface LogEntry {
@@ -26,15 +27,15 @@ export const LOG_FILTERS: LogFilterOption[] = [
 export class LogLevelStyle {
   public static colorOf(level: string): string {
     if (level === LogLevel.ERROR) {
-      return '#FF6B7A';
+      return Palette.DANGER;
     }
     if (level === LogLevel.WARN) {
-      return '#FFB84D';
+      return Palette.WARNING;
     }
     if (level === LogLevel.INFO) {
-      return '#4ED8FF';
+      return Palette.ACCENT_TEXT;
     }
-    return '#5E697B';
+    return Palette.TEXT_TERTIARY;
   }
 
   public static labelOf(level: string): string {

@@ -8,7 +8,6 @@ import { Logger } from '../common/utils/Logger';
 import { ToneEntry } from '../models/ToneModel';
 import { BtSnapshot } from '../models/DeviceModel';
 import { BluetoothService } from './BluetoothService';
-import { DemoService } from './DemoService';
 import { ToneRepositoryService } from './ToneRepositoryService';
 import { ToneClient, ToneError, ToneErrorReason, ToneProgress } from './bluetooth/ToneClient';
 import { ToneStatus } from './bluetooth/MbbProtocol';
@@ -87,9 +86,6 @@ export class CaseWriteService {
 
   /** 写入前置检查：音效规格 + 文件 + 耳机连接状态 */
   public static check(entry: ToneEntry): WriteCheck {
-    if (DemoService.isActive()) {
-      return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.demoMode'));
-    }
     if (CaseWriteService.writing) {
       return CaseWriteService.checkFail(WriteCode.WRITE_FAILED, I18n.t('write.inProgress'));
     }
@@ -128,9 +124,6 @@ export class CaseWriteService {
 
   /** 设备链路检查：权限、蓝牙开关、当前输出设备、星闪拦截 */
   private static checkLink(): WriteCheck {
-    if (DemoService.isActive()) {
-      return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.demoMode'));
-    }
     if (CaseWriteService.writing) {
       return CaseWriteService.checkFail(WriteCode.WRITE_FAILED, I18n.t('write.inProgress'));
     }
@@ -142,15 +135,24 @@ export class CaseWriteService {
       return CaseWriteService.checkFail(WriteCode.BLUETOOTH_OFF, I18n.t('write.btOff'));
     }
 
-    // 写入必须先连上耳机：串口通道要在已建立的 ACL 上才稳定，
-    // 未连接时直接给出提示，避免用户以为点了没反应
-    const deviceId: string = BluetoothService.activeAudioId();
+    // 优先当前音频设备；A2DP 被系统占用/拒绝断开时，允许用户先在系统蓝牙中断开音频，
+    // 再对唯一已配对的音频设备发起写入
+    let deviceId: string = BluetoothService.activeAudioId();
     if (deviceId.length === 0) {
       if (snapshot.nearLinkName.length > 0) {
         return CaseWriteService.checkFail(WriteCode.NEARLINK_UNSUPPORTED,
           CaseWriteService.nearLinkHint(snapshot.nearLinkName));
       }
+      deviceId = BluetoothService.pairedAudioId();
+    }
+    if (deviceId.length === 0) {
       return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.noEarbud'));
+    }
+    // 星闪开关开启时，写入期间耳机可能自动切回星闪，先要求关闭开关
+    if (snapshot.nearLinkEnabled) {
+      const label: string = snapshot.activeName.length > 0 ? snapshot.activeName : snapshot.nearLinkName;
+      return CaseWriteService.checkFail(WriteCode.NEARLINK_UNSUPPORTED,
+        CaseWriteService.nearLinkSwitchHint(label));
     }
     // 星闪链路没有对三方开放的串口通道：写入前置直接拦截，不给用户白等一次超时
     const viaNearLink: boolean = snapshot.nearLinkBtId.length > 0 &&
@@ -214,6 +216,12 @@ export class CaseWriteService {
   public static nearLinkHint(name: string): string {
     const label: string = name.length > 0 ? name : I18n.t('write.nearLinkFallbackName');
     return I18n.f('write.nearLinkHint', [label]);
+  }
+
+  /** 星闪开关未关闭的提示：写入前必须关闭开关，避免耳机在写入期间切回星闪 */
+  public static nearLinkSwitchHint(name: string): string {
+    const label: string = name.length > 0 ? name : I18n.t('write.nearLinkFallbackName');
+    return I18n.f('write.nearLinkSwitchHint', [label]);
   }
 
   /** 写入耳机盒 */
@@ -281,7 +289,7 @@ export class CaseWriteService {
           Logger.info(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
-            `result=ok bytes=${pcm.length}`);
+            `audio=${client.audioGateState} result=ok bytes=${pcm.length}`);
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
@@ -293,7 +301,7 @@ export class CaseWriteService {
           Logger.warn(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
-            `result=fail code=${failure.code} reason=${failure.reason}`);
+            `audio=${client.audioGateState} result=fail code=${failure.code} reason=${failure.reason}`);
           // 数据已经完整写进耳机、只差"选中"：重传 80KB 既慢又没必要，补一条命令即可
           if (attempt < 2 && CaseWriteService.dataAlreadyWritten(error)) {
             Logger.warn(MODULE, '音效数据已写入，改为只补发选中命令');
@@ -362,7 +370,7 @@ export class CaseWriteService {
           Logger.info(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
-            `result=ok action=restore`);
+            `audio=${client.audioGateState} result=ok action=restore`);
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
@@ -374,7 +382,7 @@ export class CaseWriteService {
           Logger.warn(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
-            `result=fail action=restore code=${failure.code} reason=${failure.reason}`);
+            `audio=${client.audioGateState} result=fail action=restore code=${failure.code} reason=${failure.reason}`);
           if (attempt < 2 && CaseWriteService.isLinkFailure(error)) {
             Logger.warn(MODULE, `恢复默认音链路中断，准备重试一次 code=${client.errorCode}`);
             await CaseWriteService.pause(1200);
@@ -395,7 +403,9 @@ export class CaseWriteService {
     modelName: string): WriteResult {
     const toneError: ToneError = error as ToneError;
     const declaredReason: string = toneError.reason !== undefined ? toneError.reason : '';
-    let reason: string = declaredReason.length > 0 ? declaredReason : WriteReason.OTHER;
+    // 音频通道断不开：界面上仍按链路问题给出重试入口，但不再自动整包重传
+    let reason: string = declaredReason === ToneErrorReason.AUDIO_HELD ? WriteReason.LINK :
+      (declaredReason.length > 0 ? declaredReason : WriteReason.OTHER);
     let code: number = toneError.code !== undefined && toneError.code !== 0
       ? toneError.code : WriteCode.WRITE_FAILED;
     let message: string = toneError.message !== undefined && toneError.message.length > 0
@@ -454,7 +464,7 @@ export class CaseWriteService {
     const toneError: ToneError = error as ToneError;
     const reason: string = toneError.reason !== undefined ? toneError.reason : '';
     if (reason === ToneErrorReason.FLUSH_TIMEOUT || reason === ToneErrorReason.DATA_WRITTEN ||
-      reason === ToneErrorReason.CANCELLED) {
+      reason === ToneErrorReason.CANCELLED || reason === ToneErrorReason.AUDIO_HELD) {
       return false;
     }
     if (reason === ToneErrorReason.LINK || reason === ToneErrorReason.ACK_TIMEOUT) {
@@ -468,7 +478,8 @@ export class CaseWriteService {
     modelName: string): WriteResult {
     const toneError: ToneError = error as ToneError;
     const declaredReason: string = toneError.reason !== undefined ? toneError.reason : '';
-    let reason: string = declaredReason;
+    // 音频断不开归到链路问题：保留可执行的重试指引，但不会触发自动整包重传
+    let reason: string = declaredReason === ToneErrorReason.AUDIO_HELD ? WriteReason.LINK : declaredReason;
     let code: number = toneError.code !== undefined && toneError.code !== 0
       ? toneError.code : WriteCode.WRITE_FAILED;
     let message: string = toneError.message !== undefined && toneError.message.length > 0

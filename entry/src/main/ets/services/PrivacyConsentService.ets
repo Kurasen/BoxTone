@@ -8,6 +8,7 @@ import { AppBootstrap } from './AppBootstrap';
 const MODULE: string = 'PrivacyConsent';
 const EVENT_PRIVACY_STATE_CHANGED: string = 'usual.event.PRIVACY_STATE_CHANGED';
 const RESULT_AGREED: number = 1;
+const RESULT_DISAGREED: number = 0;
 
 enum ConsentState {
   AGREED,
@@ -58,6 +59,26 @@ export class PrivacyConsentService {
     });
   }
 
+  /**
+   * 主动拉起系统标准化隐私弹窗（用户关闭弹窗或拒绝后，阻断页可再次请求）。
+   * 不在应用内自绘隐私弹窗，同意与否由系统弹窗决定。
+   */
+  public static async requestConsent(context: common.UIAbilityContext): Promise<boolean> {
+    const result: privacyManager.ConsentResult = await privacyManager.requestAppPrivacyConsent(context);
+    const results: privacyManager.AppPrivacyResult[] = result.results;
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].type === privacyManager.AppPrivacyType.PRIVACY_AGREEMENT) {
+        const agreed: boolean = results[i].result === privacyManager.AppPrivacyResultType.FULL_MODE_AGREED;
+        Logger.info(MODULE, `系统隐私弹窗结果=${agreed ? '同意' : '未同意'}`);
+        if (agreed) {
+          PrivacyConsentService.ensureInit();
+        }
+        return agreed;
+      }
+    }
+    return false;
+  }
+
   private static query(): ConsentState {
     try {
       const results: privacyManager.AppPrivacyResult[] = privacyManager.getAppPrivacyResult();
@@ -97,6 +118,9 @@ export class PrivacyConsentService {
                 const payload: PrivacyStatePayload = JSON.parse(raw) as PrivacyStatePayload;
                 if (payload.resultType === RESULT_AGREED) {
                   PrivacyConsentService.ensureInit();
+                } else if (payload.resultType === RESULT_DISAGREED) {
+                  // 保持未初始化，主界面继续显示隐私阻断页，由用户重新请求或退出
+                  Logger.info(MODULE, '用户未同意隐私声明');
                 }
               } catch (parseError) {
                 Logger.exception(MODULE, '解析隐私签署事件失败', parseError as BusinessError);
@@ -117,7 +141,7 @@ export class PrivacyConsentService {
       return;
     }
     AppBootstrap.init(context);
-    // 页面可能先于同意完成构建，这里补一次刷新（统计与演示状态都依赖已初始化的服务）
+    // 页面可能先于同意完成构建，这里补一次刷新（统计与业务服务都依赖已初始化的服务）
     EventBus.emit(AppEvent.TONE_CHANGED, 1);
     EventBus.emit(AppEvent.PRIVACY_READY, 1);
   }

@@ -99,21 +99,31 @@ fi
 [[ "$MODE" == "check" ]] && { echo; ok "预检通过（未构建）"; exit 0; }
 
 echo
-if [[ $HAS_WRAPPER -eq 0 ]]; then
-  info "无法在命令行构建，请用 DevEco Studio 打开工程后："
-  echo "    ${DIM}Build → Build Hap(s) / APP(s) → Build Hap(s)${NC}"
-  echo "    ${DIM}或右键 entry → Build → Build Hap${NC}"
-  echo
-  echo "  首次构建必须先在 IDE 内完成签名配置（需登录华为账号）："
-  echo "    ${DIM}File → Project Structure → Signing Configs → 勾选 Automatically generate signature${NC}"
-  echo
-  echo "  产物位置："
-  echo "    ${DIM}entry/build/default/outputs/default/entry-default-signed.hap${NC}"
-  exit 0
+# 优先用工程内的 hvigorw 包装器；没有就直接用 DevEco 自带的 node + hvigor
+if [[ $HAS_WRAPPER -eq 1 ]]; then
+  BUILD_CMD=(./hvigorw)
+else
+  DEVECO_HOME="${DEVECO_HOME:-D:/App/DevEco Studio}"
+  export DEVECO_SDK_HOME="${DEVECO_SDK_HOME:-$DEVECO_HOME/sdk}"
+  if [[ -x "$DEVECO_HOME/tools/node/node.exe" && -f "$DEVECO_HOME/tools/hvigor/bin/hvigorw.js" ]]; then
+    BUILD_CMD=("$DEVECO_HOME/tools/node/node.exe" "$DEVECO_HOME/tools/hvigor/bin/hvigorw.js")
+    ok "使用 DevEco 自带 hvigor：$DEVECO_HOME"
+  else
+    info "无法在命令行构建，请用 DevEco Studio 打开工程后："
+    echo "    ${DIM}Build → Build Hap(s) / APP(s) → Build Hap(s)${NC}"
+    echo "    ${DIM}或右键 entry → Build → Build Hap${NC}"
+    echo
+    echo "  首次构建必须先在 IDE 内完成签名配置（需登录华为账号）："
+    echo "    ${DIM}File → Project Structure → Signing Configs → 勾选 Automatically generate signature${NC}"
+    echo
+    echo "  产物位置："
+    echo "    ${DIM}entry/build/default/outputs/default/entry-default-signed.hap${NC}"
+    exit 0
+  fi
 fi
 
 info "构建 debug HAP"
-if ./hvigorw --mode module -p product=default -p buildMode=debug -p requiredDeviceType=phone assembleHap --no-daemon; then
+if "${BUILD_CMD[@]}" --mode module -p product=default -p buildMode=debug -p requiredDeviceType=phone assembleHap --no-daemon; then
   echo
   HAP=$(ls -1 entry/build/default/outputs/default/*.hap 2>/dev/null | head -1)
   if [[ -n "$HAP" ]]; then

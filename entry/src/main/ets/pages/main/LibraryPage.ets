@@ -319,12 +319,16 @@ export struct LibraryPage {
       });
       return;
     }
+    const isLink: boolean = result.reason === WriteReason.LINK;
     this.getUIContext().showAlertDialog({
       title: I18n.t('lib.writeIncomplete'),
       message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
       primaryButton: {
-        value: I18n.t('common.ok'),
+        value: isLink ? I18n.t('device.openSettings') : I18n.t('common.ok'),
         action: (): void => {
+          if (isLink) {
+            this.openBluetoothSettings();
+          }
         }
       },
       secondaryButton: {
@@ -334,6 +338,13 @@ export struct LibraryPage {
           EventBus.emit(AppEvent.OPEN_LOG, 1);
         }
       }
+    });
+  }
+
+  private openBluetoothSettings(): void {
+    BluetoothService.openSystemBluetoothSettings().catch((error: BusinessError) => {
+      Logger.warn(MODULE, `打开系统蓝牙设置失败 code=${error.code}`);
+      this.toast(I18n.t('device.openSettingsFailed'));
     });
   }
 
@@ -569,7 +580,7 @@ export struct LibraryPage {
                 Row() {
                   Text(this.writeStage.length > 0 ? this.writeStage : I18n.t('lib.writingStage'))
                     .fontSize(11)
-                    .fontColor(Palette.ACCENT)
+                    .fontColor(Palette.ACCENT_TEXT)
                     .layoutWeight(1)
                   Text(`${this.writeRatio}%`)
                     .fontSize(11)
