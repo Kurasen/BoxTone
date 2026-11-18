@@ -93,6 +93,16 @@ export class ToneClient {
   private static lastCloseAt: number = 0;
   /** 耳机收掉 SPP 通道后 15 秒内会拒绝连接，记为全局冷却 */
   private static cooldownUntil: number = 0;
+  /** 热会话：上一次操作结束后留下的通道，供下一次操作直接复用 */
+  private static session: ToneClient | null = null;
+  /** 热会话的回收定时器 */
+  private static sweepTimer: number = -1;
+  /**
+   * 闪存沉降期结束时刻。
+   * 写完音效后耳机在擦闪存，这段时间内不能开始任何新传输——无论通道是否还在。
+   * 做成全局而不是实例字段：万一会话已经断了，新建的连接同样要等够这段时间。
+   */
+  private static settleUntil: number = 0;
 
   private clientSocket: number = -1;
   private address: string = '';
@@ -130,7 +140,7 @@ export class ToneClient {
   private neutralHints: boolean = false;
   /**
    * 本次会话对音频通道的处理结果，只作诊断：
-   * idle=本来没连，released=已断开，kept=系统拒绝断开且仍在连。
+   * idle=本来没连，released=已断开，kept=系统拒绝断开且仍在连，reused=复用了热会话没动过音频。
    * 无论取哪种值都不再单独决定成败——串口能不能建起来才算数。
    */
   private audioGate: string = 'idle';
@@ -191,6 +201,77 @@ export class ToneClient {
   static cooldownLeft(): number {
     const left: number = ToneClient.cooldownUntil - Date.now();
     return left > 0 ? left : 0;
+  }
+
+  /** 是否留着一条热会话（恢复音频通道时打出来，用来判断两者会不会互相挤掉） */
+  static hasSession(): boolean {
+    return ToneClient.session !== null;
+  }
+
+  /** 闪存沉降期还剩多久：这段时间内不能开始新的传输 */
+  static settleLeft(): number {
+    const left: number = ToneClient.settleUntil - Date.now();
+    return left > 0 ? left : 0;
+  }
+
+  /**
+   * 取一条可用的音效会话。
+   *
+   * 同一台耳机上一条通道还活着就直接复用：一次 sppConnect 在真机上约 3 秒
+   * （系统要先做 SDP 再握手），而连续操作音效时这一步纯属重复劳动。
+   * 复用不改变协议行为，只是把「建链」这件事摊到第一次操作上。
+   */
+  static acquire(address: string, detail: boolean = true): ToneClient {
+    const pooled: ToneClient | null = ToneClient.session;
+    if (pooled !== null) {
+      ToneClient.session = null;
+      ToneClient.cancelSweep();
+      if (pooled.address === address && pooled.isOpen()) {
+        Logger.info(MODULE, `SESSION_REUSE 复用热会话 idle=${Date.now() - pooled.lastIoAt}ms`);
+        return pooled;
+      }
+      Logger.info(MODULE, 'SESSION_STALE 热会话已失效，改为重新建链');
+      pooled.close();
+    }
+    return new ToneClient(detail);
+  }
+
+  /** 用完交还：留一段热连接给下一次用；已经坏掉或用户取消则直接关 */
+  release(): void {
+    if (this.closed || this.broken || this.clientSocket < 0) {
+      this.close();
+      return;
+    }
+    this.transferring = false;
+    // 旧回包留在队列里会干扰下一次的匹配（例如把上一条 TONE_SET 回执当成新回执）
+    this.received = [];
+    ToneClient.adopt(this);
+  }
+
+  private static adopt(client: ToneClient): void {
+    const held: ToneClient | null = ToneClient.session;
+    if (held !== null && held !== client) {
+      held.close();
+    }
+    ToneClient.session = client;
+    ToneClient.cancelSweep();
+    ToneClient.sweepTimer = setTimeout(() => {
+      ToneClient.sweepTimer = -1;
+      const expired: ToneClient | null = ToneClient.session;
+      ToneClient.session = null;
+      if (expired !== null) {
+        Logger.info(MODULE, `SESSION_EXPIRE 闲置超过 ${MbbSpec.SESSION_TTL_MS}ms，关闭串口`);
+        expired.close();
+      }
+    }, MbbSpec.SESSION_TTL_MS);
+    Logger.info(MODULE, `SESSION_KEEP ttl=${MbbSpec.SESSION_TTL_MS}ms`);
+  }
+
+  private static cancelSweep(): void {
+    if (ToneClient.sweepTimer >= 0) {
+      clearTimeout(ToneClient.sweepTimer);
+      ToneClient.sweepTimer = -1;
+    }
   }
 
   static noteLinkDown(reason: string): void {
@@ -334,6 +415,23 @@ export class ToneClient {
    * 却提示音频通道被占用」的死结——真正被拒的是断开音频，不是串口。
    */
   async connect(address: string, budgetMs: number = MbbSpec.CONNECT_TOTAL_BUDGET_MS): Promise<void> {
+    /**
+     * 热会话直接返回：串口已经开着，再走一遍 SDP 与握手只是白花 3 秒。
+     * 沉降期仍然要等——那是「耳机还在擦闪存」的限制，跟通道在不在无关。
+     */
+    if (this.clientSocket >= 0 && !this.broken && !this.closed && this.address === address) {
+      const settle: number = ToneClient.settleLeft();
+      if (settle > 0) {
+        this.trace(`SESSION_SETTLE wait=${settle}ms`);
+        await sleep(settle);
+      }
+      if (this.closed) {
+        throw new CancelledError();
+      }
+      this.audioGate = 'reused';
+      Logger.info(MODULE, `CONNECTED reused 复用热会话 ms=0 protocol=${this.protocolUsed}`);
+      return;
+    }
     this.closed = false;
     this.broken = false;
     this.retiredAt = 0;
@@ -386,6 +484,20 @@ export class ToneClient {
         throw new CancelledError();
       }
       this.trace(`LINK_COOLDOWN_DONE ms=${Date.now() - startedAt}`);
+    }
+
+    /**
+     * 闪存沉降期：刚写完一段音效，耳机正在擦写，这时候连上也发不出东西。
+     * 会话还活着的情况在上面就返回了，这里是「会话已断、只能重连」的分支，
+     * 同样要等够时间，否则会退回成连续被拒、白耗十几秒。
+     */
+    const settling: number = ToneClient.settleLeft();
+    if (settling > 0) {
+      this.trace(`FLASH_SETTLE wait=${settling}ms`);
+      await sleep(settling);
+      if (this.closed) {
+        throw new CancelledError();
+      }
     }
 
     const deadline: number = Date.now() + budgetMs;
@@ -1410,16 +1522,18 @@ export class ToneClient {
   }
 
   /**
-   * 结束一条已用完的链路。
-   * 写完音效后耳机正在刷闪存，接下来十几秒既不接受新连接也会掐掉旧通道，
-   * 主动释放比留着更有用。
+   * 一段写入结束。
+   *
+   * 旧实现这里直接关 socket 并给全局冷却：耳机写闪存期间确实不能开始新传输，
+   * 但「不能传」不等于「通道已失效」。现在通道留着，只记一个沉降期，
+   * 下一次操作在沉降结束后直接复用，省掉重新建链的 3 秒。
+   * 若耳机自己把通道收掉了，保活会在沉降期结束后立刻发现并降级为重连。
    */
   private retire(): void {
     this.retiredAt = Date.now();
     this.transferring = false;
-    this.stopKeepAlive();
-    this.closeSocket();
-    ToneClient.noteLinkDown('tone applied');
+    ToneClient.settleUntil = Date.now() + MbbSpec.SESSION_SETTLE_MS;
+    Logger.info(MODULE, `TONE_SETTLED settle=${MbbSpec.SESSION_SETTLE_MS}ms`);
   }
 
   /** 保活：耳机静默约 4 秒就会收掉串口，通道要一直有人说话 */
@@ -1438,11 +1552,18 @@ export class ToneClient {
         this.trace('KEEPALIVE_SKIP transferring');
         return;
       }
+      if (Date.now() < ToneClient.settleUntil) {
+        // 写完音效后的沉降期：耳机正在擦闪存，插一条查询会被当成中止信号
+        this.trace('KEEPALIVE_SKIP settle');
+        return;
+      }
       this.send(ByteUtils.fromHex('2bb4010110'), true).catch((error: Error) => {
         this.trace(`KEEPALIVE_FAIL ${ToneClient.messageOf(error)}`);
         this.stopKeepAlive();
         this.broken = true;
-        ToneClient.noteLinkDown('keepalive');
+        // 空闲期掉线是常态（合盖、耳机休眠），不设全局冷却：
+        // 否则用户再打开盒子写入时会白等十几秒，而这条通道本来就没在传输
+        Logger.info(MODULE, 'SESSION_DROPPED 热会话已断开');
       });
     }, 3000);
   }
@@ -1486,6 +1607,10 @@ export class ToneClient {
 
   /** 用户取消 / 页面退出 */
   close(): void {
+    if (ToneClient.session === this) {
+      ToneClient.session = null;
+      ToneClient.cancelSweep();
+    }
     this.closed = true;
     this.closeSocket();
     this.assembler.reset();

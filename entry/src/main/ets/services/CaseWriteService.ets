@@ -263,7 +263,8 @@ export class CaseWriteService {
     try {
       while (attempt < 2) {
         attempt++;
-        const client: ToneClient = new ToneClient(true);
+        // 上一条热会话还活着就直接复用，省掉 3 秒建链
+        const client: ToneClient = ToneClient.acquire(deviceId, true);
         client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
         try {
           if (onProgress !== undefined) {
@@ -328,7 +329,7 @@ export class CaseWriteService {
           }
           return failure;
         } finally {
-          client.close();
+          client.release();
         }
       }
       return failure;
@@ -360,7 +361,8 @@ export class CaseWriteService {
     try {
       while (attempt < 2) {
         attempt++;
-        const client: ToneClient = new ToneClient(true);
+        // 上一条热会话还活着就直接复用，省掉 3 秒建链
+        const client: ToneClient = ToneClient.acquire(deviceId, true);
         client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
         try {
           await client.connect(deviceId);
@@ -390,7 +392,7 @@ export class CaseWriteService {
           }
           return failure;
         } finally {
-          client.close();
+          client.release();
         }
       }
       return failure;
@@ -420,7 +422,8 @@ export class CaseWriteService {
     try {
       while (attempt < 2) {
         attempt++;
-        const client: ToneClient = new ToneClient(true);
+        // 上一条热会话还活着就直接复用，省掉 3 秒建链
+        const client: ToneClient = ToneClient.acquire(deviceId, true);
         client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
         try {
           await client.connect(deviceId);
@@ -451,7 +454,7 @@ export class CaseWriteService {
           }
           return failure;
         } finally {
-          client.close();
+          client.release();
         }
       }
       return failure;
@@ -500,7 +503,7 @@ export class CaseWriteService {
 
   /** 重连一次，只补发选中命令 */
   private static async applyOnly(deviceId: string): Promise<WriteResult | null> {
-    const client: ToneClient = new ToneClient(true);
+    const client: ToneClient = ToneClient.acquire(deviceId, true);
     client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId,
       BluetoothService.getSnapshot().activeName));
     try {
@@ -516,7 +519,7 @@ export class CaseWriteService {
       Logger.warn(MODULE, `补发选中失败：${(error as ToneError).message}`);
       return null;
     } finally {
-      client.close();
+      client.release();
     }
   }
 
@@ -629,9 +632,11 @@ export class CaseWriteService {
         return;
       }
       BluetoothService.connect(deviceId).then(() => {
-        Logger.info(MODULE, `已恢复音频通道 ${FormatUtils.maskAddress(deviceId)}`);
+        Logger.info(MODULE, `已恢复音频通道 ${FormatUtils.maskAddress(deviceId)} ` +
+          `session=${ToneClient.hasSession() ? 'held' : 'closed'}`);
       }).catch((error: BusinessError) => {
-        Logger.info(MODULE, `恢复音频通道失败（不影响音效）code=${error.code}`);
+        Logger.info(MODULE, `恢复音频通道失败（不影响音效）code=${error.code} ` +
+          `session=${ToneClient.hasSession() ? 'held' : 'closed'}`);
       });
     }, AUDIO_RESTORE_DELAY_MS);
   }
