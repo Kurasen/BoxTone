@@ -3,6 +3,7 @@ import { window } from '@kit.ArkUI';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
+import { ToneCatalog, ToneOption } from '../../common/constants/ToneCatalog';
 import { DateUtils } from '../../common/utils/DateUtils';
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
@@ -34,6 +35,8 @@ export struct LibraryPage {
   @State editingName: string = '';
   @State sortMode: string = 'time';
   @State restoring: boolean = false;
+  @State builtinBusy: boolean = false;
+  @State builtinLabel: string = '';
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
@@ -492,13 +495,80 @@ export struct LibraryPage {
 
   @Builder
   buildRestoreAction() {
-    GhostButton({
-      ghostLabel: this.restoring ? I18n.t('lib.restoring') : I18n.t('lib.restoreDefault'),
-      ghostEnabled: !this.restoring && this.writingId.length === 0,
-      onTap: (): void => {
-        this.confirmRestore();
+    Column({ space: 8 }) {
+      GhostButton({
+        ghostLabel: this.restoring ? I18n.t('lib.restoring') : I18n.t('lib.restoreDefault'),
+        ghostEnabled: !this.restoring && !this.builtinBusy && this.writingId.length === 0,
+        onTap: (): void => {
+          this.confirmRestore();
+        }
+      })
+      // 内置音效只在收录过音效表的机型上出现，没有表就不给对不上的名字
+      if (this.builtinOptions().length > 0) {
+        Row({ space: 8 }) {
+          Text(I18n.t('lib.builtinPick'))
+            .fontSize(11)
+            .fontColor(Palette.TEXT_SECONDARY)
+          Select(this.builtinOptions())
+            .selected(-1)
+            .value(this.builtinBusy ? I18n.t('lib.builtinBusy') : this.builtinLabel)
+            .font({ size: 11 })
+            .optionFont({ size: 12 })
+            .selectedOptionFont({ size: 12 })
+            .enabled(!this.restoring && !this.builtinBusy && this.writingId.length === 0)
+            .layoutWeight(1)
+            .onSelect((index: number): void => {
+              this.pickBuiltIn(index);
+            })
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4 })
       }
-    })
+    }
+    .width('100%')
+  }
+
+  /** 当前机型可切换的内置音效；未收录型号返回空 */
+  private builtinCatalog(): ToneOption[] {
+    return ToneCatalog.options(BluetoothService.deviceModelOf(BluetoothService.activeAudioId()));
+  }
+
+  private builtinOptions(): SelectOption[] {
+    const catalog: ToneOption[] = this.builtinCatalog();
+    const options: SelectOption[] = [];
+    for (let i = 0; i < catalog.length; i++) {
+      options.push({ value: ToneCatalog.label(catalog[i]) });
+    }
+    return options;
+  }
+
+  /** 切换内置音效：不写闪存，只发一条选中命令 */
+  private async pickBuiltIn(index: number): Promise<void> {
+    const catalog: ToneOption[] = this.builtinCatalog();
+    if (index < 0 || index >= catalog.length) {
+      return;
+    }
+    if (this.builtinBusy || this.restoring || this.writingId.length > 0) {
+      return;
+    }
+    const option: ToneOption = catalog[index];
+    const label: string = ToneCatalog.label(option);
+    this.builtinBusy = true;
+    EventBus.emitText(AppEvent.BUSY_CHANGED, I18n.t('lib.builtinBusy'));
+    Logger.info(MODULE, `切换内置音效 id=${option.id}`);
+    try {
+      const result: WriteResult = await CaseWriteService.selectBuiltIn(option.id, label);
+      if (result.ok) {
+        this.builtinLabel = label;
+      }
+      this.toast(result.message);
+    } catch (error) {
+      Logger.exception(MODULE, '切换内置音效异常', error as BusinessError);
+      this.toast(I18n.t('write.builtinFailed'));
+    } finally {
+      this.builtinBusy = false;
+      EventBus.emitText(AppEvent.BUSY_CHANGED, '');
+    }
   }
 
   @Builder

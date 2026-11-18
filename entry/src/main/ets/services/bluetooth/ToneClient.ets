@@ -1027,6 +1027,16 @@ export class ToneClient {
 
   private async setTone(id: number, selected: boolean, volume: number,
     timeoutMs: number = MbbSpec.ACK_TIMEOUT_MS, attempts: number = 2): Promise<ToneStatus> {
+    const status: ToneStatus = await this.setToneRaw(id, selected, volume, timeoutMs, attempts);
+    if (!status.enabled || status.selected !== selected) {
+      throw new ToneError(I18n.t('toneErr.applyFailed'));
+    }
+    return status;
+  }
+
+  /** 发一条「选中音效」设置，只回包解析、不做语义校验：内置音效的 selected 语义随固件不同 */
+  private async setToneRaw(id: number, selected: boolean, volume: number,
+    timeoutMs: number = MbbSpec.ACK_TIMEOUT_MS, attempts: number = 2): Promise<ToneStatus> {
     const clamped: number = volume < 0 ? 0 : (volume > 15 ? 15 : volume);
     const setting: Uint8Array = new Uint8Array(12);
     setting[0] = 1;
@@ -1039,10 +1049,27 @@ export class ToneClient {
     const status: ToneStatus = MbbProtocol.parseStatus(await this.command(payload, timeoutMs, attempts));
     this.trace(`TONE_SET id=${id} sel=${selected} vol=${clamped} -> enabled=${status.enabled} ` +
       `master=${status.master} tone=${status.toneId} selected=${status.selected}`);
-    if (!status.enabled || status.selected !== selected) {
+    return status;
+  }
+
+  /**
+   * 选中盒端内置音效：只切换播放哪一段，不写闪存，失败也能随时切回。
+   *
+   * selected 标志在不同固件上语义不一致（自定义槽位用 true、恢复出厂用 false），
+   * 这里不猜：先按"恢复出厂"的写法发一次，用回包里的 toneId 是否等于目标判断，
+   * 没生效再补一次 selected=true。
+   */
+  async selectBuiltIn(id: number): Promise<ToneStatus> {
+    const current: ToneStatus = await this.query();
+    const first: ToneStatus = await this.setToneRaw(id, false, current.volume);
+    if (first.toneId === id) {
+      return first;
+    }
+    const second: ToneStatus = await this.setToneRaw(id, true, current.volume);
+    if (second.toneId !== id) {
       throw new ToneError(I18n.t('toneErr.applyFailed'));
     }
-    return status;
+    return second;
   }
 
   async queryStatus(): Promise<ToneStatus> {

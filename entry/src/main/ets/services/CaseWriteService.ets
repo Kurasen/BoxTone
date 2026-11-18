@@ -399,6 +399,67 @@ export class CaseWriteService {
     }
   }
 
+  /**
+   * 切换盒端内置提示音：只发「选中」命令，不写闪存，几秒内完成。
+   * 失败不影响已经写进去的自定义音效，随时可以再切回来。
+   */
+  public static async selectBuiltIn(id: number, label: string): Promise<WriteResult> {
+    const link: WriteCheck = CaseWriteService.checkLink();
+    if (!link.ok) {
+      Logger.warn(MODULE, `切换内置音效前置检查未通过 code=${link.code}：${link.message}`);
+      return reject(link.code, link.message, WriteReason.BLOCKED);
+    }
+    CaseWriteService.cancelPendingRestore();
+    CaseWriteService.writing = true;
+    const deviceId: string = link.deviceId;
+    const modelName: string = BluetoothService.getSnapshot().activeName;
+    const linkMode: string = BluetoothService.getSnapshot().nearLinkName.length > 0 ? 'nearlink' : 'bt';
+    Logger.info(MODULE, `切换内置音效 id=${id}（${label}） → ${FormatUtils.maskAddress(deviceId)}`);
+    let attempt: number = 0;
+    let failure: WriteResult = reject(WriteCode.WRITE_FAILED, I18n.t('write.builtinFailed'));
+    try {
+      while (attempt < 2) {
+        attempt++;
+        const client: ToneClient = new ToneClient(true);
+        client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
+        try {
+          await client.connect(deviceId);
+          const status: ToneStatus = await client.selectBuiltIn(id);
+          Logger.info(MODULE, `已切换到内置音效 id=${status.toneId} 音量=${status.volume}`);
+          Logger.info(MODULE, `DEVICE_MATRIX hwModel=${BluetoothService.deviceModelOf(deviceId)} ` +
+            `btName=${modelName.length > 0 ? modelName : '未知'} ` +
+            `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
+            `audio=${client.audioGateState} result=ok action=tone id=${status.toneId}`);
+          CaseWriteService.scheduleAudioRestore(deviceId);
+          return {
+            ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
+            message: I18n.f('write.builtinSuccess', [label])
+          };
+        } catch (error) {
+          const toneError: ToneError = error as ToneError;
+          const message: string = toneError.message !== undefined && toneError.message.length > 0
+            ? toneError.message : I18n.t('write.builtinFailed');
+          const reason: string = toneError.reason !== undefined && toneError.reason.length > 0
+            ? toneError.reason : WriteReason.OTHER;
+          Logger.warn(MODULE, `切换内置音效失败 code=${toneError.code} reason=${reason}：${message}`);
+          failure = reject(toneError.code !== undefined && toneError.code !== 0
+            ? toneError.code : WriteCode.WRITE_FAILED, message, reason,
+            CaseWriteService.buildDiagnostic(null, deviceId, modelName, error));
+          if (attempt < 2 && CaseWriteService.isLinkFailure(error)) {
+            await CaseWriteService.pause(1200);
+            continue;
+          }
+          return failure;
+        } finally {
+          client.close();
+        }
+      }
+      return failure;
+    } finally {
+      CaseWriteService.writing = false;
+    }
+  }
+
   private static describeRestoreFailure(error: Object, deviceId: string,
     modelName: string): WriteResult {
     const toneError: ToneError = error as ToneError;

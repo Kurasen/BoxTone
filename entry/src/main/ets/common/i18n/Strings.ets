@@ -155,6 +155,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'lib.writingNow': '正在写入音效，完成后再试',
   'lib.restoreDefault': '恢复默认开盒音',
   'lib.restoring': '正在恢复默认音…',
+  'lib.builtinPick': '内置音效',
+  'lib.builtinBusy': '正在切换内置音效…',
   'lib.restoreTitle': '恢复默认开盒音',
   'lib.restoreMessage': '{0}会把充电盒当前使用的声音切换为出厂默认，音效库里的文件不会被删除。\n\n' +
     '请确认双耳已放入盒内并打开盒盖，然后继续。',
@@ -483,6 +485,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'write.restoreInterrupted': '恢复被中断：耳机收回了串口，请合盖 3 秒后再开盖重试',
   'write.restoreSppError': '串口在恢复时断开。请合盖 3 秒后再开盖重试',
   'write.restoreSuccess': '已恢复默认开盒音。合盖 3 秒再开盖即可听到出厂提示音',
+  'write.builtinSuccess': '已切换到内置音效「{0}」。合盖 3 秒再开盖即可听到',
+  'write.builtinFailed': '切换内置音效失败，请重试',
   'write.diagAction': '操作：恢复默认开盒音',
   'write.interrupted': '写入被中断：耳机收回了串口，请合盖 3 秒后再开盖重试',
   'write.sppError': '串口在传输中断开。耳机可能还在写入上一段音效，请合盖 3 秒后再开盖重试',
@@ -756,6 +760,8 @@ export const EN_STRINGS: Record<string, string> = {
   'lib.writingNow': 'A tone is being written. Try again when it finishes.',
   'lib.restoreDefault': 'Restore default case tone',
   'lib.restoring': 'Restoring…',
+  'lib.builtinPick': 'Built-in tone',
+  'lib.builtinBusy': 'Switching built-in tone…',
   'lib.restoreTitle': 'Restore default case tone',
   'lib.restoreMessage': '{0}This switches the case back to the factory default sound. Files in the tone library are not deleted.\n\n' +
     'Make sure both earbuds are in the case with the lid open, then continue.',
@@ -1081,6 +1087,8 @@ export const EN_STRINGS: Record<string, string> = {
   'write.restoreInterrupted': 'Restore interrupted: the earbuds closed the serial port. Close the lid for 3 seconds, reopen, and retry.',
   'write.restoreSppError': 'The serial connection dropped during restore. Close the lid for 3 seconds, reopen, and retry.',
   'write.restoreSuccess': 'Default case tone restored. Close the lid for 3 seconds, then open it to hear the factory tone.',
+  'write.builtinSuccess': 'Switched to the built-in tone "{0}". Close the lid for 3 seconds, then open it to hear it.',
+  'write.builtinFailed': 'Failed to switch the built-in tone. Try again.',
   'write.diagAction': 'Action: restore default case tone',
   'write.interrupted': 'Write interrupted: the earbuds closed the serial port. Close the lid for 3 seconds, then reopen and try again.',
   'write.sppError': 'The serial connection dropped during transfer. The earbuds may still be writing the previous tone. ' +
