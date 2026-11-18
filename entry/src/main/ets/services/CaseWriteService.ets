@@ -262,6 +262,8 @@ export class CaseWriteService {
     CaseWriteService.writing = true;
     const deviceId: string = check.deviceId;
     const startedAt: number = Date.now();
+    /** 其中「等耳机擦完上一条」占了多久：日志里拆开看，避免把固件收尾算成我们的耗时 */
+    let settleWait: number = 0;
     const modelName: string = BluetoothService.getSnapshot().activeName;
     const linkMode: string = BluetoothService.getSnapshot().nearLinkName.length > 0 ? 'nearlink' : 'bt';
     Logger.info(MODULE, `开始写入「${entry.name}」 ${entry.durationMs}ms / ${entry.byteLength} 字节 → ` +
@@ -294,10 +296,23 @@ export class CaseWriteService {
         try {
           if (onProgress !== undefined) {
             const cooling: number = ToneClient.cooldownLeft();
-            onProgress(0.02, attempt > 1 ? I18n.t('write.stageReconnect') :
-              (cooling > 0 ? I18n.t('write.stageWaitReady') : I18n.t('write.stageConnect')));
+            const settling: number = attempt > 1 ? 0 : ToneClient.settleLeft();
+            settleWait = settling > 0 ? settling : 0;
+            let stage: string = I18n.t('write.stageConnect');
+            if (attempt > 1) {
+              stage = I18n.t('write.stageReconnect');
+            } else if (settling > 0) {
+              // 刚写完上一条时耳机要擦闪存，这段静默常有 10 秒以上；
+              // 显示成「连接耳机」会让用户以为卡在建链上，其实是耳机在收尾
+              stage = I18n.t('write.stageWaitFlash');
+            } else if (cooling > 0) {
+              stage = I18n.t('write.stageWaitReady');
+            }
+            onProgress(0.02, stage);
             if (cooling > 0) {
               Logger.info(MODULE, `耳机仍在收尾上一段写入，等待 ${cooling}ms`);
+            } else if (settling > 0) {
+              Logger.info(MODULE, `耳机正在擦写上一条音效，预计等待 ${settling}ms`);
             }
           }
           await client.connect(deviceId);
@@ -311,7 +326,7 @@ export class CaseWriteService {
           });
           const hwModel: string = CaseWriteService.rememberModel(client, deviceId);
           Logger.info(MODULE, `写入完成「${entry.name}」 槽位=${status.toneId} 音量=${status.volume} ` +
-            `耗时=${Date.now() - startedAt}ms`);
+            `耗时=${Date.now() - startedAt}ms 含等待=${settleWait}ms`);
           Logger.info(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
