@@ -1339,18 +1339,51 @@ export class ToneClient {
       if (Date.now() - started > MbbSpec.UPLOAD_TOTAL_TIMEOUT_MS) {
         throw new ToneError(I18n.t('toneErr.timeout'));
       }
-      const idleTimeout: number = receivedAll ? MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS : MbbSpec.UPLOAD_IDLE_TIMEOUT_MS;
+      const isUploadPacket = (candidate: Uint8Array): boolean => {
+        if (candidate.length < 2) {
+          return false;
+        }
+        if (protocol === 1) {
+          return ByteUtils.byteAt(candidate, 0) === 43 && ByteUtils.byteAt(candidate, 1) === 182;
+        }
+        return ByteUtils.byteAt(candidate, 0) === 9;
+      };
       let packet: Uint8Array = new Uint8Array(0);
+      let audioRestarted: boolean = false;
       try {
-        packet = await this.awaitPacket(idleTimeout, (candidate: Uint8Array): boolean => {
-          if (candidate.length < 2) {
-            return false;
+        if (receivedAll) {
+          /**
+           * 擦写阶段：切成 600ms 一片等，顺便盯住音频通道。
+           *
+           * 真机写 3.5 秒的音效时，耳机在「已写入 96.8%」处彻底停止回报，一个字节都不再发；
+           * 14 秒后它自己把 A2DP 连了回来——那是它写完后重启音频的固定动作。
+           * 旧实现对此只会死等满 60 秒擦写超时，用户白等一分钟，还被告知写入失败。
+           */
+          const flushUntil: number = Date.now() + MbbSpec.UPLOAD_FLUSH_TIMEOUT_MS;
+          while (true) {
+            try {
+              packet = await this.awaitPacket(600, isUploadPacket);
+              break;
+            } catch (sliceError) {
+              // 只有「这一片没等到包」才继续等；链路断了、用户取消都直接上抛
+              if (!(sliceError instanceof AckTimeoutError)) {
+                throw sliceError as Error;
+              }
+              if (this.closed) {
+                throw new CancelledError();
+              }
+              if (this.audioLinked(this.address)) {
+                audioRestarted = true;
+                break;
+              }
+              if (Date.now() > flushUntil) {
+                throw sliceError as Error;
+              }
+            }
           }
-          if (protocol === 1) {
-            return ByteUtils.byteAt(candidate, 0) === 43 && ByteUtils.byteAt(candidate, 1) === 182;
-          }
-          return ByteUtils.byteAt(candidate, 0) === 9;
-        });
+        } else {
+          packet = await this.awaitPacket(MbbSpec.UPLOAD_IDLE_TIMEOUT_MS, isUploadPacket);
+        }
       } catch (error) {
         if (receivedAll) {
           // 数据已完整送达，但耳机没有回报擦写完成。此时音效可能只写进去一部分，
@@ -1360,6 +1393,14 @@ export class ToneClient {
           throw flushError;
         }
         throw error as Error;
+      }
+      if (audioRestarted) {
+        // 音频被耳机拉回来 = 它认为这一包已经处理完，不会再补发擦写进度。
+        // 但拿不到「100%」这个回执，就不能替用户声明成功，如实给出可执行的提示
+        this.trace('FLUSH_AUDIO_BACK 耳机已重启音频，未再回报擦写进度');
+        const unconfirmed: ToneError = new ToneError(I18n.t('toneErr.flushUnconfirmed'), -98);
+        unconfirmed.reason = ToneErrorReason.FLUSH_TIMEOUT;
+        throw unconfirmed;
       }
       const fields: Map<number, Uint8Array> = MbbProtocol.tlv(packet);
       const typeField: Uint8Array | undefined = fields.get(1);

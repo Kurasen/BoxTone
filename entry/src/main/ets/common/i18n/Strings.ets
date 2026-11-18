@@ -548,6 +548,8 @@ export const ZH_STRINGS: Record<string, string> = {
   'toneErr.linkDown': '蓝牙连接已中断，请重新连接耳机',
   'toneErr.timeout': '传输时间过长，请重新连接后重试',
   'toneErr.flushTimeout': '数据已全部送达耳机，但没等到擦写完成。请合盖 3 秒再开盖后重试',
+  'toneErr.flushUnconfirmed': '数据已全部送达耳机，之后它没有再回报擦写进度（3 秒以上的长音效常见）。' +
+    '音效大概率已经写入：请合盖 3 秒再开盖听一下，确认不是新音效再重试',
   'toneErr.formatRejected': '该机型不接受当前音效格式（16700Hz / 16bit / {0} 字节），' +
     '本次没有写入任何数据。请把机型和这条日志一起反馈',
   'toneErr.noFormat': '耳机没有返回正确的音效格式',
@@ -1157,6 +1159,9 @@ export const EN_STRINGS: Record<string, string> = {
   'toneErr.linkDown': 'Bluetooth connection lost. Reconnect the earbuds.',
   'toneErr.timeout': 'Transfer took too long. Reconnect and retry.',
   'toneErr.flushTimeout': 'All data reached the earbuds, but flashing did not finish. Close the lid for 3 seconds, reopen, and retry.',
+  'toneErr.flushUnconfirmed': 'All data reached the earbuds, but they stopped reporting flash-write progress ' +
+    '(common for tones longer than 3 seconds). The tone was most likely written — close the lid for 3 seconds, ' +
+    'then open it and listen; retry only if it is not the new tone.',
   'toneErr.formatRejected': 'This model rejected the tone format (16700 Hz / 16-bit / {0} bytes). No data was written. ' +
     'Please report the model and this log.',
   'toneErr.noFormat': 'The earbuds did not return a valid tone format',
