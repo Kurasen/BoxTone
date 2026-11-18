@@ -98,11 +98,23 @@ export class ToneClient {
   /** 热会话的回收定时器 */
   private static sweepTimer: number = -1;
   /**
+   * 上一次主动断开音频是否成功。
+   * 成功过才敢在连接前抢跑（省掉一次注定失败的请求）；失败过就退回
+   * 「先试再说」的老路，免得在系统不让断开时白等一次 AUDIO_DROP_WAIT_MS。
+   */
+  private static releaseHint: boolean = true;
+  /**
    * 闪存沉降期结束时刻。
    * 写完音效后耳机在擦闪存，这段时间内不能开始任何新传输——无论通道是否还在。
    * 做成全局而不是实例字段：万一会话已经断了，新建的连接同样要等够这段时间。
    */
   private static settleUntil: number = 0;
+  /**
+   * 写入结束时音频是否已经断开。
+   * 只有「断过、后来又自己连回来」才说明耳机擦完闪存重新工作了；
+   * 音频一直没断（系统不让断）时不能拿它当信号，否则会提前去撞慢路径。
+   */
+  private static settleAudioWasDown: boolean = false;
 
   private clientSocket: number = -1;
   private address: string = '';
@@ -212,6 +224,27 @@ export class ToneClient {
   static settleLeft(): number {
     const left: number = ToneClient.settleUntil - Date.now();
     return left > 0 ? left : 0;
+  }
+
+  /**
+   * 等闪存沉降期结束。
+   * 写入时音频被断开、之后耳机自己把它连了回来，就说明擦写已经完成，可以提前走，
+   * 不必死等满 15 秒（真机上这个信号大约在第 7 秒出现）。
+   */
+  private async waitSettle(address: string): Promise<void> {
+    const left: number = ToneClient.settleLeft();
+    if (left <= 0) {
+      return;
+    }
+    this.trace(`FLASH_SETTLE wait=${left}ms`);
+    const until: number = Date.now() + left;
+    while (Date.now() < until && !this.closed) {
+      if (ToneClient.settleAudioWasDown && this.audioLinked(address)) {
+        this.trace(`FLASH_SETTLE_SKIP 音频通道已恢复，提前 ${until - Date.now()}ms`);
+        return;
+      }
+      await sleep(Math.min(200, until - Date.now()));
+    }
   }
 
   /**
@@ -420,11 +453,7 @@ export class ToneClient {
      * 沉降期仍然要等——那是「耳机还在擦闪存」的限制，跟通道在不在无关。
      */
     if (this.clientSocket >= 0 && !this.broken && !this.closed && this.address === address) {
-      const settle: number = ToneClient.settleLeft();
-      if (settle > 0) {
-        this.trace(`SESSION_SETTLE wait=${settle}ms`);
-        await sleep(settle);
-      }
+      await this.waitSettle(address);
       if (this.closed) {
         throw new CancelledError();
       }
@@ -443,14 +472,13 @@ export class ToneClient {
     this.audioGate = 'idle';
     const startedAt: number = Date.now();
     /**
-     * 通道模式顺序固定为「非加密优先」。
+     * 通道模式顺序，默认「非加密优先」。
      *
-     * 实测（FreeClip 2）：secure=true 的通道能连上、也能传前 30KB，
-     * 但大包传到一半会被耳机掐掉并回 2901054（SPP IO error）。
-     * 之前按"上次成功的模式"排序，导致成功/失败交替出现——
-     * 因为音频通道重连后第一次连接必然返回 -1，第二次就轮到加密通道。
+     * 但真机日志连续多轮都是同一个结果：音频刚断开时非加密通道必失败（400~900ms 后回 -1），
+     * 紧接着的加密通道 0.3 秒就通。所以在「刚主动断开音频」这一步之后把顺序对调，
+     * 省掉一次注定失败的请求；其它情况（音频本来就没连、断不开）仍按非加密优先走。
      */
-    const modes: boolean[] = [false, true];
+    let modes: boolean[] = [false, true];
     let lastError: ToneError | null = null;
     let silentFailures: number = 0;
     let audioRelinks: number = 0;
@@ -488,13 +516,30 @@ export class ToneClient {
 
     /**
      * 闪存沉降期：刚写完一段音效，耳机正在擦写，这时候连上也发不出东西。
-     * 会话还活着的情况在上面就返回了，这里是「会话已断、只能重连」的分支，
-     * 同样要等够时间，否则会退回成连续被拒、白耗十几秒。
+     * 不再死等满 15 秒：耳机把音频通道连回来就说明闪存已经写完（真机上约 7 秒）。
      */
-    const settling: number = ToneClient.settleLeft();
-    if (settling > 0) {
-      this.trace(`FLASH_SETTLE wait=${settling}ms`);
-      await sleep(settling);
+    await this.waitSettle(address);
+    if (this.closed) {
+      throw new CancelledError();
+    }
+
+    /**
+     * 音频还连着就先松开，别拿第一次注定失败的请求去试。
+     *
+     * 真机日志连续多轮都是同一个节奏：音频连着时第一条 sppConnect 在 400~900ms 后回 -1，
+     * 断开音频后再试，加密通道 0.3 秒就通。原来要等第一条失败才去断音频，
+     * 白花 1.2 秒（失败本身 + 两次重试间隔）。
+     * 断开被系统拒绝也不影响流程，照样往下试——那本来就不是致命错误。
+     */
+    if (!releaseTried && ToneClient.releaseHint && this.audioLinked(address)) {
+      releaseTried = true;
+      const freed: boolean = await this.releaseAudioLink(address);
+      freshRelease = freed;
+      probeNext = freed;
+      if (freed) {
+        // 断链之后真机上加密通道一次就通，非加密那条反而必失败，顺序对调
+        modes = [true, false];
+      }
       if (this.closed) {
         throw new CancelledError();
       }
@@ -612,6 +657,9 @@ export class ToneClient {
               const freed: boolean = await this.releaseAudioLink(address);
               freshRelease = freed;
               probeNext = freed;
+              if (freed) {
+                modes = [true, false];
+              }
               if (attempt === 0) {
                 continue;
               }
@@ -773,12 +821,14 @@ export class ToneClient {
     }
     if (dropped) {
       this.audioGate = 'released';
+      ToneClient.releaseHint = true;
       this.trace(`AUDIO_LINK_RELEASED ms=${Date.now() - startedAt}`);
       // A2DP 掉链到能建串口之间还有一点收敛时间（实测 300ms 内拿不到通道）
       await sleep(MbbSpec.AUDIO_SETTLE_MS);
       return true;
     }
     this.audioGate = 'kept';
+    ToneClient.releaseHint = false;
     // 请求都被拒的情况下不必再等：音频不会掉，等下去只是白耗时间
     this.trace(accepted ? 'AUDIO_LINK_KEPT 断开请求已受理但通道仍在，改为直接尝试串口' :
       'AUDIO_LINK_KEPT 音频通道仍在，改为直接尝试串口');
@@ -899,7 +949,13 @@ export class ToneClient {
           this.lastErrorCode = failure.code;
           this.broken = true;
           this.closeSocket();
-          ToneClient.noteLinkDown(`write code=${code}`);
+          // 传输中掉线才需要冷却（耳机要收尾十几秒）；空闲保活掉线是常态
+          // （合盖、耳机休眠），给它加冷却会让用户开盖后白等
+          if (this.transferring) {
+            ToneClient.noteLinkDown(`write code=${code}`);
+          } else {
+            Logger.info(MODULE, 'SESSION_DROPPED 空闲期写失败，串口已关闭');
+          }
           throw failure;
         }
         await sleep(24);
@@ -1533,7 +1589,9 @@ export class ToneClient {
     this.retiredAt = Date.now();
     this.transferring = false;
     ToneClient.settleUntil = Date.now() + MbbSpec.SESSION_SETTLE_MS;
-    Logger.info(MODULE, `TONE_SETTLED settle=${MbbSpec.SESSION_SETTLE_MS}ms`);
+    ToneClient.settleAudioWasDown = !this.audioLinked(this.address);
+    Logger.info(MODULE, `TONE_SETTLED settle=${MbbSpec.SESSION_SETTLE_MS}ms ` +
+      `audioDown=${ToneClient.settleAudioWasDown}`);
   }
 
   /** 保活：耳机静默约 4 秒就会收掉串口，通道要一直有人说话 */
