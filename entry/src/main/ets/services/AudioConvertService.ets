@@ -18,6 +18,12 @@ const CUTOFF_MARGIN: number = 0.9;
 const SIN_TABLE_SIZE: number = 2048;
 /** Blackman 窗查表精度 */
 const WINDOW_TABLE_SIZE: number = 1024;
+/**
+ * 每个波形桶最多参与的采样点数。
+ * 全段缓存提升到 2048 桶后，2048 × 256 次取样与原先 260 桶的扫描量相当，
+ * 5 分钟素材导入时仍只需几十毫秒，且足以还原包络。
+ */
+const PEAK_SAMPLES_PER_BUCKET: number = 256;
 
 /**
  * 重采样使用 Blackman 窗加权的 sinc 插值：
@@ -258,6 +264,38 @@ export class AudioConvertService {
     return mono;
   }
 
+  /**
+   * 选区峰值（线性 0~1）。
+   * 参考 OpenFreebuds 的 peak_gain_db：先取当前选区的峰值，再换算成“达到目标电平”的增益。
+   * 选区最长 2.5 秒（约 24 万采样点），全量扫描只要几毫秒，不能抽样——
+   * 漏掉一个短瞬态就会把增益算大，输出直接削顶。
+   */
+  public static peakAmplitude(source: PcmAudio, startMs: number, durationMs: number): number {
+    const channels: number = source.channels > 0 ? source.channels : 1;
+    const totalFrames: number = Math.min(source.frameCount,
+      Math.floor(source.frames.length / channels));
+    if (totalFrames <= 0) {
+      return 0;
+    }
+    const startFrame: number = Math.max(0, Math.min(
+      Math.round(startMs * source.sampleRate / 1000), totalFrames - 1));
+    const wantFrames: number = Math.max(1, Math.round(durationMs * source.sampleRate / 1000));
+    const endFrame: number = Math.min(totalFrames, startFrame + wantFrames);
+    let peak: number = 0;
+    for (let i = startFrame; i < endFrame; i++) {
+      const base: number = i * channels;
+      let sum: number = 0;
+      for (let c = 0; c < channels; c++) {
+        sum += source.frames[base + c];
+      }
+      const abs: number = Math.abs(sum / channels);
+      if (abs > peak) {
+        peak = abs;
+      }
+    }
+    return peak;
+  }
+
   /** 峰值归一化到 -0.2dBFS，避免写入后削顶 */
   private static normalize(input: Float32Array): Float32Array {
     let peak: number = 0;
@@ -422,23 +460,39 @@ export class AudioConvertService {
     return out;
   }
 
-  /** 生成波形预览峰值，buckets 为柱数 */
+  /**
+   * 生成波形预览峰值，buckets 为柱数。
+   * 不先整体下混，而是按桶直接抽样：5 分钟素材按 2048 桶只需约 52 万次取样，
+   * 避免导入后主线程被上千万次循环冻结。
+   */
   public static buildPeaks(source: PcmAudio, buckets: number): WavePeaks {
-    const mono: Float32Array = AudioConvertService.toMono(source);
-    const count: number = Math.min(buckets, Math.max(1, mono.length));
+    const channels: number = source.channels > 0 ? source.channels : 1;
+    const frames: Float32Array = source.frames;
+    const totalFrames: number = Math.min(source.frameCount,
+      Math.floor(frames.length / channels));
     const peaks: number[] = [];
-    if (mono.length === 0) {
+    if (totalFrames <= 0 || buckets <= 0) {
       const empty: WavePeaks = { peaks: peaks, durationMs: 0 };
       return empty;
     }
-    const step: number = mono.length / count;
+
+    const count: number = Math.min(buckets, totalFrames);
+    const step: number = totalFrames / count;
     let globalMax: number = 0.0001;
     for (let b = 0; b < count; b++) {
       const start: number = Math.floor(b * step);
-      const end: number = Math.min(mono.length, Math.floor((b + 1) * step));
+      const end: number = Math.min(totalFrames, Math.floor((b + 1) * step));
+      const span: number = Math.max(1, end - start);
+      // 桶内等距抽样，起点落在桶首，保留短促瞬态的可见性
+      const stride: number = Math.max(1, Math.floor(span / PEAK_SAMPLES_PER_BUCKET));
       let localMax: number = 0;
-      for (let i = start; i < end; i++) {
-        const abs: number = Math.abs(mono[i]);
+      for (let i = start; i < end; i += stride) {
+        const base: number = i * channels;
+        let sum: number = 0;
+        for (let c = 0; c < channels; c++) {
+          sum += frames[base + c];
+        }
+        const abs: number = Math.abs(sum / channels);
         if (abs > localMax) {
           localMax = abs;
         }
@@ -458,7 +512,7 @@ export class AudioConvertService {
     }
     const result: WavePeaks = {
       peaks: peaks,
-      durationMs: mono.length * 1000 / source.sampleRate
+      durationMs: totalFrames * 1000 / source.sampleRate
     };
     return result;
   }

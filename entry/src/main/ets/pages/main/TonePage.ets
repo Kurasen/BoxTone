@@ -5,7 +5,7 @@ import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { ToneSpec } from '../../common/constants/AppConstants';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
-import { AppEvent, EventBus } from '../../common/utils/EventBus';
+import { AppEvent, BusyState, EventBus } from '../../common/utils/EventBus';
 import { GhostButton } from '../../components/GhostButton';
 import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
@@ -18,23 +18,44 @@ import { AudioConvertService } from '../../services/AudioConvertService';
 import { AudioConvertTaskService } from '../../services/audio/ConvertTask';
 import { AudioPlayService } from '../../services/AudioPlayService';
 import { AudioSourceService } from '../../services/AudioSourceService';
+import { ImportCancelledError, ImportControl, ImportProgressState } from '../../services/audio/ImportControl';
 import { AppSettings, SettingsService } from '../../services/SettingsService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 import { ToneSynthesizerService } from '../../services/ToneSynthesizerService';
 
 const MODULE: string = 'TonePage';
+/** 全段峰值缓存桶数：放大到 1 秒窗口时仍有足够细节 */
+const FULL_PEAK_BUCKETS: number = 2048;
+/** 每次绘制使用的桶数 */
+const VIEW_PEAK_BUCKETS: number = 260;
+/**
+ * 波形最小可视窗口：保证「最大可截取时长」能完整落在视窗内，同时限制放大倍数。
+ * 规格上限改成 5.7 秒后视窗会自动跟着变，不必再单独调整。
+ */
+const MIN_VIEW_SPAN_MS: number = Math.ceil(ToneSpec.MAX_SECONDS * 1000) + 500;
 
 @Component
 export struct TonePage {
   @StorageProp('themeEpoch') themeEpoch: number = 0;
   @State source: SourceAudio | undefined = undefined;
   @State peaks: number[] = [];
+  /** 波形当前可视窗口（相对素材，毫秒） */
+  @State viewStartMs: number = 0;
+  @State viewSpanMs: number = 0;
+  /** 全段峰值缓存，缩放时从这里聚合视窗柱形 */
+  private fullPeaks: number[] = [];
+  private waveWidth: number = 0;
+  private pinchStartViewMs: number = 0;
+  private pinchStartSpanMs: number = 0;
+  private panStartViewMs: number = 0;
   @State startMs: number = 0;
   @State durationMs: number = 2000;
   @State gainDb: number = 0;
   @State fadeInMs: number = 40;
   @State fadeOutMs: number = 120;
   @State normalize: boolean = true;
+  /** 自动增益开关：打开时按选区峰值自动设定增益，并锁定增益与归一化 */
+  @State autoGain: boolean = false;
   @State busy: boolean = false;
   @State playingSource: boolean = false;
   @State playingTone: boolean = false;
@@ -50,17 +71,27 @@ export struct TonePage {
    */
   private cacheKey: string = '';
   private cached: ConvertResult | undefined = undefined;
+  /** 用户设定的时长；起点右移被挤占后，拖回左侧时按这个值恢复 */
+  private preferredDurationMs: number = 2000;
+  /** 导入进度轮询计时器；-1 表示未运行 */
+  private progressTimer: number = -1;
 
   aboutToAppear(): void {
     const settings: AppSettings = SettingsService.get();
     this.durationMs = Math.min(ToneSpec.MAX_SECONDS * 1000, Math.max(300, settings.defaultDurationMs));
+    this.preferredDurationMs = this.durationMs;
     this.gainDb = settings.defaultGainDb;
     this.normalize = settings.autoNormalize;
   }
 
   aboutToDisappear(): void {
+    this.stopImportProgress();
+    if (this.preparing) {
+      ImportControl.cancel();
+    }
     // 页面被销毁时别把全屏遮罩留在主界面上
     EventBus.emitText(AppEvent.BUSY_CHANGED, '');
+    EventBus.resetBusy();
     AudioPlayService.stop().then(() => {
     }).catch((error: BusinessError) => {
       Logger.exception(MODULE, '释放播放资源失败', error);
@@ -85,11 +116,6 @@ export struct TonePage {
       `${FormatUtils.channelName(current.channels)} · ${FormatUtils.duration(current.durationMs)}`;
   }
 
-  private sourceDurationText(): string {
-    const current: SourceAudio | undefined = this.source;
-    return current === undefined ? '' : FormatUtils.duration(current.durationMs);
-  }
-
   private sourceDurationMs(): number {
     const current: SourceAudio | undefined = this.source;
     return current === undefined ? 0 : current.durationMs;
@@ -106,7 +132,9 @@ export struct TonePage {
       return;
     }
     this.busy = true;
+    ImportControl.begin();
     this.setBusy(true, I18n.t('tone.importing'));
+    this.startImportProgress();
     // 先让遮罩画出来，选完文件后的复制 / 探测 / 解码可能要几秒
     await TonePage.yieldToUi();
     try {
@@ -123,12 +151,108 @@ export struct TonePage {
         this.toast(I18n.f('tone.imported', [imported.name]));
       }
     } catch (error) {
+      if (error instanceof ImportCancelledError) {
+        Logger.info(MODULE, '用户取消导入');
+        return;
+      }
       const businessError: BusinessError = error as BusinessError;
       Logger.exception(MODULE, '导入失败', businessError);
       this.toast(businessError.message !== undefined ? businessError.message : I18n.t('tone.importFailed'));
     } finally {
+      this.stopImportProgress();
+      ImportControl.finish();
       this.setBusy(false);
       this.busy = false;
+    }
+  }
+
+  /** 导入期间的进度与剩余时间：原生解码有真实进度，探测/WAV 阶段退回不确定进度 */
+  private startImportProgress(): void {
+    this.stopImportProgress();
+    this.progressTimer = setInterval((): void => {
+      this.updateImportProgress();
+    }, 250);
+    this.updateImportProgress();
+  }
+
+  private stopImportProgress(): void {
+    if (this.progressTimer >= 0) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = -1;
+    }
+  }
+
+  private updateImportProgress(): void {
+    const state: ImportProgressState = ImportControl.progress();
+    if (!state.active) {
+      const waiting: BusyState = {
+        text: I18n.t('tone.importing'),
+        detail: I18n.t('tone.importPreparing'),
+        progress: -1,
+        cancellable: true
+      };
+      EventBus.emitBusy(waiting);
+      return;
+    }
+    let detail: string = I18n.t('tone.importDecoding');
+    if (state.progress > 0.01 && state.elapsedMs > 300) {
+      const remainMs: number = state.elapsedMs * (1 - state.progress) / state.progress;
+      const seconds: number = Math.max(1, Math.round(remainMs / 1000));
+      const percent: number = Math.min(99, Math.round(state.progress * 100));
+      detail = `${percent}% · ${I18n.f('tone.importRemaining', [`${seconds}`])}`;
+    }
+    const decoding: BusyState = {
+      text: I18n.t('tone.importing'),
+      detail: detail,
+      progress: state.progress,
+      cancellable: true
+    };
+    EventBus.emitBusy(decoding);
+  }
+
+  /**
+   * 自动增益开关：
+   * 打开后按当前选区峰值自动设定增益，并锁住增益滑块与峰值归一化开关；
+   * 关闭后恢复手动调节（归一化保持关闭，用户可自行再开）。
+   */
+  private setAutoGain(enabled: boolean): void {
+    this.autoGain = enabled;
+    if (enabled) {
+      // 自动增益按原电平计算，归一化必须让位，否则会被二次拉满
+      this.normalize = false;
+      this.refreshAutoGain(true);
+    }
+  }
+
+  /**
+   * 重新按当前选区峰值计算增益。
+   * 参考 OpenFreebuds 的 peak_gain_db + “Set to the best volume”：
+   * 先量峰值再换算 dB，而不是盲目拉满；峰值已经很高时改为衰减。
+   * 留 0.9dB 余量给重采样过冲，避免写入后削顶。
+   *
+   * @param showToast 拖滑块时传 false，只在开关切换/导入完成时提示，避免每帧刷 toast
+   */
+  private refreshAutoGain(showToast: boolean): void {
+    const current: SourceAudio | undefined = this.source;
+    if (current === undefined) {
+      return;
+    }
+    const peak: number = AudioConvertService.peakAmplitude(current.pcm, this.startMs, this.durationMs);
+    if (peak <= 0.0001) {
+      if (showToast) {
+        this.toast(I18n.t('tone.autoGainSilent'));
+      }
+      return;
+    }
+    const target: number = 0.9;
+    const wanted: number = 20 * Math.log10(target / peak);
+    const capped: boolean = wanted > 12;
+    let db: number = Math.max(-12, Math.min(12, wanted));
+    db = Math.round(db * 2) / 2;
+    this.gainDb = db;
+    if (showToast) {
+      const signed: string = db > 0 ? `+${db}` : `${db}`;
+      this.toast(I18n.f(capped ? 'tone.autoGainCapped' : 'tone.autoGainApplied', [signed]));
     }
   }
 
@@ -136,14 +260,20 @@ export struct TonePage {
     this.playingSource = false;
     this.playingTone = false;
     this.source = imported;
-    const wave = AudioConvertService.buildPeaks(imported.pcm, 260);
-    this.peaks = wave.peaks;
+    this.fullPeaks = AudioConvertService.buildPeaks(imported.pcm, FULL_PEAK_BUCKETS).peaks;
+    this.viewStartMs = 0;
+    this.viewSpanMs = imported.durationMs;
+    this.refreshViewPeaks();
     this.startMs = 0;
     this.durationMs = Math.min(this.durationMs,
       Math.min(ToneSpec.MAX_SECONDS * 1000,
         Math.max(ToneSpec.MIN_SECONDS * 1000, imported.durationMs)));
+    this.preferredDurationMs = this.durationMs;
     this.savedName = '';
-    Logger.info(MODULE, `音源已就绪：${imported.name}，峰值 ${wave.peaks.length} 段`);
+    if (this.autoGain) {
+      this.refreshAutoGain(false);
+    }
+    Logger.info(MODULE, `音源已就绪：${imported.name}，峰值 ${this.fullPeaks.length} 段`);
   }
 
   private async usePreset(preset: SynthPreset): Promise<void> {
@@ -356,6 +486,9 @@ export struct TonePage {
   private setBusy(busy: boolean, text: string = ''): void {
     this.preparing = busy;
     EventBus.emitText(AppEvent.BUSY_CHANGED, busy ? text : '');
+    if (!busy) {
+      EventBus.resetBusy();
+    }
   }
 
   // ---------------- UI ----------------
@@ -552,25 +685,72 @@ export struct TonePage {
       .width('100%')
       .margin({ bottom: 12 })
 
-      WaveformView({
-        peaks: this.peaks,
-        startRatio: this.startRatio(),
-        endRatio: this.endRatio(),
-        hasSelection: this.peaks.length > 0,
-        waveHeight: 88
+      Stack() {
+        WaveformView({
+          peaks: this.peaks,
+          startRatio: this.startRatio(),
+          endRatio: this.endRatio(),
+          viewStartRatio: this.viewStartRatio(),
+          viewEndRatio: this.viewEndRatio(),
+          hasSelection: this.peaks.length > 0,
+          waveHeight: 88
+        })
+      }
+      .width('100%')
+      .onAreaChange((oldValue: Area, newValue: Area): void => {
+        this.waveWidth = newValue.width as number;
       })
+      .gesture(
+        GestureGroup(GestureMode.Parallel,
+          PinchGesture({ fingers: 2 })
+            .onActionStart((): void => {
+              this.pinchStartViewMs = this.viewStartMs;
+              this.pinchStartSpanMs = this.viewSpanMs;
+            })
+            .onActionUpdate((event: GestureEvent): void => {
+              this.zoomWave(event.scale, event.pinchCenterX);
+            }),
+          PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+            .onActionStart((): void => {
+              this.panStartViewMs = this.viewStartMs;
+            })
+            .onActionUpdate((event: GestureEvent): void => {
+              this.panWave(event.offsetX);
+            }),
+          PanGesture({ fingers: 2, distance: 5 })
+            .onActionStart((): void => {
+              this.panStartViewMs = this.viewStartMs;
+            })
+            .onActionUpdate((event: GestureEvent): void => {
+              this.panWave(event.offsetX);
+            }),
+          TapGesture({ count: 2 })
+            .onAction((): void => {
+              this.resetWaveView();
+            })
+        )
+      )
 
       Row() {
-        Text('0.0s')
+        Text(FormatUtils.seconds(this.viewStartMs))
           .fontSize(9)
           .fontColor(Palette.TEXT_TERTIARY)
         Blank()
-        Text(this.sourceDurationText())
+        Text(FormatUtils.seconds(this.viewStartMs + this.viewSpanMs))
           .fontSize(9)
           .fontColor(Palette.TEXT_TERTIARY)
       }
       .width('100%')
       .margin({ top: 8 })
+
+      if (this.peaks.length > 0) {
+        Text(I18n.t('tone.waveZoomHint'))
+          .fontSize(9)
+          .fontColor(Palette.TEXT_TERTIARY)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ top: 4 })
+      }
     }
   }
 
@@ -583,11 +763,21 @@ export struct TonePage {
         blockValue: this.startMs,
         blockMax: this.maxStartMs(),
         onValue: (value: number): void => {
+          const total: number = this.sourceDurationMs();
+          const remain: number = Math.max(ToneSpec.MIN_SECONDS * 1000, total - value);
           this.startMs = value;
-          // 起点后移后剩余素材变短，时长跟着收，避免选区超出素材
-          const maxDuration: number = this.durationMaxMs();
-          if (this.durationMs > maxDuration) {
-            this.durationMs = maxDuration;
+          // 起点右移挤占时长时先压缩，拖回左侧再恢复用户原本设定的时长，
+          // 避免「动一下起点、时长就永久变成 0.2s」这种手感
+          if (this.durationMs > remain) {
+            this.durationMs = remain;
+          } else if (this.durationMs < this.preferredDurationMs) {
+            this.durationMs = Math.min(this.preferredDurationMs, remain);
+          }
+          this.ensureSelectionVisible();
+        },
+        onValueEnd: (value: number): void => {
+          if (this.autoGain) {
+            this.refreshAutoGain(false);
           }
         }
       })
@@ -600,6 +790,13 @@ export struct TonePage {
         blockMax: this.durationMaxMs(),
         onValue: (value: number): void => {
           this.durationMs = value;
+          this.preferredDurationMs = value;
+          this.ensureSelectionVisible();
+        },
+        onValueEnd: (value: number): void => {
+          if (this.autoGain) {
+            this.refreshAutoGain(false);
+          }
         }
       })
 
@@ -610,6 +807,12 @@ export struct TonePage {
         blockMin: -12,
         blockMax: 12,
         blockStep: 0.5,
+        blockEnabled: !this.autoGain,
+        blockToggle: true,
+        blockToggleValue: this.autoGain,
+        onToggle: (isOn: boolean): void => {
+          this.setAutoGain(isOn);
+        },
         onValue: (value: number): void => {
           this.gainDb = value;
         }
@@ -619,7 +822,11 @@ export struct TonePage {
         ToggleBlock({
           blockLabel: I18n.t('tone.normalize'),
           blockOn: this.normalize,
+          blockEnabled: !this.autoGain,
           onSwitch: (isOn: boolean): void => {
+            if (this.autoGain) {
+              return;
+            }
             this.normalize = isOn;
             // 与音效生成入口放在一起，同时作为下次进入的默认值持久化
             SettingsService.setAutoNormalize(isOn);
@@ -716,6 +923,124 @@ export struct TonePage {
     return Math.min(1, this.startMs / total);
   }
 
+  private viewStartRatio(): number {
+    const total: number = this.sourceDurationMs();
+    return total <= 0 ? 0 : Math.min(1, this.viewStartMs / total);
+  }
+
+  private viewEndRatio(): number {
+    const total: number = this.sourceDurationMs();
+    return total <= 0 ? 1 : Math.min(1, (this.viewStartMs + this.viewSpanMs) / total);
+  }
+
+  /** 从全段峰值缓存聚合出当前视窗的柱形 */
+  private refreshViewPeaks(): void {
+    const total: number = this.sourceDurationMs();
+    if (total <= 0 || this.fullPeaks.length === 0) {
+      this.peaks = [];
+      return;
+    }
+    const minSpan: number = Math.min(MIN_VIEW_SPAN_MS, total);
+    const span: number = Math.max(minSpan, Math.min(this.viewSpanMs > 0 ? this.viewSpanMs : total, total));
+    const start: number = Math.max(0, Math.min(this.viewStartMs, total - span));
+    this.viewSpanMs = span;
+    this.viewStartMs = start;
+
+    const cacheLength: number = this.fullPeaks.length;
+    const from: number = start / total * cacheLength;
+    const to: number = (start + span) / total * cacheLength;
+    // 缓存分辨率不足时（放到 1 秒窗口只剩个位数桶）按比例展开到固定柱数，
+    // 否则放大后柱子会变得又粗又少，看起来像没数据
+    const rawCount: number = Math.max(1, Math.floor(to - from));
+    const count: number = Math.min(VIEW_PEAK_BUCKETS, rawCount);
+    const bucketSpan: number = (to - from) / count;
+    const out: number[] = [];
+    for (let b = 0; b < count; b++) {
+      const bucketStart: number = Math.floor(from + b * bucketSpan);
+      const bucketEnd: number = Math.min(cacheLength,
+        Math.max(bucketStart + 1, Math.floor(from + (b + 1) * bucketSpan)));
+      let localMax: number = 0;
+      for (let i = bucketStart; i < bucketEnd; i++) {
+        if (this.fullPeaks[i] > localMax) {
+          localMax = this.fullPeaks[i];
+        }
+      }
+      out.push(localMax);
+    }
+    if (out.length < VIEW_PEAK_BUCKETS) {
+      const expanded: number[] = [];
+      for (let i = 0; i < VIEW_PEAK_BUCKETS; i++) {
+        const source: number = Math.min(out.length - 1,
+          Math.floor(i * out.length / VIEW_PEAK_BUCKETS));
+        expanded.push(out[source]);
+      }
+      this.peaks = expanded;
+      return;
+    }
+    this.peaks = out;
+  }
+
+  /** 双指捏合：以捏合中心为锚点缩放 */
+  private zoomWave(scale: number, centerX: number): void {
+    const total: number = this.sourceDurationMs();
+    if (total <= 0 || scale <= 0) {
+      return;
+    }
+    const width: number = this.waveWidth > 0 ? this.waveWidth : 300;
+    const centerRatio: number = Math.max(0, Math.min(1, centerX / width));
+    const baseSpan: number = this.pinchStartSpanMs > 0 ? this.pinchStartSpanMs : this.viewSpanMs;
+    const baseStart: number = this.pinchStartViewMs;
+    const minSpan: number = Math.min(MIN_VIEW_SPAN_MS, total);
+    const nextSpan: number = Math.max(minSpan, Math.min(baseSpan / scale, total));
+    const centerMs: number = baseStart + centerRatio * baseSpan;
+    const nextStart: number = Math.max(0,
+      Math.min(centerMs - centerRatio * nextSpan, total - nextSpan));
+    this.viewStartMs = nextStart;
+    this.viewSpanMs = nextSpan;
+    this.refreshViewPeaks();
+  }
+
+  /** 双指拖动：按当前视窗宽度换算水平位移 */
+  private panWave(offsetX: number): void {
+    const total: number = this.sourceDurationMs();
+    if (total <= 0) {
+      return;
+    }
+    const width: number = this.waveWidth > 0 ? this.waveWidth : 300;
+    const span: number = this.viewSpanMs > 0 ? this.viewSpanMs : total;
+    const delta: number = -offsetX / width * span;
+    this.viewStartMs = Math.max(0, Math.min(this.panStartViewMs + delta, total - span));
+    this.refreshViewPeaks();
+  }
+
+  /** 双击恢复全段视图 */
+  private resetWaveView(): void {
+    const total: number = this.sourceDurationMs();
+    if (total <= 0) {
+      return;
+    }
+    this.viewStartMs = 0;
+    this.viewSpanMs = total;
+    this.refreshViewPeaks();
+  }
+
+  /** 选区被微调挤出视窗时，把视图移回选区中心 */
+  private ensureSelectionVisible(): void {
+    const total: number = this.sourceDurationMs();
+    if (total <= 0 || this.viewSpanMs <= 0) {
+      return;
+    }
+    const selectionEnd: number = Math.min(total, this.startMs + this.durationMs);
+    if (this.startMs >= this.viewStartMs &&
+      selectionEnd <= this.viewStartMs + this.viewSpanMs) {
+      return;
+    }
+    const span: number = Math.min(this.viewSpanMs, total);
+    const center: number = (this.startMs + selectionEnd) / 2;
+    this.viewStartMs = Math.max(0, Math.min(center - span / 2, total - span));
+    this.refreshViewPeaks();
+  }
+
   private endRatio(): number {
     const total: number = this.sourceDurationMs();
     if (total <= 0) {
@@ -788,7 +1113,16 @@ struct SliderBlock {
   @Prop blockMin: number = 0;
   @Prop blockMax: number = 100;
   @Prop blockStep: number = 10;
+  @Prop blockEnabled: boolean = true;
+  /** 在数值左侧内嵌一个开关（增益行的“自动”） */
+  @Prop blockToggle: boolean = false;
+  @Prop blockToggleValue: boolean = false;
+  onToggle: (isOn: boolean) => void = () => {
+  };
   onValue: (value: number) => void = () => {
+  };
+  /** 松手/点击轨道后触发，用于自动增益这类不适合每帧重算的逻辑 */
+  onValueEnd: (value: number) => void = () => {
   };
 
   build() {
@@ -798,10 +1132,24 @@ struct SliderBlock {
           .fontSize(12)
           .fontColor(Palette.TEXT_SECONDARY)
           .layoutWeight(1)
+        if (this.blockToggle) {
+          Text(I18n.t('tone.autoGain'))
+            .fontSize(10)
+            .fontColor(this.blockToggleValue ? Palette.ACCENT_TEXT : Palette.TEXT_TERTIARY)
+            .margin({ right: 3 })
+          Toggle({ type: ToggleType.Switch, isOn: this.blockToggleValue })
+            .width(40)
+            .height(22)
+            .selectedColor(Palette.ACCENT)
+            .margin({ right: 8 })
+            .onChange((next: boolean) => {
+              this.onToggle(next);
+            })
+        }
         Text(this.blockText)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Palette.ACCENT_TEXT)
+          .fontColor(this.blockEnabled ? Palette.ACCENT_TEXT : Palette.TEXT_TERTIARY)
       }
       .width('100%')
 
@@ -816,8 +1164,14 @@ struct SliderBlock {
         .trackColor(Palette.FILL_SOFT)
         .selectedColor(Palette.ACCENT)
         .blockColor('#FFFFFF')
+        .enabled(this.blockEnabled)
+        .opacity(this.blockEnabled ? 1 : 0.4)
         .onChange((next: number, mode: SliderChangeMode) => {
-          this.onValue(Math.round(next * 10) / 10);
+          const value: number = Math.round(next * 10) / 10;
+          this.onValue(value);
+          if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+            this.onValueEnd(value);
+          }
         })
     }
     .width('100%')
@@ -831,6 +1185,7 @@ struct ToggleBlock {
   @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop blockLabel: string = '';
   @Prop blockOn: boolean = false;
+  @Prop blockEnabled: boolean = true;
   onSwitch: (isOn: boolean) => void = () => {
   };
 
@@ -838,9 +1193,11 @@ struct ToggleBlock {
     Row({ space: 8 }) {
       Text(this.blockLabel)
         .fontSize(12)
-        .fontColor(Palette.TEXT_SECONDARY)
+        .fontColor(this.blockEnabled ? Palette.TEXT_SECONDARY : Palette.TEXT_TERTIARY)
       Toggle({ type: ToggleType.Switch, isOn: this.blockOn })
         .selectedColor(Palette.ACCENT)
+        .enabled(this.blockEnabled)
+        .opacity(this.blockEnabled ? 1 : 0.4)
         .onChange((next: boolean) => {
           this.onSwitch(next);
         })

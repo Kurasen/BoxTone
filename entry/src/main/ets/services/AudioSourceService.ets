@@ -6,23 +6,19 @@ import { I18n } from '../common/i18n/I18n';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
 import { PcmAudio, SourceAudio } from '../models/ToneModel';
+import { decodeWavSamples, parseWavHeader, WavFormat, WavParseResult, WavSamplesResult } from './audio/WavCodec';
+import { WavDecodeTaskService, WavTaskResult } from './audio/WavDecodeTask';
+import { ImportCancelledError, ImportControl } from './audio/ImportControl';
 
 const MODULE: string = 'AudioSource';
-/** 单次分析的最大时长，避免长音频占用过多内存 */
-const MAX_ANALYZE_SECONDS: number = 60;
+/**
+ * 单次分析的最大时长。
+ * 5 分钟素材按 48kHz 立体声算约 115MB 的 Float32 PCM，是低端机仍可承受的上限；
+ * 再长的文件只载入开头一段并提示用户。
+ */
+const MAX_ANALYZE_SECONDS: number = 300;
 /** 解析头部时最多读取的字节数 */
 const HEADER_SCAN_LIMIT: number = 1024 * 1024;
-
-interface WavFormat {
-  audioFormat: number;
-  channels: number;
-  sampleRate: number;
-  bitsPerSample: number;
-  dataOffset: number;
-  dataSize: number;
-  /** 文件中实际的音频帧总数（未截断） */
-  totalFrames: number;
-}
 
 /**
  * 音频导入服务
@@ -48,7 +44,7 @@ export class AudioSourceService {
         Logger.info(MODULE, '用户取消选择音频');
         return null;
       }
-      // 解码是同步的原生调用，先让选择器的收起动画画完一帧
+      // 先让选择器的收起动画画完一帧，再开始读文件与解码
       await new Promise<void>((resolve: () => void) => {
         setTimeout(resolve, 30);
       });
@@ -70,6 +66,7 @@ export class AudioSourceService {
     const safeName: string = rawName.replace(/[\\/:*?"<>|]/g, '_');
     const target: string = `${dir}/${Date.now()}_${AudioSourceService.sequence}_${safeName}`;
     AudioSourceService.copyInto(uri, target, rawName);
+    ImportControl.throwIfCancelled();
     return await AudioSourceService.loadSource(target, rawName);
   }
 
@@ -157,8 +154,11 @@ export class AudioSourceService {
   public static async loadSource(path: string, displayName: string): Promise<SourceAudio> {
     if (AudioSourceService.isWav(path)) {
       try {
-        return AudioSourceService.loadWav(path, displayName);
+        return await AudioSourceService.loadWavAsync(path, displayName);
       } catch (error) {
+        if (error instanceof ImportCancelledError) {
+          throw error;
+        }
         // 压缩型 WAV（ADPCM、WAV 里封装 MP3 等）自己解不了，退回系统解码器
         Logger.warn(MODULE, `WAV 自行解析失败，改用系统解码：${(error as Error).message}`);
         return await AudioSourceService.loadDecoded(path, displayName);
@@ -187,6 +187,7 @@ export class AudioSourceService {
 
   /** 用系统解码器解码 MP3 / AAC / M4A / FLAC / OGG 等 */
   private static async loadDecoded(path: string, displayName: string): Promise<SourceAudio> {
+    ImportControl.throwIfCancelled();
     // 先探测：只解封装读轨道信息，能明确区分"容器打不开"和"解码器出问题"
     const probe: AudioProbe = probeAudio(path);
     if (!probe.ok) {
@@ -207,10 +208,14 @@ export class AudioSourceService {
       throw new Error(I18n.f('audio.decodeFailed', [displayName, businessError.message]));
     }
     if (!decoded.ok) {
+      if (decoded.cancelled || ImportControl.isCancelled()) {
+        throw new ImportCancelledError();
+      }
       const reason: string = decoded.error !== undefined ? decoded.error : I18n.t('audio.cannotParse');
       Logger.warn(MODULE, `解码失败 ${displayName}（阶段 ${decoded.stage}）：${reason}`);
       throw new Error(reason);
     }
+    ImportControl.throwIfCancelled();
     if (decoded.frameCount <= 0 || decoded.frames.length === 0) {
       throw new Error(I18n.t('audio.noAudioData'));
     }
@@ -256,7 +261,55 @@ export class AudioSourceService {
     return ext;
   }
 
-  /** 解析本地 WAV 文件 */
+  /**
+   * 解析本地 WAV 文件（TaskPool）。
+   * 5 分钟素材有 2600 万个采样点，逐点转换放在主线程会冻结 UI 数秒，
+   * 读取与解码整段交给工作线程；任务池不可用时回退下面的同步实现。
+   */
+  public static async loadWavAsync(path: string, displayName: string): Promise<SourceAudio> {
+    let result: WavTaskResult;
+    try {
+      result = await WavDecodeTaskService.decodeAsync(path, MAX_ANALYZE_SECONDS);
+    } catch (error) {
+      if (error instanceof ImportCancelledError) {
+        throw error;
+      }
+      Logger.warn(MODULE, `WAV 解码任务失败，回退主线程：${(error as Error).message}`);
+      return AudioSourceService.loadWav(path, displayName);
+    }
+    ImportControl.throwIfCancelled();
+    if (!result.ok) {
+      throw new Error(AudioSourceService.errorText(result.errorKey, result.errorArgs));
+    }
+
+    const frames: Float32Array = new Float32Array(result.frames);
+    const channels: number = result.channels > 0 ? result.channels : 1;
+    const frameCount: number = result.frameCount > 0
+      ? result.frameCount : Math.floor(frames.length / channels);
+    const pcm: PcmAudio = {
+      sampleRate: result.sampleRate,
+      channels: channels,
+      frameCount: frameCount,
+      frames: frames
+    };
+    const durationMs: number = result.totalFrames * 1000 / result.sampleRate;
+    const source: SourceAudio = {
+      path: path,
+      name: displayName,
+      format: result.audioFormat === 3 ? 'WAV / Float' : 'WAV / PCM',
+      sampleRate: result.sampleRate,
+      channels: channels,
+      durationMs: durationMs,
+      truncated: result.truncated,
+      pcm: pcm
+    };
+    Logger.info(MODULE, `已导入 ${displayName}：${FormatUtils.sampleRate(result.sampleRate)} ` +
+      `${FormatUtils.channelName(channels)} ${result.bitsPerSample}bit ` +
+      `时长 ${FormatUtils.duration(durationMs)}（工作线程解码）`);
+    return source;
+  }
+
+  /** 主线程同步解码，仅作为 TaskPool 不可用时的兜底 */
   public static loadWav(path: string, displayName: string): SourceAudio {
     const stat: fs.Stat = fs.statSync(path);
     const file: fs.File = fs.openSync(path, fs.OpenMode.READ_ONLY);
@@ -265,7 +318,11 @@ export class AudioSourceService {
       const headerBuffer: ArrayBuffer = new ArrayBuffer(headerSize);
       fs.readSync(file.fd, headerBuffer, { offset: 0, length: headerSize });
 
-      const format: WavFormat = AudioSourceService.parseHeader(headerBuffer);
+      const parsed: WavParseResult = parseWavHeader(headerBuffer);
+      if (!parsed.ok) {
+        throw new Error(AudioSourceService.errorText(parsed.errorKey, parsed.errorArgs));
+      }
+      const format: WavFormat = parsed.format;
       if (format.dataSize <= 0) {
         throw new Error(I18n.t('audio.wavNoData'));
       }
@@ -278,7 +335,11 @@ export class AudioSourceService {
       const dataBuffer: ArrayBuffer = new ArrayBuffer(wantedBytes);
       fs.readSync(file.fd, dataBuffer, { offset: format.dataOffset, length: wantedBytes });
 
-      const frames: Float32Array = AudioSourceService.decodeSamples(dataBuffer, format);
+      const decoded: WavSamplesResult = decodeWavSamples(dataBuffer, format);
+      if (!decoded.ok) {
+        throw new Error(AudioSourceService.errorText(decoded.errorKey, decoded.errorArgs));
+      }
+      const frames: Float32Array = decoded.samples;
       const frameCount: number = Math.floor(frames.length / format.channels);
 
       const pcm: PcmAudio = {
@@ -313,120 +374,12 @@ export class AudioSourceService {
     }
   }
 
-  private static parseHeader(buffer: ArrayBuffer): WavFormat {
-    if (buffer.byteLength < 44) {
-      throw new Error(I18n.t('audio.wavTooSmall'));
-    }
-    const view: DataView = new DataView(buffer);
-    const riff: string = AudioSourceService.readFourCC(view, 0);
-    const wave: string = AudioSourceService.readFourCC(view, 8);
-    if (riff !== 'RIFF' || wave !== 'WAVE') {
-      throw new Error(I18n.t('audio.wavBadHeader'));
-    }
-
-    const result: WavFormat = {
-      audioFormat: 1,
-      channels: 1,
-      sampleRate: 44100,
-      bitsPerSample: 16,
-      dataOffset: 0,
-      dataSize: 0,
-      totalFrames: 0
-    };
-    let hasFormat: boolean = false;
-    let offset: number = 12;
-    while (offset + 8 <= buffer.byteLength) {
-      const chunkId: string = AudioSourceService.readFourCC(view, offset);
-      const chunkSize: number = view.getUint32(offset + 4, true);
-      const body: number = offset + 8;
-
-      if (chunkId === 'fmt ' && body + 16 <= buffer.byteLength) {
-        result.audioFormat = view.getUint16(body, true);
-        result.channels = view.getUint16(body + 2, true);
-        result.sampleRate = view.getUint32(body + 4, true);
-        result.bitsPerSample = view.getUint16(body + 14, true);
-        // WAVE_FORMAT_EXTENSIBLE：真实格式在 SubFormat GUID 前两字节
-        if (result.audioFormat === 0xFFFE && body + 26 <= buffer.byteLength) {
-          result.audioFormat = view.getUint16(body + 24, true);
-        }
-        hasFormat = true;
-      } else if (chunkId === 'data') {
-        result.dataOffset = body;
-        result.dataSize = chunkSize;
-        const remain: number = buffer.byteLength - body;
-        if (chunkSize === 0 || chunkSize > remain) {
-          result.dataSize = remain;
-        }
-        break;
-      }
-      offset = body + chunkSize + (chunkSize % 2);
-    }
-
-    if (!hasFormat) {
-      throw new Error(I18n.t('audio.wavNoFmt'));
-    }
-    if (result.channels < 1 || result.channels > 8) {
-      throw new Error(I18n.f('audio.unsupportedChannels', [`${result.channels}`]));
-    }
-    if (result.sampleRate < 4000 || result.sampleRate > 192000) {
-      throw new Error(I18n.f('audio.unsupportedRate', [`${result.sampleRate}`]));
-    }
-    if (result.audioFormat !== 1 && result.audioFormat !== 3) {
-      throw new Error(I18n.t('audio.unsupportedWav'));
-    }
-    if (result.audioFormat === 3 && result.bitsPerSample !== 32) {
-      throw new Error(I18n.t('audio.float32Only'));
-    }
-
-    const frameBytes: number = result.channels * result.bitsPerSample / 8;
-    result.totalFrames = frameBytes > 0 ? Math.floor(result.dataSize / frameBytes) : 0;
-    return result;
+  /** 把 WavCodec 返回的 i18n key 翻成当前语言文案 */
+  private static errorText(key: string, args: string[]): string {
+    return args.length > 0 ? I18n.f(key, args) : I18n.t(key);
   }
 
-  private static decodeSamples(buffer: ArrayBuffer, format: WavFormat): Float32Array {
-    const view: DataView = new DataView(buffer);
-    const bits: number = format.bitsPerSample;
-    const isFloat: boolean = format.audioFormat === 3;
-    const bytesPerSample: number = bits / 8;
-    const sampleCount: number = Math.floor(buffer.byteLength / bytesPerSample);
-    const out: Float32Array = new Float32Array(sampleCount);
-
-    if (isFloat) {
-      for (let i = 0; i < sampleCount; i++) {
-        out[i] = view.getFloat32(i * 4, true);
-      }
-      return out;
-    }
-    if (bits === 8) {
-      for (let i = 0; i < sampleCount; i++) {
-        out[i] = (view.getUint8(i) - 128) / 128;
-      }
-    } else if (bits === 16) {
-      for (let i = 0; i < sampleCount; i++) {
-        out[i] = view.getInt16(i * 2, true) / 32768;
-      }
-    } else if (bits === 24) {
-      for (let i = 0; i < sampleCount; i++) {
-        const base: number = i * 3;
-        const b0: number = view.getUint8(base);
-        const b1: number = view.getUint8(base + 1);
-        const b2: number = view.getUint8(base + 2);
-        let value: number = (b2 << 16) | (b1 << 8) | b0;
-        if ((value & 0x800000) !== 0) {
-          value = value - 0x1000000;
-        }
-        out[i] = value / 8388608;
-      }
-    } else if (bits === 32) {
-      for (let i = 0; i < sampleCount; i++) {
-        out[i] = view.getInt32(i * 4, true) / 2147483648;
-      }
-    } else {
-      throw new Error(I18n.f('audio.unsupportedBits', [`${bits}`]));
-    }
-    return out;
-  }
-
+  /** 读取四字节标识（判断 RIFF/WAVE 用） */
   private static readFourCC(view: DataView, offset: number): string {
     let text: string = '';
     for (let i = 0; i < 4; i++) {

@@ -18,6 +18,18 @@ export interface DecodedAudio {
   frameCount: number;
   /** 是否因为超过时长上限被截断 */
   truncated: boolean;
+  /** 是否被 cancelDecode() 取消；为 true 时 ok 一定为 false */
+  cancelled: boolean;
+}
+
+/** 当前解码进度 */
+export interface DecodeProgress {
+  /** 是否有解码任务在跑 */
+  active: boolean;
+  /** 已解码采样占目标采样的比例，0~1 */
+  progress: number;
+  /** 解码已耗时（毫秒） */
+  elapsedMs: number;
 }
 
 export interface AudioProbe {
@@ -44,3 +56,9 @@ export const probeAudio: (path: string) => AudioProbe;
  * @param maxSeconds 最多解码多少秒，超出部分丢弃
  */
 export const decodeAudio: (path: string, maxSeconds: number) => Promise<DecodedAudio>;
+
+/** 查询当前解码进度，用于导入遮罩显示百分比和预计剩余时间 */
+export const getDecodeProgress: () => DecodeProgress;
+
+/** 取消当前解码，解码循环会在几十毫秒内退出 */
+export const cancelDecode: () => void;

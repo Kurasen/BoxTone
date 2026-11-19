@@ -17,6 +17,8 @@ export class AppEvent {
   static readonly OPEN_FEEDBACK: number = 3006;
   /** 全屏忙碌遮罩：payload 为空串表示收起 */
   static readonly BUSY_CHANGED: number = 3005;
+  /** 忙碌遮罩的进度明细（JSON 字符串，见 BusyState） */
+  static readonly BUSY_PROGRESS: number = 3010;
   /** 托管隐私弹窗已签署同意，业务服务完成初始化 */
   static readonly PRIVACY_READY: number = 3007;
   /** 打开支持机型页 */
@@ -27,6 +29,14 @@ export class AppEvent {
 
 export type SimpleHandler = (payload: number) => void;
 export type TextHandler = (payload: string) => void;
+
+/** 忙碌遮罩明细：进度为 -1 时显示不确定进度 */
+export interface BusyState {
+  text: string;
+  detail: string;
+  progress: number;
+  cancellable: boolean;
+}
 
 export class EventBus {
   public static on(eventId: number, handler: SimpleHandler): void {
@@ -75,5 +85,14 @@ export class EventBus {
     const event: emitter.InnerEvent = { eventId: eventId };
     const data: emitter.EventData = { data: { value: payload } };
     emitter.emit(event, data);
+  }
+
+  /** 更新遮罩的进度、剩余时间与取消按钮 */
+  public static emitBusy(state: BusyState): void {
+    EventBus.emitText(AppEvent.BUSY_PROGRESS, JSON.stringify(state));
+  }
+
+  public static resetBusy(): void {
+    EventBus.emitText(AppEvent.BUSY_PROGRESS, '');
   }
 }

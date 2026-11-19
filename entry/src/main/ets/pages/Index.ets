@@ -4,13 +4,14 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
-import { AppEvent, EventBus, SimpleHandler, TextHandler } from '../common/utils/EventBus';
+import { AppEvent, BusyState, EventBus, SimpleHandler, TextHandler } from '../common/utils/EventBus';
 import { Logger } from '../common/utils/Logger';
 import { AppBackdrop } from '../components/AppBackdrop';
 import { GhostButton } from '../components/GhostButton';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { BluetoothService } from '../services/BluetoothService';
 import { AppBootstrap } from '../services/AppBootstrap';
+import { ImportControl } from '../services/audio/ImportControl';
 import { PrivacyConsentService } from '../services/PrivacyConsentService';
 import { PrivacyLinkService } from '../services/PrivacyLinkService';
 import { DevicePage } from './main/DevicePage';
@@ -41,12 +42,14 @@ struct Index {
   @State activeIndex: number = 0;
   @State topInset: number = 0;
   @State naviIndicatorHeight: number = 0;
-  @State showLog: boolean = false;
-  @State showFeedback: boolean = false;
-  @State showDeviceSupport: boolean = false;
-  @State showChangelog: boolean = false;
+  /** 当前打开的全屏浮层：'' | log | feedback | support | changelog */
+  @State activeOverlay: string = '';
   @State feedbackStep: number = 0;
   @State busyText: string = '';
+  @State busyDetail: string = '';
+  /** -1 表示不确定进度 */
+  @State busyProgress: number = -1;
+  @State busyCancellable: boolean = false;
   @State privacyReady: boolean = false;
   private tabsController: HdsTabsController = new HdsTabsController();
   private logHandler: SimpleHandler | undefined = undefined;
@@ -54,6 +57,7 @@ struct Index {
   private supportHandler: SimpleHandler | undefined = undefined;
   private changelogHandler: SimpleHandler | undefined = undefined;
   private busyHandler: TextHandler | undefined = undefined;
+  private busyProgressHandler: TextHandler | undefined = undefined;
   private privacyHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
@@ -61,26 +65,26 @@ struct Index {
     this.privacyReady = AppBootstrap.isInitialized();
     this.logHandler = (): void => {
       this.animateOverlay((): void => {
-        this.showLog = true;
+        this.activeOverlay = 'log';
       });
     };
     EventBus.on(AppEvent.OPEN_LOG, this.logHandler);
     this.feedbackHandler = (): void => {
       this.animateOverlay((): void => {
         this.feedbackStep = 0;
-        this.showFeedback = true;
+        this.activeOverlay = 'feedback';
       });
     };
     EventBus.on(AppEvent.OPEN_FEEDBACK, this.feedbackHandler);
     this.supportHandler = (): void => {
       this.animateOverlay((): void => {
-        this.showDeviceSupport = true;
+        this.activeOverlay = 'support';
       });
     };
     EventBus.on(AppEvent.OPEN_DEVICE_SUPPORT, this.supportHandler);
     this.changelogHandler = (): void => {
       this.animateOverlay((): void => {
-        this.showChangelog = true;
+        this.activeOverlay = 'changelog';
       });
     };
     EventBus.on(AppEvent.OPEN_CHANGELOG, this.changelogHandler);
@@ -88,6 +92,25 @@ struct Index {
       this.busyText = text;
     };
     EventBus.onText(AppEvent.BUSY_CHANGED, this.busyHandler);
+    this.busyProgressHandler = (payload: string): void => {
+      if (payload.length === 0) {
+        this.busyDetail = '';
+        this.busyProgress = -1;
+        this.busyCancellable = false;
+        return;
+      }
+      try {
+        const state: BusyState = JSON.parse(payload) as BusyState;
+        this.busyDetail = state.detail;
+        this.busyProgress = state.progress;
+        this.busyCancellable = state.cancellable;
+      } catch (error) {
+        this.busyDetail = '';
+        this.busyProgress = -1;
+        this.busyCancellable = false;
+      }
+    };
+    EventBus.onText(AppEvent.BUSY_PROGRESS, this.busyProgressHandler);
     // 托管弹窗可能在页面构建之后才被同意
     this.privacyHandler = (): void => {
       this.privacyReady = true;
@@ -116,6 +139,10 @@ struct Index {
       EventBus.off(AppEvent.BUSY_CHANGED);
       this.busyHandler = undefined;
     }
+    if (this.busyProgressHandler !== undefined) {
+      EventBus.off(AppEvent.BUSY_PROGRESS);
+      this.busyProgressHandler = undefined;
+    }
     if (this.privacyHandler !== undefined) {
       EventBus.off(AppEvent.PRIVACY_READY);
       this.privacyHandler = undefined;
@@ -137,31 +164,31 @@ struct Index {
     if (this.busyText.length > 0) {
       return true;
     }
-    if (this.showChangelog) {
+    if (this.activeOverlay === 'changelog') {
       this.animateOverlay((): void => {
-        this.showChangelog = false;
+        this.activeOverlay = '';
       });
       return true;
     }
-    if (this.showFeedback) {
+    if (this.activeOverlay === 'feedback') {
       if (this.feedbackStep !== 0) {
         this.feedbackStep = 0;
       } else {
         this.animateOverlay((): void => {
-          this.showFeedback = false;
+          this.activeOverlay = '';
         });
       }
       return true;
     }
-    if (this.showLog) {
+    if (this.activeOverlay === 'log') {
       this.animateOverlay((): void => {
-        this.showLog = false;
+        this.activeOverlay = '';
       });
       return true;
     }
-    if (this.showDeviceSupport) {
+    if (this.activeOverlay === 'support') {
       this.animateOverlay((): void => {
-        this.showDeviceSupport = false;
+        this.activeOverlay = '';
       });
       return true;
     }
@@ -260,12 +287,12 @@ struct Index {
         this.buildPrivacyGate()
       }
 
-      if (this.showLog) {
+      if (this.activeOverlay === 'log') {
         LogPage({
           topInset: this.topInset,
           onClose: (): void => {
             this.animateOverlay((): void => {
-              this.showLog = false;
+              this.activeOverlay = '';
             });
           }
         })
@@ -276,13 +303,13 @@ struct Index {
             .animation({ duration: 280, curve: Curve.Friction }))
       }
 
-      if (this.showFeedback) {
+      if (this.activeOverlay === 'feedback') {
         FeedbackPage({
           topInset: this.topInset,
           step: $feedbackStep,
           onClose: (): void => {
             this.animateOverlay((): void => {
-              this.showFeedback = false;
+              this.activeOverlay = '';
             });
           }
         })
@@ -293,12 +320,12 @@ struct Index {
             .animation({ duration: 280, curve: Curve.Friction }))
       }
 
-      if (this.showDeviceSupport) {
+      if (this.activeOverlay === 'support') {
         SupportedDevicesPage({
           topInset: this.topInset,
           onClose: (): void => {
             this.animateOverlay((): void => {
-              this.showDeviceSupport = false;
+              this.activeOverlay = '';
             });
           }
         })
@@ -309,12 +336,12 @@ struct Index {
             .animation({ duration: 280, curve: Curve.Friction }))
       }
 
-      if (this.showChangelog) {
+      if (this.activeOverlay === 'changelog') {
         ChangelogPage({
           topInset: this.topInset,
           onClose: (): void => {
             this.animateOverlay((): void => {
-              this.showChangelog = false;
+              this.activeOverlay = '';
             });
           }
         })
@@ -336,6 +363,30 @@ struct Index {
           Text(this.busyText)
             .fontSize(12)
             .fontColor(Palette.TEXT_SECONDARY)
+          if (this.busyProgress >= 0) {
+            Progress({ value: Math.round(this.busyProgress * 100), total: 100, type: ProgressType.Linear })
+              .width(180)
+              .height(4)
+              .color(Palette.ACCENT)
+              .backgroundColor(Palette.FILL_SOFT)
+          }
+          if (this.busyDetail.length > 0) {
+            Text(this.busyDetail)
+              .fontSize(11)
+              .fontColor(Palette.TEXT_TERTIARY)
+          }
+          if (this.busyCancellable) {
+            Text(I18n.t('common.cancel'))
+              .fontSize(12)
+              .fontColor(Palette.ACCENT_TEXT)
+              .padding({ left: 22, right: 22, top: 7, bottom: 7 })
+              .borderRadius(10)
+              .backgroundColor(Palette.FILL_SOFT)
+              .margin({ top: 4 })
+              .onClick((): void => {
+                ImportControl.cancel();
+              })
+          }
         }
         .width('100%')
         .height('100%')

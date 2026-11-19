@@ -14,6 +14,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
@@ -36,8 +37,8 @@ namespace {
 constexpr int32_t SAMPLE_BUFFER_BYTES = 1024 * 512;
 /** 连续这么久没有新样本就收手，避免死循环把 UI 拖死 */
 constexpr int64_t STALL_LIMIT_MS = 4000;
-/** 单次解码的总时间上限 */
-constexpr int64_t DECODE_LIMIT_MS = 20000;
+/** 单次解码的总时间上限：5 分钟高码率素材也要留足余量 */
+constexpr int64_t DECODE_LIMIT_MS = 60000;
 /** 循环次数上限，双保险 */
 constexpr int64_t ITERATION_LIMIT = 500000;
 
@@ -46,6 +47,28 @@ int64_t NowMs()
   return std::chrono::duration_cast<std::chrono::milliseconds>(
            std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+
+/** 同一时间只允许一个导入解码，进度与取消都用这一组全局状态 */
+std::atomic<bool> g_decodeActive{false};
+std::atomic<bool> g_cancelRequested{false};
+std::atomic<int64_t> g_decodedSamples{0};
+std::atomic<int64_t> g_targetSamples{0};
+std::atomic<int64_t> g_decodeStartedAt{0};
+
+/** 退出时统一清 active，避免任何 return 分支漏掉后进度一直转 */
+struct ProgressGuard {
+  ProgressGuard()
+  {
+    g_decodeActive = true;
+    g_decodedSamples = 0;
+    g_targetSamples = 0;
+    g_decodeStartedAt = NowMs();
+  }
+  ~ProgressGuard()
+  {
+    g_decodeActive = false;
+  }
+};
 
 struct FdGuard {
   int fd = -1;
@@ -120,6 +143,7 @@ struct DecodeResult {
   int32_t channels = 0;
   int64_t frameCount = 0;
   bool truncated = false;
+  bool cancelled = false;
 };
 
 int32_t BytesPerSample(int32_t format)
@@ -227,6 +251,7 @@ bool PickAudioTrack(OH_AVSource *source, uint32_t &trackIndex, std::string &mime
 DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
 {
   DecodeResult result;
+  ProgressGuard progress;
   FdGuard fd;
   fd.fd = open(path.c_str(), O_RDONLY);
   if (fd.fd < 0) {
@@ -338,6 +363,12 @@ DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
 
   result.stage = "decode";
   int64_t maxFrames = static_cast<int64_t>(maxSeconds > 0 ? maxSeconds : 30) * sampleRate;
+  // 一次按目标时长预留：5 分钟立体声有 2600 万采样点，
+  // 靠 push_back 反复扩容会让峰值内存多出近一倍，低端机上容易触发 OOM。
+  if (maxFrames > 0 && channels > 0) {
+    result.samples.reserve(static_cast<size_t>(maxFrames * channels));
+  }
+  g_targetSamples = maxFrames > 0 && channels > 0 ? maxFrames * channels : 0;
   const int64_t startedAt = NowMs();
   int64_t lastProgressAt = startedAt;
   size_t lastSampleCount = 0;
@@ -348,6 +379,13 @@ DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
 
   while (!outputDone) {
     iterations++;
+    if (g_cancelRequested.load()) {
+      result.cancelled = true;
+      result.ok = false;
+      result.stage = "cancelled";
+      result.samples.clear();
+      return result;
+    }
     if (iterations > ITERATION_LIMIT) {
       result.truncated = true;
       break;
@@ -463,6 +501,10 @@ DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
             sampleRate = actualRate;
             result.sampleRate = actualRate;
             maxFrames = static_cast<int64_t>(maxSeconds > 0 ? maxSeconds : 30) * sampleRate;
+            if (maxFrames > 0 && channels > 0) {
+              result.samples.reserve(static_cast<size_t>(maxFrames * channels));
+              g_targetSamples = maxFrames * channels;
+            }
           }
           if (actualChannels > 0 && actualChannels <= 8) {
             channels = actualChannels;
@@ -483,6 +525,7 @@ DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
           }
           AppendSamples(addr + offset, size, outFormat, result.samples);
         }
+        g_decodedSamples = static_cast<int64_t>(result.samples.size());
       }
       OH_AudioCodec_FreeOutputBuffer(codec.ptr, outputIndex);
       if (static_cast<int64_t>(result.samples.size()) >= maxFrames * channels) {
@@ -544,6 +587,10 @@ napi_value BuildResult(napi_env env, const DecodeResult &decoded)
   napi_value truncated = nullptr;
   napi_get_boolean(env, decoded.truncated, &truncated);
   napi_set_named_property(env, result, "truncated", truncated);
+
+  napi_value cancelled = nullptr;
+  napi_get_boolean(env, decoded.cancelled, &cancelled);
+  napi_set_named_property(env, result, "cancelled", cancelled);
 
   napi_value stage = nullptr;
   napi_create_string_utf8(env, decoded.stage.c_str(), NAPI_AUTO_LENGTH, &stage);
@@ -636,6 +683,8 @@ napi_value DecodeAudio(napi_env env, napi_callback_info info)
   napi_value promise = nullptr;
   napi_deferred deferred = nullptr;
   napi_create_promise(env, &deferred, &promise);
+  // 上一轮可能被取消过，排新任务时先清掉标志
+  g_cancelRequested = false;
 
   DecodeTask *task = new DecodeTask();
   task->deferred = deferred;
@@ -739,11 +788,67 @@ napi_value ProbeAudio(napi_env env, napi_callback_info info)
   return result;
 }
 
+/** 取消当前解码：解码循环在每个迭代检查该标志，通常几十毫秒内退出 */
+napi_value CancelDecode(napi_env env, napi_callback_info info)
+{
+  g_cancelRequested = true;
+  napi_value result = nullptr;
+  napi_get_undefined(env, &result);
+  return result;
+}
+
+/**
+ * 查询解码进度。
+ * progress 按「已产出采样 / 目标采样」估算，elapsedMs 由原生侧计时，
+ * UI 可以直接用 elapsedMs * (1 - progress) / progress 给出剩余时间。
+ */
+napi_value GetDecodeProgress(napi_env env, napi_callback_info info)
+{
+  napi_value result = nullptr;
+  napi_create_object(env, &result);
+
+  const bool active = g_decodeActive.load();
+  const int64_t target = g_targetSamples.load();
+  const int64_t decoded = g_decodedSamples.load();
+  const int64_t startedAt = g_decodeStartedAt.load();
+
+  double progress = 0.0;
+  if (target > 0) {
+    progress = static_cast<double>(decoded) / static_cast<double>(target);
+    if (progress > 1.0) {
+      progress = 1.0;
+    }
+  }
+  int64_t elapsed = 0;
+  if (active && startedAt > 0) {
+    elapsed = NowMs() - startedAt;
+    if (elapsed < 0) {
+      elapsed = 0;
+    }
+  }
+
+  napi_value activeValue = nullptr;
+  napi_get_boolean(env, active, &activeValue);
+  napi_set_named_property(env, result, "active", activeValue);
+
+  napi_value progressValue = nullptr;
+  napi_create_double(env, progress, &progressValue);
+  napi_set_named_property(env, result, "progress", progressValue);
+
+  napi_value elapsedValue = nullptr;
+  napi_create_int64(env, elapsed, &elapsedValue);
+  napi_set_named_property(env, result, "elapsedMs", elapsedValue);
+
+  return result;
+}
+
 napi_value Init(napi_env env, napi_value exports)
 {
   napi_property_descriptor desc[] = {
     {"decodeAudio", nullptr, DecodeAudio, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"probeAudio", nullptr, ProbeAudio, nullptr, nullptr, nullptr, napi_default, nullptr}
+    {"probeAudio", nullptr, ProbeAudio, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"getDecodeProgress", nullptr, GetDecodeProgress, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"cancelDecode", nullptr, CancelDecode, nullptr, nullptr, nullptr, napi_default, nullptr}
   };
   napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
   return exports;
