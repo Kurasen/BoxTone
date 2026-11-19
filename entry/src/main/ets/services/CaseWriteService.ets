@@ -10,7 +10,8 @@ import { BtDevice, BtSnapshot } from '../models/DeviceModel';
 import { BluetoothService } from './BluetoothService';
 import { ToneRepositoryService } from './ToneRepositoryService';
 import { WriteCompatibility } from './WriteCompatibility';
-import { ToneClient, ToneError, ToneErrorReason, ToneProgress } from './bluetooth/ToneClient';
+import { ToneClient } from './bluetooth/ToneClient';
+import { ToneError, ToneErrorReason, ToneProgress } from './bluetooth/ToneTypes';
 import { ToneStatus } from './bluetooth/MbbProtocol';
 
 const MODULE: string = 'CaseWrite';
