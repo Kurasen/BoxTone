@@ -1452,6 +1452,7 @@ export class ToneClient {
               if (flushedAt > 0 && Date.now() >= flushedAt + MbbSpec.UPLOAD_FLUSH_CONFIRM_MS) {
                 // 100% 后没再等到 09 06：数据已写满，按「未确认成功」返回，
                 // 让用户合盖几秒再开盖确认，而不是立刻宣称写入完成
+                emit(0.99, I18n.t('stage.confirming'));
                 this.flushUnconfirmed = true;
                 completed = true;
                 packet = new Uint8Array(0);
@@ -1648,7 +1649,7 @@ export class ToneClient {
               this.trace('UPLOAD_FLUSH_100 等耳机最终确认');
               // 落盘已满，接下来只是等最终回执：进度往前顶一档，
               // 别让界面停在 95% 上显得像卡死
-              emit(0.96, I18n.t('stage.flushing'));
+              emit(0.98, I18n.t('stage.flushing'));
             }
           }
         } else {

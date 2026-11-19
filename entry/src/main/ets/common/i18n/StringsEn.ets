@@ -601,6 +601,7 @@ export const EN_STRINGS: Record<string, string> = {
   'stage.transfer': 'Transferring',
   'stage.flash': 'Writing to charging case',
   'stage.flushing': 'Earbuds are flashing storage',
+  'stage.confirming': 'Data written; waiting for the earbuds to confirm',
   'stage.apply': 'Applying tone',
   'stage.applied': 'Applied',
 

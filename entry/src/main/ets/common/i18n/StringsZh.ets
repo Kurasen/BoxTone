@@ -601,6 +601,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'stage.transfer': '正在传输',
   'stage.flash': '正在写入充电盒',
   'stage.flushing': '耳机正在擦写闪存',
+  'stage.confirming': '数据已写满，等待耳机最终确认',
   'stage.apply': '正在应用音效',
   'stage.applied': '已应用',
 
