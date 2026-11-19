@@ -553,7 +553,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'toneErr.flushTimeout': '数据已全部送达耳机，但没等到擦写完成。应用会在后台尝试切回默认开盒音；' +
     '若开盖无声，请合盖再开盖。',
   'toneErr.flushAborted': '耳机在擦写阶段自己重启了，这条音效没写进去。当前串口约 {0}KB/s。' +
-    '应用会在后台尝试切回默认开盒音；长音效的稳定上限约 2 秒。',
+    '应用会在后台尝试切回默认开盒音；长音效的稳定上限约 2.5 秒。',
   'toneErr.flushUnconfirmed': '数据已全部送达耳机，之后它没有再回报擦写进度（较长音效常见）。' +
     '音效大概率已经写入：请合盖 10 秒再开盖听一下，确认不是新音效再重试',
   'toneErr.formatRejected': '该机型不接受当前音效格式（16700Hz / 16bit / {0} 字节），' +
@@ -1172,7 +1172,7 @@ export const EN_STRINGS: Record<string, string> = {
     'if opening the case is silent, close and reopen the lid.',
   'toneErr.flushAborted': 'The earbuds restarted while committing the flash write, so this tone was not stored. ' +
     'This link runs at about {0} KB/s. The app will try to switch back to the default tone in the background; ' +
-    'the stable limit for long tones is about 2 seconds.',
+    'the stable limit for long tones is about 2.5 seconds.',
   'toneErr.flushUnconfirmed': 'All data reached the earbuds, but they stopped reporting flash-write progress ' +
     '(common for longer tones). The tone was most likely written — close the lid for 10 seconds, ' +
     'then open it and listen; retry only if it is not the new tone.',

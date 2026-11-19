@@ -11,7 +11,7 @@ import { SectionTitle } from '../../components/SectionTitle';
 import { StatPill } from '../../components/StatPill';
 import { BtDevice, BtSnapshot, createEmptySnapshot } from '../../models/DeviceModel';
 import { BluetoothService, BtChangeListener } from '../../services/BluetoothService';
-import { CaseWriteService } from '../../services/CaseWriteService';
+import { WriteCompatibility } from '../../services/WriteCompatibility';
 import { NearLinkService, NearLinkSnapshot } from '../../services/NearLinkService';
 
 const MODULE: string = 'DevicePage';
@@ -114,7 +114,7 @@ export struct DevicePage {
     }
     this.nearLinkNotified = name;
     Logger.info(MODULE, `检测到星闪连接「${name}」，弹出写入限制提醒`);
-    NearLinkAlert.show(this.getUIContext(), CaseWriteService.nearLinkHint(name));
+    NearLinkAlert.show(this.getUIContext(), WriteCompatibility.nearLinkHint(name));
   }
 
   private statusActionLabel(): string {

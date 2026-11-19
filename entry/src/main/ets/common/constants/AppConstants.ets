@@ -10,26 +10,24 @@ export class ToneSpec {
   static readonly SAMPLE_RATE: number = 16700;
   /** 单声道 */
   static readonly CHANNELS: number = 1;
-  /** 有符号 16bit PCM */
-  static readonly BITS_PER_SAMPLE: number = 16;
-  /** 每帧字节数 = 声道 * 位深 / 8 */
+  /** 每帧字节数 = 声道 × 16bit / 8 */
   static readonly BYTES_PER_FRAME: number = 2;
   /** 每秒字节数 = 16700 * 2 = 33400 */
   static readonly BYTES_PER_SECOND: number = 33400;
   /**
    * 可写音效的字节上限 = 2.5s × 33400 = 83500。
    *
-   * 不再按机型区分上限，统一 2.5 秒、以稳定优先：
-   * 实测 FreeClip 2 在 3 秒以上擦写阶段会随机重启（3.2s 时好时坏、3.5s+ 基本必挂），
-   * 2.8s 及以下一直稳定。2.5s 对「开盒提示音」这一用途足够，又留了安全余量。
+   * 统一 2.5 秒、以稳定优先。2026-11 真机实测结论：
+   * - 2.5s（83KB）稳定；3.2s（106KB）压线；
+   * - 4.5s / 5.7s 数据能完整送达，但耳机擦写第二阶段会卡死（>106KB 不稳）；
+   * - 系统 SPP 分段 480B / 20ms ≈ 23KB/s，应用层没有接口可改。
+   * 详见 docs/write-duration-gap.md。
    */
   static readonly MAX_BYTES: number = 83500;
   /** 对应时长 83500 / 33400 = 2.5 秒 */
   static readonly MAX_SECONDS: number = 2.5;
   /** 时长下限（秒），过短会被盒端忽略 */
   static readonly MIN_SECONDS: number = 0.2;
-  /** 可选采样率列表（导入 RAW 时使用） */
-  static readonly COMMON_RATES: number[] = [8000, 16000, 22050, 32000, 44100, 48000];
 }
 
 /** 兼容性等级：型号匹配只用于提示，真正的写入门槛仍是协议能力探测 */
@@ -214,8 +212,6 @@ export class SupportInfo {
   static readonly FEEDBACK_ONLINE_ENABLED: boolean = false;
   /** 应用市场详情页链接：上架后填入，例如 https://appgallery.huawei.com/app/detail?id=<bundleName> */
   static readonly APP_GALLERY_URL: string = '';
-  /** 捐赠页图片（资源名或路径）：暂时留空，点击无响应 */
-  static readonly DONATION_IMAGE: string = '';
 }
 
 /** 更新日志条目 */
@@ -441,7 +437,6 @@ export class AppStorageKey {
   static readonly PREFS_NAME: string = 'boxtone_settings';
   static readonly KEY_DEFAULT_DURATION: string = 'default_duration_ms';
   static readonly KEY_DEFAULT_GAIN: string = 'default_gain_db';
-  static readonly KEY_LOG_LEVEL: string = 'log_level';
   static readonly KEY_AUTO_NORMALIZE: string = 'auto_normalize';
   static readonly KEY_FEEDBACK_RECORDS: string = 'feedback_records';
   static readonly KEY_THEME_MODE: string = 'theme_mode';
@@ -451,25 +446,12 @@ export class AppStorageKey {
 
 export class AppPath {
   static readonly TONE_DIR: string = 'tones';
-  static readonly EXPORT_DIR: string = 'exports';
   static readonly TONE_INDEX: string = 'index.json';
 }
 
 export class LogTag {
   static readonly DOMAIN: number = 0x0A01;
   static readonly TAG: string = 'BoxTone';
-}
-
-export class RouteName {
-  static readonly LOG_PAGE: string = 'LogPage';
-}
-
-/** 底部导航页签顺序 */
-export enum TabIndex {
-  DEVICE = 0,
-  TONE = 1,
-  LIBRARY = 2,
-  PROFILE = 3
 }
 
 /** 日志级别 */

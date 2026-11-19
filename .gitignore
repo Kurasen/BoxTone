@@ -37,3 +37,6 @@
 
 # 无线调试地址缓存（tools/dev.sh 自动记录）
 /tools/.hdc-target
+
+# CodeArts / opencode 本地工具目录
+/.opencode/

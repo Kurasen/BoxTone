@@ -215,6 +215,17 @@ HarmonyOS SDK 分发（需登录华为账号并同意协议），OpenHarmony 开
 `hvigorw` 包装器由 DevEco Studio **首次打开工程时自动生成**，所以第一次仍需先用 IDE 打开一次。
 产物：`entry/build/default/outputs/default/entry-default-signed.hap`，装真机 `hdc install -r <hap>`。
 
+### 测试
+
+| 层级 | 命令 | 覆盖范围 |
+|:--|:--|:--|
+| L0 静态门禁 | `./build.sh`（或 `hvigorw assembleHap`） | 编译 + ArkTS 类型检查 |
+| L1 单元测试 | `hvigorw test -p module=entry@default -p product=default` | 协议编解码，用例在 `entry/src/test/` |
+| 离线逻辑自检 | `node tools/verify-logic.mjs` | 纯逻辑断言，不依赖设备 |
+
+单测依赖 `@ohos/hypium`（已写入 `entry/oh-package.json5` 的 `devDependencies`），
+首次拉取后执行一次 `ohpm install` 即可。
+
 ### IDE 构建
 
 1. **DevEco Studio 26.0 及以上**，安装 **HarmonyOS 7 SDK（API 26）**用于编译

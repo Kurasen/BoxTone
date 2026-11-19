@@ -1,6 +1,6 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { DeviceSupport, DeviceSupportLevel, DeviceVerdict, ToneSpec } from '../common/constants/AppConstants';
+import { ToneSpec } from '../common/constants/AppConstants';
 import { I18n } from '../common/i18n/I18n';
 import { DateUtils } from '../common/utils/DateUtils';
 import { FormatUtils } from '../common/utils/FormatUtils';
@@ -9,6 +9,7 @@ import { ToneEntry } from '../models/ToneModel';
 import { BtDevice, BtSnapshot } from '../models/DeviceModel';
 import { BluetoothService } from './BluetoothService';
 import { ToneRepositoryService } from './ToneRepositoryService';
+import { WriteCompatibility } from './WriteCompatibility';
 import { ToneClient, ToneError, ToneErrorReason, ToneProgress } from './bluetooth/ToneClient';
 import { ToneStatus } from './bluetooth/MbbProtocol';
 
@@ -154,7 +155,7 @@ export class CaseWriteService {
     if (deviceId.length === 0) {
       if (snapshot.nearLinkName.length > 0) {
         return CaseWriteService.checkFail(WriteCode.NEARLINK_UNSUPPORTED,
-          CaseWriteService.nearLinkHint(snapshot.nearLinkName));
+          WriteCompatibility.nearLinkHint(snapshot.nearLinkName));
       }
       deviceId = BluetoothService.pairedAudioId();
       // 音频正在连回来的空档里两台兜底都可能取不到；上一次写过的设备仍在配对表就沿用
@@ -171,17 +172,17 @@ export class CaseWriteService {
     if (snapshot.nearLinkEnabled) {
       const label: string = snapshot.activeName.length > 0 ? snapshot.activeName : snapshot.nearLinkName;
       return CaseWriteService.checkFail(WriteCode.NEARLINK_UNSUPPORTED,
-        CaseWriteService.nearLinkSwitchHint(label));
+        WriteCompatibility.nearLinkSwitchHint(label));
     }
     // 星闪链路没有对三方开放的串口通道：写入前置直接拦截，不给用户白等一次超时
     const viaNearLink: boolean = snapshot.nearLinkBtId.length > 0 &&
       snapshot.nearLinkBtId.toUpperCase() === deviceId.toUpperCase();
     if (viaNearLink) {
       return CaseWriteService.checkFail(WriteCode.NEARLINK_UNSUPPORTED,
-        CaseWriteService.nearLinkHint(snapshot.activeName.length > 0 ? snapshot.activeName : snapshot.nearLinkName));
+        WriteCompatibility.nearLinkHint(snapshot.activeName.length > 0 ? snapshot.activeName : snapshot.nearLinkName));
     }
     // 型号来自固件，改名不影响；名称只在型号未识别时兜底。未命中只提醒，协议探测才是门槛
-    const warn: string = CaseWriteService.compatWarn(deviceId, snapshot.activeName);
+    const warn: string = WriteCompatibility.compatWarn(deviceId, snapshot.activeName);
     CaseWriteService.lastDeviceId = deviceId;
 
     const ok: WriteCheck = {
@@ -210,28 +211,6 @@ export class CaseWriteService {
     return false;
   }
 
-  /** 未收录机型用中性串口提示，避免把非华为耳机误判成智慧音频占用 */
-  private static isKnownHuawei(deviceId: string, activeName: string): boolean {
-    return DeviceSupport.judge(BluetoothService.deviceModelOf(deviceId), [activeName]).level !==
-      DeviceSupportLevel.UNKNOWN;
-  }
-
-  /** 型号优先、蓝牙名兜底的兼容性提醒；只提醒，不拦截 */
-  private static compatWarn(deviceId: string, activeName: string): string {
-    const hwModel: string = BluetoothService.deviceModelOf(deviceId);
-    const verdict: DeviceVerdict = DeviceSupport.judge(hwModel, [activeName]);
-    if (verdict.level === DeviceSupportLevel.VERIFIED) {
-      return '';
-    }
-    if (verdict.level === DeviceSupportLevel.OFFICIAL) {
-      return I18n.f('write.compatOfficial', [verdict.name, verdict.detail]);
-    }
-    const label: string = hwModel.length > 0
-      ? I18n.f('write.compatHwModel', [hwModel]) :
-      (activeName.length > 0 ? I18n.f('write.compatName', [activeName]) : I18n.t('write.compatGeneric'));
-    return I18n.f('write.compatWarn', [label]);
-  }
-
   /** 把本次会话查到的型号写进缓存，返回可用于日志/诊断的型号 */
   private static rememberModel(client: ToneClient, deviceId: string): string {
     const model: string = client.deviceModel;
@@ -241,18 +220,6 @@ export class CaseWriteService {
       return model;
     }
     return BluetoothService.deviceModelOf(deviceId);
-  }
-
-  /** 星闪连接的统一提示：盒音通道只支持经典蓝牙，给出可执行的切换指引 */
-  public static nearLinkHint(name: string): string {
-    const label: string = name.length > 0 ? name : I18n.t('write.nearLinkFallbackName');
-    return I18n.f('write.nearLinkHint', [label]);
-  }
-
-  /** 星闪开关未关闭的提示：写入前必须关闭开关，避免耳机在写入期间切回星闪 */
-  public static nearLinkSwitchHint(name: string): string {
-    const label: string = name.length > 0 ? name : I18n.t('write.nearLinkFallbackName');
-    return I18n.f('write.nearLinkSwitchHint', [label]);
   }
 
   /** 写入耳机盒 */
@@ -298,7 +265,7 @@ export class CaseWriteService {
         attempt++;
         // 上一条热会话还活着就直接复用，省掉 3 秒建链
         const client: ToneClient = ToneClient.acquire(deviceId, true);
-        client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
+        client.setNeutralHints(!WriteCompatibility.isKnownHuawei(deviceId, modelName));
         try {
           if (onProgress !== undefined) {
             const cooling: number = ToneClient.cooldownLeft();
@@ -416,7 +383,7 @@ export class CaseWriteService {
         attempt++;
         // 上一条热会话还活着就直接复用，省掉 3 秒建链
         const client: ToneClient = ToneClient.acquire(deviceId, true);
-        client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
+        client.setNeutralHints(!WriteCompatibility.isKnownHuawei(deviceId, modelName));
         try {
           await client.connect(deviceId);
           const status: ToneStatus = await client.restoreDefault();
@@ -477,7 +444,7 @@ export class CaseWriteService {
         attempt++;
         // 上一条热会话还活着就直接复用，省掉 3 秒建链
         const client: ToneClient = ToneClient.acquire(deviceId, true);
-        client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId, modelName));
+        client.setNeutralHints(!WriteCompatibility.isKnownHuawei(deviceId, modelName));
         try {
           await client.connect(deviceId);
           const status: ToneStatus = await client.selectBuiltIn(id);
@@ -557,7 +524,7 @@ export class CaseWriteService {
   /** 重连一次，只补发选中命令 */
   private static async applyOnly(deviceId: string): Promise<WriteResult | null> {
     const client: ToneClient = ToneClient.acquire(deviceId, true);
-    client.setNeutralHints(!CaseWriteService.isKnownHuawei(deviceId,
+    client.setNeutralHints(!WriteCompatibility.isKnownHuawei(deviceId,
       BluetoothService.getSnapshot().activeName));
     try {
       await client.connect(deviceId);
@@ -669,7 +636,7 @@ export class CaseWriteService {
       const nearLinkConnected: boolean = linkSnapshot.nearLinkName.length > 0;
       reason = nearLinkConnected ? WriteReason.NEARLINK : WriteReason.LINK;
       if (nearLinkConnected) {
-        message = CaseWriteService.nearLinkHint(
+        message = WriteCompatibility.nearLinkHint(
           linkSnapshot.activeName.length > 0 ? linkSnapshot.activeName : linkSnapshot.nearLinkName);
       }
     }
