@@ -113,6 +113,7 @@ export class SelfCheckService {
   private static cases(): CheckCase[] {
     return [
       new CheckCase('字节工具', SelfCheckService.checkByteUtils),
+      new CheckCase('规格常量', SelfCheckService.checkToneSpec),
       new CheckCase('SHA-256', SelfCheckService.checkSha256),
       new CheckCase('MBB 单帧', SelfCheckService.checkFraming),
       new CheckCase('MBB 分片重组', SelfCheckService.checkFragments),
@@ -159,6 +160,38 @@ export class SelfCheckService {
     SelfCheckService.assertSame(digest,
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
       'SHA-256("abc") 与标准向量不一致');
+  }
+
+  /**
+   * 规格上限必须自洽。
+   *
+   * 界面用 MAX_SECONDS 画滑块，写入用 MAX_BYTES 拦截：两者不一致时会出现
+   * 「界面允许、写入拒绝」的割裂体验；MAX_BYTES 也必须是由采样率推导出来的偶数，
+   * 否则音效包长度会对不齐。
+   */
+  private static checkToneSpec(): void {
+    SelfCheckService.assert(ToneSpec.BYTES_PER_FRAME === 2,
+      `每帧字节数为 ${ToneSpec.BYTES_PER_FRAME}，16bit 单声道应为 2`);
+    SelfCheckService.assert(ToneSpec.BYTES_PER_SECOND === ToneSpec.SAMPLE_RATE * ToneSpec.BYTES_PER_FRAME,
+      `每秒字节数 ${ToneSpec.BYTES_PER_SECOND} 与采样率 ${ToneSpec.SAMPLE_RATE} 不自洽`);
+    SelfCheckService.assert(ToneSpec.MAX_BYTES === Math.floor(ToneSpec.BYTES_PER_SECOND * ToneSpec.MAX_SECONDS),
+      `上限 ${ToneSpec.MAX_BYTES} 字节与 ${ToneSpec.MAX_SECONDS} 秒不一致`);
+    SelfCheckService.assert(ToneSpec.MAX_BYTES % ToneSpec.BYTES_PER_FRAME === 0,
+      `上限 ${ToneSpec.MAX_BYTES} 不是整帧长度`);
+    SelfCheckService.assert(ToneSpec.MIN_SECONDS > 0 && ToneSpec.MIN_SECONDS < ToneSpec.MAX_SECONDS,
+      `时长区间 ${ToneSpec.MIN_SECONDS}~${ToneSpec.MAX_SECONDS} 非法`);
+    SelfCheckService.assert(ToneSpec.MAX_IMPORT_BYTES > ToneSpec.MAX_BYTES &&
+      ToneSpec.MAX_IMPORT_BYTES % ToneSpec.BYTES_PER_FRAME === 0,
+      `导入上限 ${ToneSpec.MAX_IMPORT_BYTES} 小于可写入上限或不是整帧长度`);
+
+    // 超限音效包必须被拒绝：放过一次就可能让耳机擦写阶段卡死
+    let rejected: boolean = false;
+    try {
+      MbbProtocol.tonePackage(new Uint8Array(ToneSpec.MAX_BYTES + ToneSpec.BYTES_PER_FRAME), 'over');
+    } catch (error) {
+      rejected = true;
+    }
+    SelfCheckService.assert(rejected, '超过上限的音效包未被拒绝');
   }
 
   /** 单帧：帧头、长度字段、CRC 自校验、载荷位置 */

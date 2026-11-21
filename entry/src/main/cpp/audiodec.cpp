@@ -285,6 +285,29 @@ DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
     return result;
   }
 
+  // 容器里的真实时长：进度条按「已解码 / 实际时长」算，
+  // 之前拿 maxSeconds（分析上限 300 秒）当分母，10 秒的素材也会一直停在个位数百分比。
+  int64_t durationUs = 0;
+  {
+    FormatGuard sourceInfo;
+    sourceInfo.ptr = OH_AVSource_GetSourceFormat(source.ptr);
+    if (sourceInfo.ptr != nullptr) {
+      OH_AVFormat_GetLongValue(sourceInfo.ptr, OH_MD_KEY_DURATION, &durationUs);
+    }
+  }
+  // 解码输出格式可能到第一帧才确定（AAC 的 SBR 会翻倍采样率），
+  // 把「目标采样数」收敛成一件事，变化时统一重算。
+  auto UpdateProgressTarget = [&durationUs](int64_t maxFrames, int32_t rate, int32_t channelCount) {
+    int64_t targetFrames = maxFrames;
+    if (durationUs > 0 && rate > 0) {
+      const int64_t expected = durationUs * rate / 1000000;
+      if (expected > 0 && expected < targetFrames) {
+        targetFrames = expected;
+      }
+    }
+    g_targetSamples = targetFrames > 0 && channelCount > 0 ? targetFrames * channelCount : 0;
+  };
+
   result.stage = "codec";
   CodecGuard codec;
   codec.ptr = OH_AudioCodec_CreateByMime(mime.c_str(), false);
@@ -368,7 +391,7 @@ DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
   if (maxFrames > 0 && channels > 0) {
     result.samples.reserve(static_cast<size_t>(maxFrames * channels));
   }
-  g_targetSamples = maxFrames > 0 && channels > 0 ? maxFrames * channels : 0;
+  UpdateProgressTarget(maxFrames, sampleRate, channels);
   const int64_t startedAt = NowMs();
   int64_t lastProgressAt = startedAt;
   size_t lastSampleCount = 0;
@@ -503,12 +526,13 @@ DecodeResult DecodeFile(const std::string &path, int32_t maxSeconds)
             maxFrames = static_cast<int64_t>(maxSeconds > 0 ? maxSeconds : 30) * sampleRate;
             if (maxFrames > 0 && channels > 0) {
               result.samples.reserve(static_cast<size_t>(maxFrames * channels));
-              g_targetSamples = maxFrames * channels;
+              UpdateProgressTarget(maxFrames, sampleRate, channels);
             }
           }
           if (actualChannels > 0 && actualChannels <= 8) {
             channels = actualChannels;
             result.channels = actualChannels;
+            UpdateProgressTarget(maxFrames, sampleRate, channels);
           }
           outFormat = actualFormat;
         }

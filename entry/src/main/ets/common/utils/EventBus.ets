@@ -25,6 +25,8 @@ export class AppEvent {
   static readonly OPEN_DEVICE_SUPPORT: number = 3008;
   /** 打开更新日志 */
   static readonly OPEN_CHANGELOG: number = 3009;
+  /** 打开备份与导入页 */
+  static readonly OPEN_BACKUP: number = 3011;
 }
 
 export type SimpleHandler = (payload: number) => void;

@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
@@ -18,10 +19,18 @@ import { AudioConvertService } from '../../services/AudioConvertService';
 import { AudioConvertTaskService } from '../../services/audio/ConvertTask';
 import { AudioPlayService } from '../../services/AudioPlayService';
 import { AudioSourceService } from '../../services/AudioSourceService';
+import { BluetoothService } from '../../services/BluetoothService';
+import { CaseWriteService,
+  WriteCheck,
+  WriteCode,
+  WriteReason,
+  WriteResult
+} from '../../services/CaseWriteService';
 import { ImportCancelledError, ImportControl, ImportProgressState } from '../../services/audio/ImportControl';
 import { AppSettings, SettingsService } from '../../services/SettingsService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 import { ToneSynthesizerService } from '../../services/ToneSynthesizerService';
+import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 
 const MODULE: string = 'TonePage';
 /** 全段峰值缓存桶数：放大到 1 秒窗口时仍有足够细节 */
@@ -30,7 +39,7 @@ const FULL_PEAK_BUCKETS: number = 2048;
 const VIEW_PEAK_BUCKETS: number = 260;
 /**
  * 波形最小可视窗口：保证「最大可截取时长」能完整落在视窗内，同时限制放大倍数。
- * 规格上限改成 5.7 秒后视窗会自动跟着变，不必再单独调整。
+ * 视窗随 ToneSpec.MAX_SECONDS 自动变化（上限调整后不必再单独改这里）。
  */
 const MIN_VIEW_SPAN_MS: number = Math.ceil(ToneSpec.MAX_SECONDS * 1000) + 500;
 
@@ -61,6 +70,10 @@ export struct TonePage {
   @State playingTone: boolean = false;
   @State preparing: boolean = false;
   @State savedName: string = '';
+  /** 生成后直接写入：进度与阶段，和音效库页保持同一套文案 */
+  @State writing: boolean = false;
+  @State writeRatio: number = 0;
+  @State writeStage: string = '';
 
   /**
    * 转换结果缓存。
@@ -75,6 +88,8 @@ export struct TonePage {
   private preferredDurationMs: number = 2000;
   /** 导入进度轮询计时器；-1 表示未运行 */
   private progressTimer: number = -1;
+  /** 已展示过的最大进度：原生进度偶有回退，界面只允许单调向前 */
+  private importProgressShown: number = 0;
 
   aboutToAppear(): void {
     const settings: AppSettings = SettingsService.get();
@@ -169,6 +184,7 @@ export struct TonePage {
   /** 导入期间的进度与剩余时间：原生解码有真实进度，探测/WAV 阶段退回不确定进度 */
   private startImportProgress(): void {
     this.stopImportProgress();
+    this.importProgressShown = 0;
     this.progressTimer = setInterval((): void => {
       this.updateImportProgress();
     }, 250);
@@ -195,16 +211,21 @@ export struct TonePage {
       return;
     }
     let detail: string = I18n.t('tone.importDecoding');
-    if (state.progress > 0.01 && state.elapsedMs > 300) {
-      const remainMs: number = state.elapsedMs * (1 - state.progress) / state.progress;
-      const seconds: number = Math.max(1, Math.round(remainMs / 1000));
-      const percent: number = Math.min(99, Math.round(state.progress * 100));
+    // 原生进度按实际时长算（见 audiodec 的 target），这里再做单调收敛与剩余时间平滑，
+    // 避免解码器换帧时 progress 小幅回退、剩余时间跟着乱跳
+    const raw: number = Math.max(0, Math.min(1, state.progress));
+    const progress: number = Math.max(this.importProgressShown, raw);
+    this.importProgressShown = progress;
+    if (progress > 0.02 && state.elapsedMs > 500) {
+      const remainMs: number = state.elapsedMs * (1 - progress) / progress;
+      const seconds: number = Math.max(1, Math.min(600, Math.round(remainMs / 1000)));
+      const percent: number = Math.min(99, Math.round(progress * 100));
       detail = `${percent}% · ${I18n.f('tone.importRemaining', [`${seconds}`])}`;
     }
     const decoding: BusyState = {
       text: I18n.t('tone.importing'),
       detail: detail,
-      progress: state.progress,
+      progress: progress > 0.02 ? progress : -1,
       cancellable: true
     };
     EventBus.emitBusy(decoding);
@@ -466,6 +487,140 @@ export struct TonePage {
     } finally {
       this.setBusy(false);
       this.busy = false;
+    }
+  }
+
+  /** 生成并保存，随后直接进入写入流程：写入前仍会做一次设备检查与确认 */
+  private async generateAndWrite(): Promise<void> {
+    const current: SourceAudio | undefined = this.source;
+    if (current === undefined || this.busy || this.writing) {
+      return;
+    }
+    this.busy = true;
+    try {
+      const result: ConvertResult = await this.prepareResult(current, I18n.t('tone.generating'));
+      const entry: ToneEntry = ToneRepositoryService.save(this.currentName(), result, current.name);
+      this.savedName = entry.name;
+      EventBus.emit(AppEvent.TONE_CHANGED, 1);
+      await BluetoothService.refresh();
+      const check: WriteCheck = CaseWriteService.check(entry);
+      if (!check.ok) {
+        if (check.code === WriteCode.NEARLINK_UNSUPPORTED) {
+          this.toast(I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]));
+          NearLinkAlert.show(this.getUIContext(), check.message);
+          return;
+        }
+        this.getUIContext().showAlertDialog({
+          title: I18n.t('tone.notWrittenTitle'),
+          message: I18n.f('tone.notWrittenMessage', [entry.name, check.message]),
+          confirm: {
+            value: I18n.t('common.ok'),
+            action: (): void => {
+            }
+          }
+        });
+        return;
+      }
+      const writeHint: string = I18n.t('lib.writeHint');
+      const hint: string = check.warn.length > 0 ? `${check.warn}\n${writeHint}` : writeHint;
+      this.getUIContext().showAlertDialog({
+        title: I18n.t('lib.writeTitle'),
+        message: I18n.f('lib.writeMessage', [hint]),
+        primaryButton: {
+          value: I18n.t('common.cancel'),
+          action: (): void => {
+            this.toast(I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]));
+          }
+        },
+        secondaryButton: {
+          value: I18n.t('lib.startWrite'),
+          fontColor: Palette.ACCENT,
+          action: (): void => {
+            this.runWrite(entry);
+          }
+        }
+      });
+    } catch (error) {
+      Logger.exception(MODULE, '生成并写入失败', error as BusinessError);
+      this.toast(I18n.t('tone.generateFailed'));
+    } finally {
+      this.setBusy(false);
+      this.busy = false;
+    }
+  }
+
+  private async runWrite(entry: ToneEntry): Promise<void> {
+    this.writing = true;
+    this.writeRatio = 0;
+    this.writeStage = I18n.t('lib.stageConnect');
+    await this.setKeepScreenOn(true);
+    try {
+      const result: WriteResult = await CaseWriteService.write(entry,
+        (ratio: number, stage: string): void => {
+          this.writeRatio = Math.round(ratio * 100);
+          this.writeStage = stage;
+        });
+      if (result.ok) {
+        this.writeRatio = 100;
+        this.getUIContext().showAlertDialog({
+          title: I18n.t('lib.writeDone'),
+          message: I18n.f('lib.writeDoneMessage', [result.message]),
+          confirm: {
+            value: I18n.t('common.ok'),
+            action: (): void => {
+            }
+          }
+        });
+      } else {
+        this.showWriteFailure(result);
+      }
+    } catch (error) {
+      Logger.exception(MODULE, '写入异常', error as BusinessError);
+      this.toast(I18n.t('lib.writeFailed'));
+    } finally {
+      this.writing = false;
+      this.writeStage = '';
+      this.writeRatio = 0;
+      // 直接写入后音效库的「盒内」标记与列表需要立即跟上
+      EventBus.emit(AppEvent.TONE_CHANGED, 1);
+      await this.setKeepScreenOn(false);
+      BluetoothService.refresh().then(() => {
+      }).catch((error: BusinessError) => {
+        Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);
+      });
+    }
+  }
+
+  /** 写入失败：不支持/格式被拒引导反馈，其余失败给一段可执行的重试说明 */
+  private showWriteFailure(result: WriteResult): void {
+    const needReport: boolean = result.reason === WriteReason.UNSUPPORTED ||
+      result.reason === WriteReason.FORMAT;
+    this.getUIContext().showAlertDialog({
+      title: needReport ? I18n.t('lib.unsupportedTitle') : I18n.t('lib.writeIncomplete'),
+      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
+      primaryButton: {
+        value: I18n.t('common.ok'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: I18n.t('lib.viewLog'),
+        fontColor: Palette.ACCENT,
+        action: (): void => {
+          EventBus.emit(AppEvent.OPEN_LOG, 1);
+        }
+      }
+    });
+  }
+
+  /** 擦写阶段可能持续几十秒，熄屏后应用被挂起会掐断串口 */
+  private async setKeepScreenOn(on: boolean): Promise<void> {
+    try {
+      const context: common.UIAbilityContext = this.abilityContext();
+      const mainWindow: window.Window = await window.getLastWindow(context);
+      await mainWindow.setWindowKeepScreenOn(on);
+    } catch (error) {
+      Logger.warn(MODULE, `设置屏幕常亮失败 on=${on} code=${(error as BusinessError).code}`);
     }
   }
 
@@ -885,11 +1040,43 @@ export struct TonePage {
   @Builder
   buildActions() {
     Column({ space: 10 }) {
+      if (this.writing) {
+        Column({ space: 6 }) {
+          Row() {
+            Text(this.writeStage.length > 0 ? this.writeStage : I18n.t('lib.writingStage'))
+              .fontSize(11)
+              .fontColor(Palette.ACCENT_TEXT)
+              .layoutWeight(1)
+            Text(`${this.writeRatio}%`)
+              .fontSize(11)
+              .fontColor(Palette.TEXT_TERTIARY)
+          }
+          .width('100%')
+
+          Progress({ value: this.writeRatio, total: 100, type: ProgressType.Linear })
+            .width('100%')
+            .height(3)
+            .color(Palette.ACCENT)
+            .backgroundColor(Palette.FILL_SOFT)
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4 })
+      }
+
       PrimaryButton({
-        btnLabel: I18n.t('tone.saveButton'),
-        btnEnabled: this.source !== undefined,
-        btnLoading: this.busy,
+        btnLabel: I18n.t('tone.saveAndWriteButton'),
+        btnEnabled: this.source !== undefined && !this.writing,
+        btnLoading: this.busy || this.writing,
         btnIcon: $r('app.media.ic_check'),
+        onTap: (): void => {
+          this.generateAndWrite();
+        }
+      })
+
+      GhostButton({
+        ghostLabel: I18n.t('tone.saveButton'),
+        ghostEnabled: this.source !== undefined && !this.writing,
+        ghostIcon: $r('app.media.ic_add'),
         onTap: (): void => {
           this.generateAndSave();
         }
@@ -897,7 +1084,7 @@ export struct TonePage {
 
       GhostButton({
         ghostLabel: I18n.t('tone.exportButton'),
-        ghostEnabled: this.source !== undefined,
+        ghostEnabled: this.source !== undefined && !this.writing,
         ghostIcon: $r('app.media.ic_upload'),
         onTap: (): void => {
           this.generateAndExport();

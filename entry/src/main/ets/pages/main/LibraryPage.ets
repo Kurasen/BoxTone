@@ -17,9 +17,13 @@ import { ToneEntry } from '../../models/ToneModel';
 import { AudioPlayService } from '../../services/AudioPlayService';
 import { BluetoothService } from '../../services/BluetoothService';
 import { CaseWriteService, WriteCheck, WriteCode, WriteReason, WriteResult } from '../../services/CaseWriteService';
+import { SettingsService } from '../../services/SettingsService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 
 const MODULE: string = 'LibraryPage';
+
+/** 整页滚动的底部留白：与悬浮底栏等高，最后一张卡片能完整滚到底栏上方 */
+const SCROLL_BOTTOM_INSET: number = Metric.CONTENT_BOTTOM_INSET;
 
 @Component
 export struct LibraryPage {
@@ -34,6 +38,11 @@ export struct LibraryPage {
   @State editingId: string = '';
   @State editingName: string = '';
   @State sortMode: string = 'time';
+  /** 本机记录的「盒内当前音效」 */
+  @State lastWrittenId: string = '';
+  /** 批量删除：选择模式与已勾选 id */
+  @State selecting: boolean = false;
+  @State selectedIds: string[] = [];
   @State restoring: boolean = false;
   @State builtinBusy: boolean = false;
   @State builtinLabel: string = '';
@@ -61,6 +70,7 @@ export struct LibraryPage {
   private reload(): void {
     this.items = ToneRepositoryService.list();
     this.totalBytes = ToneRepositoryService.totalBytes();
+    this.lastWrittenId = SettingsService.getLastWrittenTone();
     if (this.items.length === 0) {
       this.expandedId = '';
     }
@@ -134,8 +144,7 @@ export struct LibraryPage {
   /** 擦写阶段可能持续几十秒，熄屏后应用被挂起会掐断串口 */
   private async setKeepScreenOn(on: boolean): Promise<void> {
     try {
-      const context: common.UIAbilityContext =
-        this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context: common.UIAbilityContext = this.abilityContext();
       const mainWindow: window.Window = await window.getLastWindow(context);
       await mainWindow.setWindowKeepScreenOn(on);
     } catch (error) {
@@ -143,11 +152,15 @@ export struct LibraryPage {
     }
   }
 
+  private abilityContext(): common.UIAbilityContext {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext;
+  }
+
   private async runWrite(entry: ToneEntry): Promise<void> {
     this.writingId = entry.id;
     this.writeStage = I18n.t('lib.stageConnect');
     this.writeRatio = 0;
-    Logger.info(MODULE, `开始写入「${entry.name}」`);
+    Logger.info(MODULE, `开始写入「entry.name}」`);
     await this.setKeepScreenOn(true);
     try {
       const result: WriteResult = await CaseWriteService.write(entry,
@@ -159,7 +172,7 @@ export struct LibraryPage {
         // 补发选中成功时 upload 已经抛错，进度可能停在上一步，这里补到 100%
         this.writeRatio = 100;
         this.writeStage = I18n.t('lib.stageApplied');
-        Logger.info(MODULE, `写入成功「${entry.name}」`);
+        Logger.info(MODULE, `写入成功「entry.name}」`);
         this.getUIContext().showAlertDialog({
           title: I18n.t('lib.writeDone'),
           message: I18n.f('lib.writeDoneMessage', [result.message]),
@@ -170,7 +183,7 @@ export struct LibraryPage {
           }
         });
       } else {
-        Logger.warn(MODULE, `写入未完成 code=${result.code}：${result.message}`);
+        Logger.warn(MODULE, `写入未完 code=${result.code}${result.message}`);
         this.showWriteFailure(result);
       }
     } catch (error) {
@@ -180,6 +193,7 @@ export struct LibraryPage {
       this.writingId = '';
       this.writeStage = '';
       this.writeRatio = 0;
+      this.lastWrittenId = SettingsService.getLastWrittenTone();
       await this.setKeepScreenOn(false);
       // 写入过程会断开音频通道，刷新一次让设备页的状态跟上
       BluetoothService.refresh().then(() => {
@@ -244,7 +258,7 @@ export struct LibraryPage {
           }
         });
       } else {
-        Logger.warn(MODULE, `恢复默认开盒音未完成 code=${result.code}：${result.message}`);
+        Logger.warn(MODULE, `恢复默认开盒音未完 code=${result.code}${result.message}`);
         this.getUIContext().showAlertDialog({
           title: I18n.t('lib.restoreIncomplete'),
           message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
@@ -267,6 +281,7 @@ export struct LibraryPage {
       this.toast(I18n.t('lib.restoreFailed'));
     } finally {
       this.restoring = false;
+      this.lastWrittenId = SettingsService.getLastWrittenTone();
       EventBus.emitText(AppEvent.BUSY_CHANGED, '');
       await this.setKeepScreenOn(false);
       BluetoothService.refresh().then(() => {
@@ -276,7 +291,7 @@ export struct LibraryPage {
     }
   }
 
-  /** 列表展示用：时间按新→旧，名称按中文排序 */
+  /** 列表展示用：按时间/名称排序 */
   private sortedItems(): ToneEntry[] {
     const copy: ToneEntry[] = this.items.slice();
     if (this.sortMode === 'name') {
@@ -285,6 +300,127 @@ export struct LibraryPage {
       copy.sort((a: ToneEntry, b: ToneEntry): number => b.createdAt - a.createdAt);
     }
     return copy;
+  }
+
+  // ---------------- 批量删除 ----------------
+
+  /** 进入批量选择：写入/恢复期间不允许，避免把正在使用的文件删掉 */
+  private enterSelecting(): void {
+    if (CaseWriteService.isBusy() || this.writingId.length > 0) {
+      this.toast(I18n.t('lib.selectBusy'));
+      return;
+    }
+    this.selecting = true;
+    this.selectedIds = [];
+    this.expandedId = '';
+    this.editingId = '';
+  }
+
+  private exitSelecting(): void {
+    this.selecting = false;
+    this.selectedIds = [];
+  }
+
+  private isSelected(id: string): boolean {
+    return this.selectedIds.indexOf(id) >= 0;
+  }
+
+  private toggleSelected(id: string): void {
+    const next: string[] = [];
+    let found: boolean = false;
+    for (let i = 0; i < this.selectedIds.length; i++) {
+      if (this.selectedIds[i] === id) {
+        found = true;
+      } else {
+        next.push(this.selectedIds[i]);
+      }
+    }
+    if (!found) {
+      next.push(id);
+    }
+    this.selectedIds = next;
+  }
+
+  /** 当前过滤结果是否已全选 */
+  private visibleAllSelected(): boolean {
+    const visible: ToneEntry[] = this.sortedItems();
+    if (visible.length === 0) {
+      return false;
+    }
+    for (let i = 0; i < visible.length; i++) {
+      if (!this.isSelected(visible[i].id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private toggleSelectAll(): void {
+    if (this.visibleAllSelected()) {
+      this.selectedIds = [];
+      return;
+    }
+    const ids: string[] = [];
+    const visible: ToneEntry[] = this.sortedItems();
+    for (let i = 0; i < visible.length; i++) {
+      ids.push(visible[i].id);
+    }
+    this.selectedIds = ids;
+  }
+
+  private confirmBatchDelete(): void {
+    if (this.selectedIds.length === 0) {
+      this.toast(I18n.t('lib.selectNoneHint'));
+      return;
+    }
+    if (CaseWriteService.isBusy() || this.writingId.length > 0) {
+      this.toast(I18n.t('lib.selectBusy'));
+      return;
+    }
+    this.getUIContext().showAlertDialog({
+      title: I18n.t('lib.deleteBatchTitle'),
+      message: I18n.f('lib.deleteBatchMessage', [`${this.selectedIds.length}`]),
+      primaryButton: {
+        value: I18n.t('common.cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: I18n.t('lib.delete'),
+        fontColor: Palette.DANGER,
+        action: (): void => {
+          this.runBatchDelete();
+        }
+      }
+    });
+  }
+
+  private runBatchDelete(): void {
+    let removed: number = 0;
+    let markerCleared: boolean = false;
+    for (let i = 0; i < this.items.length; i++) {
+      const entry: ToneEntry = this.items[i];
+      if (!this.isSelected(entry.id) || this.writingId === entry.id ||
+        CaseWriteService.isToneWriting(entry.id)) {
+        continue;
+      }
+      if (this.playingId === entry.id) {
+        AudioPlayService.stop();
+        this.playingId = '';
+      }
+      ToneRepositoryService.remove(entry);
+      if (this.lastWrittenId === entry.id) {
+        markerCleared = true;
+      }
+      removed++;
+    }
+    if (markerCleared) {
+      SettingsService.setLastWrittenTone('');
+    }
+    this.selecting = false;
+    this.selectedIds = [];
+    this.reload();
+    this.toast(I18n.f('lib.deleteBatchDone', [`${removed}`]));
   }
 
   /** 星闪连接下写入被前置拦截：给出明确的切换指引和跳转入口 */
@@ -379,6 +515,11 @@ export struct LibraryPage {
   }
 
   private confirmDelete(entry: ToneEntry): void {
+    // 正在写入的音效不能删：文件被删会让传输中的校验与收尾失去依据
+    if (this.writingId === entry.id || CaseWriteService.isToneWriting(entry.id)) {
+      this.toast(I18n.t('lib.deleteLockedWriting'));
+      return;
+    }
     this.getUIContext().showAlertDialog({
       title: I18n.t('lib.deleteTitle'),
       message: I18n.f('lib.deleteMessage', [entry.name]),
@@ -392,6 +533,10 @@ export struct LibraryPage {
         fontColor: Palette.DANGER,
         action: (): void => {
           ToneRepositoryService.remove(entry);
+          // 删掉的正好是盒内音效：标记同步清空，卡片不再显示已不存在的名字
+          if (this.lastWrittenId === entry.id) {
+            SettingsService.setLastWrittenTone('');
+          }
           if (this.playingId === entry.id) {
             AudioPlayService.stop();
             this.playingId = '';
@@ -417,15 +562,20 @@ export struct LibraryPage {
   }
 
   build() {
+    // 整页一起滚：数据量不大，不用 List 做局部滚动
     Scroll() {
-      Column({ space: 16 }) {
+      Column({ space: 12 }) {
         this.buildHeader()
         this.buildSummary()
         this.buildRestoreAction()
         if (this.items.length > 0) {
-          this.buildSortBar()
+          if (this.selecting) {
+            this.buildSelectBar()
+          } else {
+            this.buildSortBar()
+          }
         }
-        this.buildList()
+        this.buildItems()
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
@@ -433,7 +583,7 @@ export struct LibraryPage {
         left: Metric.PAGE_PADDING,
         right: Metric.PAGE_PADDING,
         top: 8,
-        bottom: Metric.CONTENT_BOTTOM_INSET
+        bottom: SCROLL_BOTTOM_INSET
       })
     }
     .width('100%')
@@ -567,6 +717,7 @@ export struct LibraryPage {
       this.toast(I18n.t('write.builtinFailed'));
     } finally {
       this.builtinBusy = false;
+      this.lastWrittenId = SettingsService.getLastWrittenTone();
       EventBus.emitText(AppEvent.BUSY_CHANGED, '');
     }
   }
@@ -574,12 +725,63 @@ export struct LibraryPage {
   @Builder
   buildSortBar() {
     Row({ space: 8 }) {
-      Text(I18n.f('lib.totalCount', [`${this.items.length}`]))
+      Text(I18n.f('lib.totalCount', [`${this.sortedItems().length}`]))
         .fontSize(10)
         .fontColor(Palette.TEXT_TERTIARY)
       Blank()
       this.sortChip(I18n.t('lib.sortTime'), 'time')
       this.sortChip(I18n.t('lib.sortName'), 'name')
+      Text(I18n.t('lib.select'))
+        .fontSize(11)
+        .fontColor(this.writingId.length > 0 || this.restoring ? Palette.TEXT_TERTIARY : Palette.ACCENT_TEXT)
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .borderRadius(999)
+        .backgroundColor(Palette.ACCENT_SOFT)
+        .opacity(this.writingId.length > 0 || this.restoring ? 0.5 : 1)
+        .onClick(() => {
+          this.enterSelecting();
+        })
+    }
+    .width('100%')
+    .margin({ top: -4 })
+  }
+
+  /** 批量选择工具条：替换排序条，写入期间不会出现在这里 */
+  @Builder
+  buildSelectBar() {
+    Row({ space: 8 }) {
+      Text(I18n.f('lib.selectedCount', [`${this.selectedIds.length}`]))
+        .fontSize(10)
+        .fontColor(Palette.TEXT_TERTIARY)
+        .layoutWeight(1)
+      Text(this.visibleAllSelected() ? I18n.t('lib.unselectAll') : I18n.t('lib.selectAll'))
+        .fontSize(11)
+        .fontColor(Palette.TEXT_SECONDARY)
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .borderRadius(999)
+        .backgroundColor(Palette.FILL_FAINT)
+        .onClick(() => {
+          this.toggleSelectAll();
+        })
+      Text(I18n.t('lib.deleteSelected'))
+        .fontSize(11)
+        .fontColor(this.selectedIds.length > 0 ? Palette.DANGER : Palette.TEXT_TERTIARY)
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .borderRadius(999)
+        .backgroundColor(Palette.FILL_FAINT)
+        .opacity(this.selectedIds.length > 0 ? 1 : 0.5)
+        .onClick(() => {
+          this.confirmBatchDelete();
+        })
+      Text(I18n.t('common.cancel'))
+        .fontSize(11)
+        .fontColor(Palette.TEXT_SECONDARY)
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .borderRadius(999)
+        .backgroundColor(Palette.BG_INPUT)
+        .onClick(() => {
+          this.exitSelecting();
+        })
     }
     .width('100%')
     .margin({ top: -4 })
@@ -599,22 +801,30 @@ export struct LibraryPage {
   }
 
   @Builder
-  buildList() {
+  buildItems() {
     if (this.items.length === 0) {
-      GlassCard({ cardPadding: 6 }) {
-        EmptyView({
-          emptyIcon: $r('app.media.ic_tab_library'),
-          emptyTitle: I18n.t('lib.empty'),
-          emptyDesc: I18n.t('lib.emptyDesc')
-        })
+      Column() {
+        GlassCard({ cardPadding: 6 }) {
+          EmptyView({
+            emptyIcon: $r('app.media.ic_tab_library'),
+            emptyTitle: I18n.t('lib.empty'),
+            emptyDesc: I18n.t('lib.emptyDesc')
+          })
+        }
       }
+      .width('100%')
+      .padding({ top: 40 })
     } else {
       Column({ space: 10 }) {
         ForEach(this.sortedItems(), (entry: ToneEntry) => {
           Column({ space: 8 }) {
             ToneCard({
               entry: entry,
-              expanded: this.expandedId === entry.id,
+              inCase: this.lastWrittenId === entry.id,
+              selecting: this.selecting,
+              selected: this.isSelected(entry.id),
+              deleteLocked: this.writingId === entry.id || CaseWriteService.isToneWriting(entry.id),
+              expanded: !this.selecting && this.expandedId === entry.id,
               playing: this.playingId === entry.id,
               writing: this.writingId === entry.id,
               writingText: this.writingId === entry.id && this.writeRatio > 0
@@ -622,10 +832,17 @@ export struct LibraryPage {
               writeLocked: this.restoring ||
                 (this.writingId.length > 0 && this.writingId !== entry.id),
               onToggle: (): void => {
+                if (this.selecting) {
+                  this.toggleSelected(entry.id);
+                  return;
+                }
                 this.expandedId = this.expandedId === entry.id ? '' : entry.id;
                 if (this.expandedId !== entry.id) {
                   this.editingId = '';
                 }
+              },
+              onSelect: (): void => {
+                this.toggleSelected(entry.id);
               },
               onPlay: (): void => {
                 this.togglePlay(entry);
@@ -698,7 +915,7 @@ export struct LibraryPage {
             }
           }
           .width('100%')
-        }, (entry: ToneEntry) => entry.id)
+        }, (entry: ToneEntry) => `${entry.id}-${this.lastWrittenId === entry.id ? 1 : 0}`)
       }
       .width('100%')
     }

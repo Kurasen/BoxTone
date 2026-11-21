@@ -22,6 +22,7 @@ import { LogPage } from './settings/LogPage';
 import { ProfilePage } from './settings/ProfilePage';
 import { SupportedDevicesPage } from './settings/SupportedDevicesPage';
 import { ChangelogPage } from './settings/ChangelogPage';
+import { BackupPage } from './settings/BackupPage';
 
 const MODULE: string = 'Index';
 
@@ -42,7 +43,7 @@ struct Index {
   @State activeIndex: number = 0;
   @State topInset: number = 0;
   @State naviIndicatorHeight: number = 0;
-  /** 当前打开的全屏浮层：'' | log | feedback | support | changelog */
+  /** 当前打开的全屏浮层：'' | log | feedback | support | changelog | backup */
   @State activeOverlay: string = '';
   @State feedbackStep: number = 0;
   @State busyText: string = '';
@@ -56,6 +57,7 @@ struct Index {
   private feedbackHandler: SimpleHandler | undefined = undefined;
   private supportHandler: SimpleHandler | undefined = undefined;
   private changelogHandler: SimpleHandler | undefined = undefined;
+  private backupHandler: SimpleHandler | undefined = undefined;
   private busyHandler: TextHandler | undefined = undefined;
   private busyProgressHandler: TextHandler | undefined = undefined;
   private privacyHandler: SimpleHandler | undefined = undefined;
@@ -88,6 +90,12 @@ struct Index {
       });
     };
     EventBus.on(AppEvent.OPEN_CHANGELOG, this.changelogHandler);
+    this.backupHandler = (): void => {
+      this.animateOverlay((): void => {
+        this.activeOverlay = 'backup';
+      });
+    };
+    EventBus.on(AppEvent.OPEN_BACKUP, this.backupHandler);
     this.busyHandler = (text: string): void => {
       this.busyText = text;
     };
@@ -135,6 +143,10 @@ struct Index {
       EventBus.off(AppEvent.OPEN_CHANGELOG);
       this.changelogHandler = undefined;
     }
+    if (this.backupHandler !== undefined) {
+      EventBus.off(AppEvent.OPEN_BACKUP);
+      this.backupHandler = undefined;
+    }
     if (this.busyHandler !== undefined) {
       EventBus.off(AppEvent.BUSY_CHANGED);
       this.busyHandler = undefined;
@@ -149,7 +161,9 @@ struct Index {
     }
   }
 
-  /** 显式动画上下文：条件渲染的 transition 只有在 animateTo 里改状态才会播放位移 */
+  /**
+   * 显式动画上下文：条件渲染的 transition 只有在 animateTo 里改状态才会播放位移
+   */
   private animateOverlay(update: () => void): void {
     this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, update);
   }
@@ -187,6 +201,12 @@ struct Index {
       return true;
     }
     if (this.activeOverlay === 'support') {
+      this.animateOverlay((): void => {
+        this.activeOverlay = '';
+      });
+      return true;
+    }
+    if (this.activeOverlay === 'backup') {
       this.animateOverlay((): void => {
         this.activeOverlay = '';
       });
@@ -338,6 +358,22 @@ struct Index {
 
       if (this.activeOverlay === 'changelog') {
         ChangelogPage({
+          topInset: this.topInset,
+          onClose: (): void => {
+            this.animateOverlay((): void => {
+              this.activeOverlay = '';
+            });
+          }
+        })
+          .width('100%')
+          .height('100%')
+          .transition(TransitionEffect.move(TransitionEdge.END)
+            .combine(TransitionEffect.OPACITY)
+            .animation({ duration: 280, curve: Curve.Friction }))
+      }
+
+      if (this.activeOverlay === 'backup') {
+        BackupPage({
           topInset: this.topInset,
           onClose: (): void => {
             this.animateOverlay((): void => {

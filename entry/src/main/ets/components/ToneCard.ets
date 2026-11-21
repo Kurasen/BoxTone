@@ -9,6 +9,13 @@ import { createEmptyTone, ToneEntry } from '../models/ToneModel';
 export struct ToneCard {
   @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop entry: ToneEntry = createEmptyTone();
+  /** 这条就是盒内当前生效的音效 */
+  @Prop inCase: boolean = false;
+  /** 批量选择模式：点卡片是勾选，不是展开 */
+  @Prop selecting: boolean = false;
+  @Prop selected: boolean = false;
+  /** 正在写入这条音效：删除入口锁定 */
+  @Prop deleteLocked: boolean = false;
   @Prop expanded: boolean = false;
   @Prop playing: boolean = false;
   @Prop writing: boolean = false;
@@ -27,6 +34,8 @@ export struct ToneCard {
   };
   onDelete: () => void = () => {
   };
+  onSelect: () => void = () => {
+  };
 
   build() {
     Column() {
@@ -35,23 +44,45 @@ export struct ToneCard {
           Circle()
             .width(40)
             .height(40)
-            .fill(this.playing ? Palette.ACCENT_SOFT : Palette.FILL_FAINT)
-          Image(this.playing ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
-            .width(16)
-            .height(16)
-            .fillColor(this.playing ? Palette.ACCENT : Palette.TEXT_SECONDARY)
+            .fill(this.selected ? Palette.ACCENT : (this.playing ? Palette.ACCENT_SOFT : Palette.FILL_FAINT))
+          if (this.selecting) {
+            Image($r('app.media.ic_check'))
+              .width(15)
+              .height(15)
+              .fillColor(this.selected ? '#05080E' : Palette.TEXT_TERTIARY)
+          } else {
+            Image(this.playing ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
+              .width(16)
+              .height(16)
+              .fillColor(this.playing ? Palette.ACCENT : Palette.TEXT_SECONDARY)
+          }
         }
         .onClick(() => {
+          if (this.selecting) {
+            this.onSelect();
+            return;
+          }
           this.onPlay();
         })
 
         Column({ space: 4 }) {
-          Text(this.entry.name)
-            .fontSize(15)
-            .fontColor(Palette.TEXT_PRIMARY)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
+          Row({ space: 6 }) {
+            Text(this.entry.name)
+              .fontSize(15)
+              .fontColor(Palette.TEXT_PRIMARY)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            if (this.inCase) {
+              Text(I18n.t('card.inCase'))
+                .fontSize(9)
+                .fontColor(Palette.ACCENT_TEXT)
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .borderRadius(999)
+                .backgroundColor(Palette.ACCENT_SOFT)
+            }
+          }
+          .width('100%')
           Text(`${FormatUtils.seconds(this.entry.durationMs)} · ${FormatUtils.bytes(this.entry.byteLength)} · ` +
             `${DateUtils.dateTime(this.entry.createdAt)}`)
             .fontSize(11)
@@ -63,14 +94,20 @@ export struct ToneCard {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        Image($r('app.media.ic_chevron_right'))
-          .width(14)
-          .height(14)
-          .fillColor(Palette.TEXT_TERTIARY)
-          .rotate({ angle: this.expanded ? 90 : 0 })
+        if (!this.selecting) {
+          Image($r('app.media.ic_chevron_right'))
+            .width(14)
+            .height(14)
+            .fillColor(Palette.TEXT_TERTIARY)
+            .rotate({ angle: this.expanded ? 90 : 0 })
+        }
       }
       .width('100%')
       .onClick(() => {
+        if (this.selecting) {
+          this.onSelect();
+          return;
+        }
         this.onToggle();
       })
 
@@ -100,8 +137,9 @@ export struct ToneCard {
             }
           })
           ActionChip({
-            chipText: I18n.t('card.delete'),
-            chipColor: Palette.DANGER,
+            chipText: this.deleteLocked ? I18n.t('card.deleteLocked') : I18n.t('card.delete'),
+            chipColor: this.deleteLocked ? Palette.TEXT_TERTIARY : Palette.DANGER,
+            chipLocked: this.deleteLocked,
             onTap: (): void => {
               this.onDelete();
             }
@@ -164,6 +202,8 @@ struct ActionChip {
   @Prop chipText: string = '';
   /** 留空时按当前外观取默认值 */
   @Prop chipColor: string = '';
+  /** 锁定：置灰并吞掉点击（例如正在写入的音效不允许删除） */
+  @Prop chipLocked: boolean = false;
   onTap: () => void = () => {
   };
 
@@ -176,8 +216,12 @@ struct ActionChip {
       .textAlign(TextAlign.Center)
       .borderRadius(11)
       .backgroundColor(Palette.FILL_FAINT)
+      .opacity(this.chipLocked ? 0.45 : 1)
+      .enabled(!this.chipLocked)
       .onClick(() => {
-        this.onTap();
+        if (!this.chipLocked) {
+          this.onTap();
+        }
       })
   }
 }

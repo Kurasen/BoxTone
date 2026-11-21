@@ -8,6 +8,7 @@ import { Logger } from '../common/utils/Logger';
 import { ToneEntry } from '../models/ToneModel';
 import { BtDevice, BtSnapshot } from '../models/DeviceModel';
 import { BluetoothService } from './BluetoothService';
+import { SettingsService } from './SettingsService';
 import { ToneRepositoryService } from './ToneRepositoryService';
 import { WriteCompatibility } from './WriteCompatibility';
 import { ToneClient } from './bluetooth/ToneClient';
@@ -96,6 +97,18 @@ export class CaseWriteService {
    * 用户连点两次都会被判「未连接到耳机」。用上一次的设备兜底即可。
    */
   private static lastDeviceId: string = '';
+  /** 正在写入的音效 id：音效库据此锁定这一条的删除入口 */
+  private static activeToneId: string = '';
+
+  /** 是否正在写入或后台恢复（删除、备份等操作据此避让） */
+  public static isBusy(): boolean {
+    return CaseWriteService.writing || CaseWriteService.recovering;
+  }
+
+  /** 指定音效是否正在被写入：写入期间不允许删除这一条 */
+  public static isToneWriting(toneId: string): boolean {
+    return CaseWriteService.writing && toneId.length > 0 && CaseWriteService.activeToneId === toneId;
+  }
 
   /** 写入前置检查：音效规格 + 文件 + 耳机连接状态 */
   public static check(entry: ToneEntry): WriteCheck {
@@ -234,6 +247,7 @@ export class CaseWriteService {
     // 耳机重新建立音频通道后串口传输会被掐断（日志里表现为连续 -1 后落在加密通道上）
     CaseWriteService.cancelPendingRestore();
     CaseWriteService.writing = true;
+    CaseWriteService.activeToneId = entry.id;
     const deviceId: string = check.deviceId;
     const startedAt: number = Date.now();
     /** 其中「等耳机擦完上一条」占了多久：日志里拆开看，避免把固件收尾算成我们的耗时 */
@@ -306,6 +320,8 @@ export class CaseWriteService {
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
             `audio=${client.audioGateState} result=ok bytes=${pcm.length}`);
+          // 记录盒内音效：写入成功后协议不会再回读槽位，只能在本机记住
+          SettingsService.setLastWrittenTone(entry.id);
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
@@ -328,7 +344,7 @@ export class CaseWriteService {
             if (onProgress !== undefined) {
               onProgress(0.97, I18n.t('write.stageApplyOnly'));
             }
-            const applied: WriteResult | null = await CaseWriteService.applyOnly(deviceId);
+            const applied: WriteResult | null = await CaseWriteService.applyOnly(deviceId, entry.id);
             if (applied !== null) {
               Logger.info(MODULE, `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
                 `btName=${modelName.length > 0 ? modelName : '未知'} ` +
@@ -355,6 +371,7 @@ export class CaseWriteService {
       }
       return failure;
     } finally {
+      CaseWriteService.activeToneId = '';
       CaseWriteService.writing = false;
     }
   }
@@ -394,6 +411,8 @@ export class CaseWriteService {
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
             `audio=${client.audioGateState} result=ok action=restore`);
+          // 盒内已切回出厂提示音，本机标记同步清空
+          SettingsService.setLastWrittenTone('');
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
@@ -454,6 +473,8 @@ export class CaseWriteService {
             `btName=${modelName.length > 0 ? modelName : '未知'} ` +
             `id=${FormatUtils.maskAddress(deviceId)} protocol=${client.protocolUsed} link=${linkMode} ` +
             `audio=${client.audioGateState} result=ok action=tone id=${status.toneId}`);
+          // 盒内已不是自定义音效：清空「盒内音效」标记
+          SettingsService.setLastWrittenTone('');
           CaseWriteService.scheduleAudioRestore(deviceId);
           return {
             ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
@@ -523,7 +544,7 @@ export class CaseWriteService {
   }
 
   /** 重连一次，只补发选中命令 */
-  private static async applyOnly(deviceId: string): Promise<WriteResult | null> {
+  private static async applyOnly(deviceId: string, toneId: string): Promise<WriteResult | null> {
     const client: ToneClient = ToneClient.acquire(deviceId, true);
     client.setNeutralHints(!WriteCompatibility.isKnownHuawei(deviceId,
       BluetoothService.getSnapshot().activeName));
@@ -531,6 +552,8 @@ export class CaseWriteService {
       await client.connect(deviceId);
       const status: ToneStatus = await client.applyCustom();
       Logger.info(MODULE, `补发选中成功 槽位=${status.toneId} 音量=${status.volume}`);
+      // 数据已完整落盘且选中成功，盒内就是这条音效
+      SettingsService.setLastWrittenTone(toneId);
       CaseWriteService.scheduleAudioRestore(deviceId);
       return {
         ok: true, code: WriteCode.OK, reason: WriteReason.OK, diagnostic: '',
@@ -557,6 +580,8 @@ export class CaseWriteService {
       return;
     }
     Logger.info(MODULE, '写入失败且已预选自定义槽，安排后台恢复默认开盒音');
+    // 槽位已被预选但数据没写完：盒内状态不可信，先把「盒内音效」标记清掉
+    SettingsService.setLastWrittenTone('');
     CaseWriteService.cancelToneRecovery();
     CaseWriteService.recovering = true;
     CaseWriteService.recoverTryLater(deviceId, 0, 3000);

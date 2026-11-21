@@ -77,7 +77,26 @@ export class SettingsService {
     SettingsService.put(AppStorageKey.KEY_THEME_MODE, mode);
   }
 
-  private static put(key: string, value: number | boolean): void {
+  /**
+   * 盒内当前音效。
+   *
+   * 协议没有读取「槽位里是哪条音效」的接口，只能记住本应用最近一次确认写入成功的那条。
+   * 恢复默认、切换内置音效、写入失败时都会清空，避免界面标着一条其实已经不在盒里的音效。
+   */
+  public static getLastWrittenTone(): string {
+    const store: preferences.Preferences | undefined = SettingsService.store;
+    if (store === undefined) {
+      return '';
+    }
+    const value: string = store.getSync(AppStorageKey.KEY_LAST_WRITTEN_TONE, '') as string;
+    return value !== undefined && value !== null ? value : '';
+  }
+
+  public static setLastWrittenTone(toneId: string): void {
+    SettingsService.put(AppStorageKey.KEY_LAST_WRITTEN_TONE, toneId);
+  }
+
+  private static put(key: string, value: number | boolean | string): void {
     const store: preferences.Preferences | undefined = SettingsService.store;
     if (store === undefined) {
       return;

@@ -74,6 +74,7 @@ export struct ProfilePage {
         this.buildAppCard()
         this.buildStats()
         this.buildAppearance()
+        this.buildBackupEntry()
         this.buildSupportEntry()
         this.buildActions()
         this.buildLegal()
@@ -187,6 +188,22 @@ export struct ProfilePage {
         rowIcon: $r('app.media.ic_feedback'),
         onTap: (): void => {
           EventBus.emit(AppEvent.OPEN_FEEDBACK, 1);
+        }
+      })
+    }
+  }
+
+  @Builder
+  buildBackupEntry() {
+    SectionTitle({ sectionText: I18n.t('profile.data') })
+
+    GlassCard({ cardPadding: 4 }) {
+      ActionRow({
+        rowTitle: I18n.t('profile.backup'),
+        rowDesc: I18n.t('profile.backupDesc'),
+        rowIcon: $r('app.media.ic_upload'),
+        onTap: (): void => {
+          EventBus.emit(AppEvent.OPEN_BACKUP, 1);
         }
       })
     }

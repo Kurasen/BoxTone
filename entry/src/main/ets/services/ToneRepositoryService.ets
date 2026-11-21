@@ -223,8 +223,12 @@ export class ToneRepositoryService {
     const fileName: string = `${id}.pcm`;
     const filePath: string = `${ToneRepositoryService.toneDir()}/${fileName}`;
     const file: fs.File = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-    fs.writeSync(file.fd, result.buffer);
-    fs.closeSync(file);
+    try {
+      fs.writeSync(file.fd, result.buffer);
+    } finally {
+      // 写盘失败也要关句柄：save 每次生成都会调用，泄漏会累积到进程结束
+      fs.closeSync(file);
+    }
 
     const entry: ToneEntry = {
       id: id,
@@ -253,6 +257,51 @@ export class ToneRepositoryService {
       fs.closeSync(file);
     }
     return buffer;
+  }
+
+  /**
+   * 导入一条已经符合盒端规格的音效（来自备份或 .pcm 文件）。
+   *
+   * 不做任何 DSP：文件必须是 16bit 单声道 16700Hz 的原始波形。
+   * 允许的上限比「可写入上限」宽松（见 ToneSpec.MAX_IMPORT_BYTES），
+   * 这样旧版本生成的 3~5 秒音效也能先备回来，写入时再由 CaseWriteService 拦截。
+   */
+  public static importTone(name: string, buffer: ArrayBuffer, sourceName: string,
+    createdAt: number = 0): ToneEntry {
+    const byteLength: number = buffer.byteLength;
+    if (byteLength <= 0 || byteLength % ToneSpec.BYTES_PER_FRAME !== 0) {
+      throw new Error(I18n.t('repo.badImportSize'));
+    }
+    if (byteLength > ToneSpec.MAX_IMPORT_BYTES) {
+      throw new Error(I18n.f('repo.importTooLarge', [`${ToneSpec.MAX_IMPORT_BYTES}`]));
+    }
+    const trimmed: string = name.trim();
+    const toneName: string = trimmed.length > 0 ? trimmed : I18n.t('repo.importDefaultName');
+
+    ToneRepositoryService.sequence++;
+    const id: string = `t${Date.now()}${ToneRepositoryService.sequence}`;
+    const fileName: string = `${id}.pcm`;
+    const filePath: string = `${ToneRepositoryService.toneDir()}/${fileName}`;
+    const file: fs.File = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try {
+      fs.writeSync(file.fd, buffer);
+    } finally {
+      fs.closeSync(file);
+    }
+
+    const entry: ToneEntry = {
+      id: id,
+      name: toneName,
+      fileName: fileName,
+      durationMs: byteLength * 1000 / ToneSpec.BYTES_PER_SECOND,
+      byteLength: byteLength,
+      createdAt: createdAt > 0 ? createdAt : Date.now(),
+      sourceName: sourceName
+    };
+    ToneRepositoryService.items.unshift(entry);
+    ToneRepositoryService.persist();
+    Logger.info(MODULE, `已导入音效 ${toneName}（${byteLength} 字节）`);
+    return entry;
   }
 
   public static rename(entry: ToneEntry, newName: string): void {

@@ -1,0 +1,39 @@
+name: CI
+
+# 不依赖 DevEco / HarmonyOS SDK 的检查：
+#  - 离线逻辑自检（协议编解码、音效包、规格常量、设置读取）
+#  - 敏感信息扫描（私钥、签名材料、Token 误提交）
+# 需要 SDK 的 assembleHap 不在这里跑：闭源 @kit.UIDesignKit 只随 DevEco 分发。
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'feat/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline-checks:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify logic (no device, no SDK)
+        shell: pwsh
+        run: node tools/verify-logic.mjs
+
+      - name: Scan staged files for secrets
+        shell: pwsh
+        run: |
+          git add -A
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check-sensitive-staged.ps1

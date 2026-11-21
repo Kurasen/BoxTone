@@ -26,6 +26,8 @@ export class ToneSpec {
   static readonly MAX_BYTES: number = 83500;
   /** 对应时长 83500 / 33400 = 2.5 秒 */
   static readonly MAX_SECONDS: number = 2.5;
+  /** 导入/备份恢复允许的上限：兼容旧版本生成的长音效，真正写入仍受 MAX_BYTES 约束 */
+  static readonly MAX_IMPORT_BYTES: number = 192000;
   /** 时长下限（秒），过短会被盒端忽略 */
   static readonly MIN_SECONDS: number = 0.2;
 }
@@ -223,6 +225,19 @@ export interface ChangelogEntry {
 
 export class Changelog {
   static readonly ENTRIES: ChangelogEntry[] = [
+    {
+      version: 'v1.2.0',
+      noteKey: 'changelog.v120.note',
+      itemKeys: [
+        'changelog.v120.i1',
+        'changelog.v120.i2',
+        'changelog.v120.i3',
+        'changelog.v120.i4',
+        'changelog.v120.i5',
+        'changelog.v120.i6',
+        'changelog.v120.i7'
+      ]
+    },
     {
       version: 'v1.1.1',
       noteKey: 'changelog.v111.note',
@@ -439,6 +454,8 @@ export class AppStorageKey {
   static readonly KEY_DEFAULT_GAIN: string = 'default_gain_db';
   static readonly KEY_AUTO_NORMALIZE: string = 'auto_normalize';
   static readonly KEY_FEEDBACK_RECORDS: string = 'feedback_records';
+  /** 最近一次成功写入盒内的音效 id：音效库的「盒内」标记 */
+  static readonly KEY_LAST_WRITTEN_TONE: string = 'last_written_tone';
   static readonly KEY_THEME_MODE: string = 'theme_mode';
   /** AppStorage 主题纪元：切换外观时自增，触发组件重绘 */
   static readonly THEME_EPOCH: string = 'themeEpoch';

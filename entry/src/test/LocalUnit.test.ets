@@ -1,7 +1,13 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { ByteUtils } from '../main/ets/common/utils/ByteUtils';
 import { MbbProtocol } from '../main/ets/services/bluetooth/MbbProtocol';
-import { MbbSpec } from '../main/ets/common/constants/AppConstants';
+import {
+  DeviceSupport,
+  DeviceSupportLevel,
+  DeviceVerdict,
+  MbbSpec,
+  ToneSpec
+} from '../main/ets/common/constants/AppConstants';
 
 /**
  * 纯逻辑单测（L1）。
@@ -81,6 +87,58 @@ export default function localUnitTest() {
       const fields: Map<number, Uint8Array> = MbbProtocol.tlv(packet);
       expect(fields.get(1)?.length).assertEqual(3);
       expect(fields.get(2)?.length).assertEqual(300);
+    });
+
+    it('tone_package_rejects_oversize', 0, () => {
+      let rejected: boolean = false;
+      try {
+        MbbProtocol.tonePackage(new Uint8Array(ToneSpec.MAX_BYTES + ToneSpec.BYTES_PER_FRAME));
+      } catch (error) {
+        rejected = true;
+      }
+      expect(rejected).assertTrue();
+    });
+  });
+
+  describe('ToneSpec', () => {
+    // 界面按秒算、写入按字节拦，两个上限必须能互相推导出来
+    it('limits_consistent', 0, () => {
+      expect(ToneSpec.BYTES_PER_SECOND)
+        .assertEqual(ToneSpec.SAMPLE_RATE * ToneSpec.BYTES_PER_FRAME);
+      expect(ToneSpec.MAX_BYTES)
+        .assertEqual(Math.floor(ToneSpec.BYTES_PER_SECOND * ToneSpec.MAX_SECONDS));
+      expect(ToneSpec.MAX_BYTES % ToneSpec.BYTES_PER_FRAME).assertEqual(0);
+      // 导入允许旧版本的长音效，但不能比可写入上限还小
+      expect(ToneSpec.MAX_IMPORT_BYTES > ToneSpec.MAX_BYTES).assertTrue();
+      expect(ToneSpec.MAX_IMPORT_BYTES % ToneSpec.BYTES_PER_FRAME).assertEqual(0);
+    });
+
+    it('custom_slot_in_range', 0, () => {
+      // 官方音效表里 100~179 才是自建槽位；43 是出厂预置槽
+      expect(MbbSpec.TONE_CUSTOM_ID >= 100).assertTrue();
+      expect(MbbSpec.TONE_CUSTOM_ID <= 179).assertTrue();
+    });
+  });
+
+  describe('DeviceSupport', () => {
+    it('model_wins_over_name', 0, () => {
+      const verdict: DeviceVerdict = DeviceSupport.judge('BTFT0027', ['HUAWEI FreeBuds 7']);
+      expect(verdict.level).assertEqual(DeviceSupportLevel.VERIFIED);
+    });
+
+    it('name_fallback', 0, () => {
+      const verdict: DeviceVerdict = DeviceSupport.judge('', ['华为 FreeClip 2 耳夹耳机']);
+      expect(verdict.level).assertEqual(DeviceSupportLevel.VERIFIED);
+    });
+
+    it('model_suffix_variant', 0, () => {
+      const verdict: DeviceVerdict = DeviceSupport.judge('btft0023-000167', []);
+      expect(verdict.level).assertEqual(DeviceSupportLevel.VERIFIED);
+    });
+
+    it('unknown_device', 0, () => {
+      const verdict: DeviceVerdict = DeviceSupport.judge('BTFT9999', ['Unknown Buds']);
+      expect(verdict.level).assertEqual(DeviceSupportLevel.UNKNOWN);
     });
   });
 }

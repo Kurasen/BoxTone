@@ -1122,6 +1122,35 @@ export class ToneClient {
     throw new AckTimeoutError();
   }
 
+  /**
+   * 传输阶段等包：不能一口气等满 8 秒。
+   * 耳机出盒时系统会周期性自动重连 A2DP，如果正好处在一次长等待里，
+   * 要等 8 秒超时才发现链路被抢，写入已经失败。
+   * 这里改为 400ms 一片，间隙检查音频通道，一旦回连立即断开。
+   */
+  private async awaitUploadPacket(predicate: (packet: Uint8Array) => boolean): Promise<Uint8Array> {
+    const until: number = Date.now() + MbbSpec.UPLOAD_IDLE_TIMEOUT_MS;
+    while (true) {
+      try {
+        return await this.awaitPacket(400, predicate);
+      } catch (error) {
+        if (!(error instanceof AckTimeoutError)) {
+          throw error as Error;
+        }
+        if (this.closed) {
+          throw new CancelledError();
+        }
+        if (this.audioLinked(this.address)) {
+          this.trace('AUDIO_RELINK_SUPPRESS 传输期间音频被连回，先断开它');
+          await this.suppressAudioLink(this.address);
+        }
+        if (Date.now() >= until) {
+          throw error as Error;
+        }
+      }
+    }
+  }
+
   private pendingText(): string {
     const parts: string[] = [];
     for (let i = 0; i < this.received.length && parts.length < 4; i++) {
@@ -1374,6 +1403,17 @@ export class ToneClient {
     this.transferring = true;
     this.flushUnconfirmed = false;
     this.preselected = false;
+    /**
+     * 传输前如果音频通道已经连回来，先断开。
+     * 2026-11 实测：耳机出盒后系统会周期性自动重连 A2DP，
+     * 恰好撞在传输窗口上时会把 SPP 的 ACL 抢走，表现为 ackTimeout。
+     */
+    if (this.audioLinked(this.address)) {
+      this.trace('AUDIO_PRE_SUPPRESS 传输前音频已连回，先断开');
+      // 数据还没开始发，可以完整走「认领 + 断开 + 等通道真正掉下去」，
+      // 避免第一个分包就撞上系统自动回连的 A2DP。
+      await this.releaseAudioLink(this.address);
+    }
     if (protocol === 1) {
       await this.send(ByteUtils.fromHex('2bb6010101'));
     } else {
@@ -1469,7 +1509,7 @@ export class ToneClient {
             }
           }
         } else {
-          packet = await this.awaitPacket(MbbSpec.UPLOAD_IDLE_TIMEOUT_MS, isUploadPacket);
+          packet = await this.awaitUploadPacket(isUploadPacket);
         }
       } catch (error) {
         if (receivedAll) {
