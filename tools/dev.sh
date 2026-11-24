@@ -7,6 +7,8 @@
 # 用法：
 #   ./tools/dev.sh            构建 + 安装 + 启动 + 跟日志
 #   ./tools/dev.sh build      只构建 debug HAP
+#   ./tools/dev.sh build release  构建 release HAP（发布签名，产物在 dist/）
+#   ./tools/dev.sh build release debug   release 编译 + 调试签名（可在本机安装，用来验证混淆）
 #   ./tools/dev.sh install    只安装已有产物（增量覆盖）
 #   ./tools/dev.sh run        只启动已安装的应用
 #   ./tools/dev.sh reinstall  卸载后重装（会清空应用数据，换签名后必须用）
@@ -14,6 +16,9 @@
 #   ./tools/dev.sh stop       强制停止应用
 #   ./tools/dev.sh devices    列出已连接设备
 #   ./tools/dev.sh reconnect  只重连无线调试（不构建不安装）
+#
+# 代码只有一份，debug / release 的差别只有签名：buildMode 传给 hvigor 后，
+# hvigorfile.ts 的插件会把 product 的 signingConfig 切到同名配置并注入密码。
 #
 # 可覆盖的环境变量：
 #   DEVECO_HOME      DevEco Studio 安装目录，默认 D:/App/DevEco Studio
@@ -34,10 +39,25 @@ warn() { printf '%s  !%s %s\n' "$YELLOW" "$NC" "$1"; }
 die()  { printf '%s  ✗%s %s\n' "$RED" "$NC" "$1"; }
 
 MODE="${1:-all}"
+# 第二个参数只对 build 有意义：debug（默认）/ release
+BUILD_MODE="${2:-debug}"
+case "$BUILD_MODE" in
+  debug|release) ;;
+  *) BUILD_MODE=debug ;;
+esac
+# 第三个参数强制签名：留空则跟随 buildMode。
+# 发布证书无法 hdc 侧载（9568322 不受信任），想在本机跑 release 编译就用 debug 签名。
+SIGN_MODE="${3:-}"
+case "$SIGN_MODE" in
+  debug|release) ;;
+  *) SIGN_MODE="" ;;
+esac
 
 BUNDLE="com.boxtone.audiokit"
 ABILITY="EntryAbility"
 HAP="entry/build/default/outputs/default/entry-default-signed.hap"
+# 最近一次成功构建的产物路径（含编译模式与签名），安装以它为准
+LAST_BUILD="dist/.last-build"
 LOG_TAG="BoxTone"
 
 # ---------------- 工具链定位 ----------------
@@ -127,27 +147,58 @@ ensure_device() {
 # ---------------- 各步骤 ----------------
 do_build() {
   need_build_tools
-  info "构建 debug HAP"
+  local sign="${SIGN_MODE:-$BUILD_MODE}"
+  info "构建 ${BUILD_MODE} HAP（${sign} 签名）"
   local start=$SECONDS
-  if "$NODE" "$HVIGOR" --mode module -p product=default -p buildMode=debug \
+  if BOX_SIGN="$sign" "$NODE" "$HVIGOR" --mode module -p product=default -p buildMode="${BUILD_MODE}" \
       -p requiredDeviceType=phone assembleHap --no-daemon; then
     ok "构建成功，用时 $((SECONDS - start))s"
     [[ -f "$HAP" ]] || { warn "未找到产物 $HAP"; return 1; }
-    ok "产物：$HAP ($(du -h "$HAP" | cut -f1))"
+    # 编译模式与签名可以不同，文件名带上两者，避免互相覆盖
+    local out="dist/boxtone-${BUILD_MODE}-${sign}.hap"
+    mkdir -p dist
+    cp -f "$HAP" "$out"
+    printf '%s' "$out" > "$LAST_BUILD"
+    ok "产物：$out ($(du -h "$out" | cut -f1))"
+    if [[ "$sign" == "release" ]]; then
+      warn "发布签名的包无法 hdc 安装（9568322），只能通过应用市场分发"
+    fi
   else
     die "构建失败"
     echo "    debug↔release 来回切换后首次可能报 00308018，原样重跑一次即可"
-    echo "    签名密码缺失会报 00303116 → 检查 signing/debug-password.txt"
+    echo "    签名密码缺失会报 00303116 → 检查 signing/debug-password.txt 或 signing/keystore-password.txt"
     return 1
   fi
 }
 
 do_install() {
   ensure_device
-  [[ -f "$HAP" ]] || { die "产物不存在，先执行 ./tools/dev.sh build"; exit 1; }
-  info "安装到设备"
+  # 优先装「最近一次构建」的产物。
+  # $HAP 是 hvigor 的固定输出路径，构建失败时会保留上一次的内容（可能还是 release 编译的），
+  # 照着它装就会把旧包/另一种编译模式的包刷上去，表现成“装完就闪退 / 代码不同步”。
+  local target="$HAP"
+  if [[ -f "$LAST_BUILD" ]]; then
+    local recorded
+    recorded=$(cat "$LAST_BUILD" 2>/dev/null)
+    if [[ -n "$recorded" && -f "$recorded" ]]; then
+      target="$recorded"
+    fi
+  fi
+  [[ -f "$target" ]] || { die "产物不存在，先执行 ./tools/dev.sh build"; exit 1; }
+  # 发布签名的包无法侧载（9568322 not trusted app source），自动换成同编译模式的调试签名包
+  if [[ "$target" == *"-release.hap" ]]; then
+    local alt="${target%-release.hap}-debug.hap"
+    if [[ -f "$alt" ]]; then
+      warn "最近构建的是发布签名包，无法侧载，改用同编译模式的调试签名包"
+      target="$alt"
+    else
+      die "只有发布签名包，无法安装。执行 ./tools/dev.sh build release debug 生成可安装版本"
+      exit 1
+    fi
+  fi
+  info "安装到设备：$target"
   local out
-  out=$("$HDC" install -r "$HAP" 2>&1 | tr -d '\r')
+  out=$("$HDC" install -r "$target" 2>&1 | tr -d '\r')
   echo "$out" | tail -2
   if echo "$out" | grep -qi "success"; then
     ok "安装完成"
@@ -206,7 +257,8 @@ do_reconnect() {
 }
 
 case "$MODE" in
-  build)     do_build ;;
+  # 构建失败必须中止：否则会继续用上一次的旧产物安装，装上去的包和刚改的代码不一致
+  build)     do_build || exit 1 ;;
   install)   do_install ;;
   run)       do_run ;;
   reinstall) do_reinstall ;;

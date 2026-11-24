@@ -71,6 +71,22 @@ export class Palette {
     return ThemeService.isDark() ? 'rgba(255, 255, 255, 0.22)' : 'rgba(94, 105, 123, 0.65)';
   }
 
+  // 全屏遮罩上的文字
+  // 遮罩本身固定是深色（rgba(5,8,14,0.62)，不跟随主题，否则系统选择器弹出时会露亮边），
+  // 所以这里的文字也必须固定用浅色：跟着主题走的话，浅色主题下会得到深灰文字压在深遮罩上。
+  static get OVERLAY_TEXT(): string {
+    return '#F2F6FB';
+  }
+
+  static get OVERLAY_TEXT_SUB(): string {
+    return 'rgba(242, 246, 251, 0.68)';
+  }
+
+  /** 遮罩上的次级按钮底色 */
+  static get OVERLAY_CHIP(): string {
+    return 'rgba(255, 255, 255, 0.16)';
+  }
+
   // 品牌
   static get ACCENT(): string {
     return ThemeService.isDark() ? '#4ED8FF' : '#0E9FC5';
@@ -158,6 +174,5 @@ export class Metric {
   static readonly GAP: number = 12;
   static readonly TITLE_SIZE: number = 27;
   static readonly SECTION_SIZE: number = 14;
-  static readonly BODY_SIZE: number = 13;
   static readonly CAPTION_SIZE: number = 11;
 }

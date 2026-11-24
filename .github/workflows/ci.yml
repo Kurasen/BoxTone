@@ -2,6 +2,7 @@ name: CI
 
 # 不依赖 DevEco / HarmonyOS SDK 的检查：
 #  - 离线逻辑自检（协议编解码、音效包、规格常量、设置读取）
+#  - release 混淆规则与 native 名字一致性（只查源码和规则文件，不构建）
 #  - 敏感信息扫描（私钥、签名材料、Token 误提交）
 # 需要 SDK 的 assembleHap 不在这里跑：闭源 @kit.UIDesignKit 只随 DevEco 分发。
 
@@ -31,6 +32,12 @@ jobs:
       - name: Verify logic (no device, no SDK)
         shell: pwsh
         run: node tools/verify-logic.mjs
+
+      # 只看源码 import 与 obfuscation-rules.txt 的 keep 名单，不构建、不需要 SDK。
+      # 原生接口加了名字却忘写规则时，这里会直接失败，不必等打到 release 包才发现。
+      - name: Check release obfuscation keep-list
+        shell: bash
+        run: bash tools/check-release.sh static
 
       - name: Scan staged files for secrets
         shell: pwsh

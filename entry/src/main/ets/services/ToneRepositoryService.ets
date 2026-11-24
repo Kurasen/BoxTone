@@ -1,11 +1,12 @@
 import { common } from '@kit.AbilityKit';
-import { fileIo as fs, picker } from '@kit.CoreFileKit';
+import { fileIo as fs, fileUri, picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppPath, ToneSpec } from '../common/constants/AppConstants';
 import { I18n } from '../common/i18n/I18n';
 import { DateUtils } from '../common/utils/DateUtils';
 import { Logger } from '../common/utils/Logger';
 import { ConvertResult, ToneEntry, ToneIndex } from '../models/ToneModel';
+import { wrapPcmAsWav } from './audio/WavCodec';
 
 const MODULE: string = 'ToneRepo';
 const INDEX_VERSION: number = 1;
@@ -362,6 +363,29 @@ export class ToneRepositoryService {
     }
     Logger.info(MODULE, `原始波形已导出 ${fileName}（${buffer.byteLength} 字节）`);
     return fileName;
+  }
+
+  /**
+   * 生成可分享的 WAV 临时文件，返回 file:// uri。
+   * 库内是裸 PCM，直接分享对方打不开，这里补上 WAV 头再给系统分享面板。
+   */
+  public static async prepareShareFile(entry: ToneEntry): Promise<string> {
+    if (ToneRepositoryService.context === undefined) {
+      throw new Error(I18n.t('repo.notReady'));
+    }
+    const pcm: ArrayBuffer = ToneRepositoryService.readBuffer(entry);
+    const wav: ArrayBuffer = wrapPcmAsWav(pcm, ToneSpec.SAMPLE_RATE, 1);
+    const safeName: string = entry.name.replace(/[\\/:*?"<>|]/g, '_');
+    const path: string = `${ToneRepositoryService.context.cacheDir}/${safeName}.wav`;
+    const file: fs.File = fs.openSync(path,
+      fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+    try {
+      fs.writeSync(file.fd, wav);
+    } finally {
+      fs.closeSync(file);
+    }
+    Logger.info(MODULE, `已准备分享文件 ${safeName}.wav（${wav.byteLength} 字节）`);
+    return fileUri.getUriFromPath(path);
   }
 
   /**

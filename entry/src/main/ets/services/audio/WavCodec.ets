@@ -192,3 +192,38 @@ export function decodeWavSamples(buffer: ArrayBuffer, format: WavFormat): WavSam
   };
   return result;
 }
+
+/**
+ * 把裸 PCM（16bit 小端）包成标准 WAV。
+ *
+ * 库里的音效是去掉头部的裸 PCM，直接分享出去对方既不认识也无法播放，
+ * 分享前临时补 44 字节 RIFF 头，体积只多几十字节。
+ */
+export function wrapPcmAsWav(pcm: ArrayBuffer, sampleRate: number, channels: number): ArrayBuffer {
+  const dataSize: number = pcm.byteLength;
+  const bytesPerSample: number = 2;
+  const out: ArrayBuffer = new ArrayBuffer(44 + dataSize);
+  const view: DataView = new DataView(out);
+
+  const writeTag: (offset: number, tag: string) => void = (offset: number, tag: string): void => {
+    for (let i = 0; i < tag.length; i++) {
+      view.setUint8(offset + i, tag.charCodeAt(i));
+    }
+  };
+
+  writeTag(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeTag(8, 'WAVE');
+  writeTag(12, 'fmt ');
+  view.setUint32(16, 16, true);                                    // fmt 块长度
+  view.setUint16(20, 1, true);                                     // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * bytesPerSample, true); // 字节率
+  view.setUint16(32, channels * bytesPerSample, true);              // 块对齐
+  view.setUint16(34, bytesPerSample * 8, true);                     // 位深
+  writeTag(36, 'data');
+  view.setUint32(40, dataSize, true);
+  new Uint8Array(out, 44).set(new Uint8Array(pcm));
+  return out;
+}

@@ -12,7 +12,6 @@ import {
   TONE_CODE_UNSUPPORTED,
   ToneError,
   ToneErrorReason,
-  ToneLog,
   ToneProgress
 } from './ToneTypes';
 

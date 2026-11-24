@@ -6,7 +6,7 @@ import { DateUtils } from '../common/utils/DateUtils';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
 import { ToneEntry } from '../models/ToneModel';
-import { BtDevice, BtSnapshot } from '../models/DeviceModel';
+import { BtSnapshot } from '../models/DeviceModel';
 import { BluetoothService } from './BluetoothService';
 import { SettingsService } from './SettingsService';
 import { ToneRepositoryService } from './ToneRepositoryService';
@@ -34,6 +34,44 @@ export class WriteCode {
   static readonly WRITE_FAILED: number = 3003;
   static readonly FORMAT_REJECTED: number = 3004;
   static readonly NEARLINK_UNSUPPORTED: number = 2004;
+
+  /**
+   * 错误码对应的「下一步该做什么」，返回 i18n key。
+   * 用户看不懂 2002 这类数字，弹窗要以这条建议为主体，错误码只用于反馈时定位。
+   */
+  static hintKey(code: number): string {
+    switch (code) {
+      case WriteCode.EMPTY_TONE:
+        return 'write.hint.emptyTone';
+      case WriteCode.TOO_LONG:
+        return 'write.hint.tooLong';
+      case WriteCode.TOO_LARGE:
+        return 'write.hint.tooLarge';
+      case WriteCode.FILE_MISSING:
+        return 'write.hint.fileMissing';
+      case WriteCode.BLUETOOTH_OFF:
+        return 'write.hint.btOff';
+      case WriteCode.NO_EARBUD:
+        return 'write.hint.noEarbud';
+      case WriteCode.NOT_AUTHORIZED:
+        return 'write.hint.notAuthorized';
+      case WriteCode.NEARLINK_UNSUPPORTED:
+        return 'write.hint.nearLinkUnsupported';
+      case WriteCode.PROTOCOL_UNVERIFIED:
+        return 'write.hint.protocolUnverified';
+      case WriteCode.CONNECT_FAILED:
+        return 'write.hint.connectFailed';
+      case WriteCode.WRITE_FAILED:
+        return 'write.hint.writeFailed';
+      case WriteCode.FORMAT_REJECTED:
+        return 'write.hint.formatRejected';
+      // 耳机拒绝串口：系统错误码直接透传上来，这里单独给一条动作
+      case 2900099:
+        return 'write.hint.serialRefused';
+      default:
+        return '';
+    }
+  }
 }
 
 /** 失败归类：UI 据此区分结局（不支持不再提示重试） */
@@ -175,6 +213,12 @@ export class CaseWriteService {
       // 音频正在连回来的空档里两台兜底都可能取不到；上一次写过的设备仍在配对表就沿用
       if (deviceId.length === 0 && CaseWriteService.lastDeviceId.length > 0 &&
         CaseWriteService.isPaired(snapshot, CaseWriteService.lastDeviceId)) {
+        // 兜底只用于「A2DP 正在连回来」的空档：设备此刻没连就不放行。
+        // 否则写完一条、合上盖子（耳机断连）后直接再点写入，这里会拿旧 id 放行，
+        // 用户要干等一整轮建链才被告知没连上——这正是「先判断连接再判断能否写入」的落点。
+        if (!BluetoothService.isAudioConnected(CaseWriteService.lastDeviceId)) {
+          return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.noEarbud'));
+        }
         deviceId = CaseWriteService.lastDeviceId;
         Logger.info(MODULE, `前置检查沿用上一次的设备 ${FormatUtils.maskAddress(deviceId)}`);
       }

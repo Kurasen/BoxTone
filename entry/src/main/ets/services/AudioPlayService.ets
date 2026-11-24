@@ -34,17 +34,20 @@ export class AudioPlayService {
   /** 上一次升采样用的 PCM 与其 48kHz 结果：同一段音效重复试听不再重采样 */
   private static previewSource: ArrayBuffer | undefined = undefined;
   private static previewOutput: ArrayBuffer | undefined = undefined;
+  /**
+   * 内置音效的 48kHz 试听缓冲缓存（key 为源 frames 引用）。
+   * 16700→48000 是多相 FIR 升采样，2.5 秒的音效要算近两百万次乘加，
+   * 放在点击路径上会明显感到迟滞，所以载入后就提前算好放这里。
+   */
+  private static previewCache: Map<Float32Array, ArrayBuffer> = new Map<Float32Array, ArrayBuffer>();
+  private static previewKeys: Float32Array[] = [];
+  private static previewPrewarmTimer: number = -1;
+  private static readonly PREVIEW_CACHE_MAX: number = 6;
+  /** 超过这个长度的素材不进试听缓存（内置音效最长 2.5 秒） */
+  private static readonly PREVIEW_CACHE_SECONDS: number = 10;
   /** 短音试听使用 duck 焦点：压低后台音乐，播完自动恢复 */
   private static sessionManager: audio.AudioSessionManager | undefined = undefined;
   private static sessionActive: boolean = false;
-
-  public static isPlaying(): boolean {
-    return AudioPlayService.playing;
-  }
-
-  public static isRendererReady(): boolean {
-    return AudioPlayService.renderer !== undefined;
-  }
 
   /**
    * 短音、瞬态音使用 duck 焦点：后台音乐/听书短暂压低，播完自动恢复。
@@ -164,16 +167,67 @@ export class AudioPlayService {
   }
 
   /**
-   * 播放素材的原始 PCM（内置音色的“原声”）。
-   * 内置音色以 48kHz 合成，这里按原始采样率渲染，不做 16700Hz 盒音转换。
+   * 播放素材的原始 PCM（内置音效的「原声」）。
+   * 按素材原始采样率升到 48kHz 渲染，不做 16700Hz 盒音转换。
    */
   public static async playSourcePcm(source: PcmAudio, onEnd: () => void): Promise<void> {
     await AudioPlayService.stop();
+    await AudioPlayService.playEncoded(AudioPlayService.previewBuffer(source), onEnd);
+  }
+
+  /**
+   * 预热：载入音效后就把 48kHz 试听缓冲算好，点「原声」时不再等重采样。
+   * 延后 250ms 执行，避开切音效本身的渲染；重复调用只保留最后一次。
+   */
+  public static prewarmSourcePcm(source: PcmAudio): void {
+    const seconds: number = source.sampleRate > 0 ? source.frameCount / source.sampleRate : 0;
+    if (seconds > AudioPlayService.PREVIEW_CACHE_SECONDS) {
+      return;
+    }
+    if (AudioPlayService.previewCache.has(source.frames)) {
+      return;
+    }
+    if (AudioPlayService.previewPrewarmTimer >= 0) {
+      clearTimeout(AudioPlayService.previewPrewarmTimer);
+    }
+    AudioPlayService.previewPrewarmTimer = setTimeout(() => {
+      AudioPlayService.previewPrewarmTimer = -1;
+      try {
+        AudioPlayService.previewBuffer(source);
+      } catch (error) {
+        Logger.warn(MODULE, `预热试听缓冲失败：${(error as Error).message}`);
+      }
+    }, 250);
+  }
+
+  /** 取（或生成）48kHz 单声道 16bit 试听缓冲；同一帧数据只算一次 */
+  private static previewBuffer(source: PcmAudio): ArrayBuffer {
+    // 只缓存短素材：长音频的 48kHz 结果可达几十 MB，留在内存里不划算
+    const seconds: number = source.sampleRate > 0 ? source.frameCount / source.sampleRate : 0;
+    const cacheable: boolean = seconds <= AudioPlayService.PREVIEW_CACHE_SECONDS;
+    if (cacheable) {
+      const hit: ArrayBuffer | undefined = AudioPlayService.previewCache.get(source.frames);
+      if (hit !== undefined) {
+        return hit;
+      }
+    }
     const mono: Float32Array = AudioConvertService.toMono(source);
     const atPreview: Float32Array = source.sampleRate === PREVIEW_RATE
       ? mono : AudioConvertService.resample(mono, source.sampleRate, PREVIEW_RATE);
     const output: ArrayBuffer = AudioConvertService.encodeInt16(atPreview);
-    await AudioPlayService.playEncoded(output, onEnd);
+    if (!cacheable) {
+      return output;
+    }
+
+    if (AudioPlayService.previewKeys.length >= AudioPlayService.PREVIEW_CACHE_MAX) {
+      const oldest: Float32Array | undefined = AudioPlayService.previewKeys.shift();
+      if (oldest !== undefined) {
+        AudioPlayService.previewCache.delete(oldest);
+      }
+    }
+    AudioPlayService.previewKeys.push(source.frames);
+    AudioPlayService.previewCache.set(source.frames, output);
+    return output;
   }
 
   /** 统一播放已编码的 48kHz 单声道 16bit PCM */

@@ -14,7 +14,7 @@ import { SectionTitle } from '../../components/SectionTitle';
 import { SpecRow } from '../../components/SpecRow';
 import { StatPill } from '../../components/StatPill';
 import { WaveformView } from '../../components/WaveformView';
-import { ConvertOptions, ConvertResult, SourceAudio, SynthPreset, ToneEntry } from '../../models/ToneModel';
+import { ConvertOptions, ConvertResult, SourceAudio, ToneEntry } from '../../models/ToneModel';
 import { AudioConvertService } from '../../services/AudioConvertService';
 import { AudioConvertTaskService } from '../../services/audio/ConvertTask';
 import { AudioPlayService } from '../../services/AudioPlayService';
@@ -29,7 +29,8 @@ import { CaseWriteService,
 import { ImportCancelledError, ImportControl, ImportProgressState } from '../../services/audio/ImportControl';
 import { AppSettings, SettingsService } from '../../services/SettingsService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
-import { ToneSynthesizerService } from '../../services/ToneSynthesizerService';
+import { BuiltinTone, BuiltinToneCatalog } from '../../services/BuiltinToneCatalog';
+import { BuiltinToneService } from '../../services/BuiltinToneService';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 
 const MODULE: string = 'TonePage';
@@ -42,6 +43,10 @@ const VIEW_PEAK_BUCKETS: number = 260;
  * 视窗随 ToneSpec.MAX_SECONDS 自动变化（上限调整后不必再单独改这里）。
  */
 const MIN_VIEW_SPAN_MS: number = Math.ceil(ToneSpec.MAX_SECONDS * 1000) + 500;
+/** 首屏渲染完多久开始预热内置音效，太早会和首页动画抢主线程 */
+const BUILTIN_PRELOAD_DELAY_MS: number = 700;
+/** 相邻两条内置音效之间留出的间隔，给点击等交互让路 */
+const BUILTIN_PRELOAD_GAP_MS: number = 80;
 
 @Component
 export struct TonePage {
@@ -53,12 +58,17 @@ export struct TonePage {
   @State viewSpanMs: number = 0;
   /** 全段峰值缓存，缩放时从这里聚合视窗柱形 */
   private fullPeaks: number[] = [];
+  /** 页面销毁后停止后台预热，避免往缓存里继续堆无用解码 */
+  private preloadStopped: boolean = false;
   private waveWidth: number = 0;
   private pinchStartViewMs: number = 0;
   private pinchStartSpanMs: number = 0;
   private panStartViewMs: number = 0;
   @State startMs: number = 0;
   @State durationMs: number = 2000;
+  /** 当前已载入的内置音效 id，用于在网格里高亮选中项 */
+  @State activeBuiltinId: string = '';
+  /** 首次上手引导：状态驱动，由 bindSheet 渲染（CustomDialogController 在页面未挂载时会静默失败） */
   @State gainDb: number = 0;
   @State fadeInMs: number = 40;
   @State fadeOutMs: number = 120;
@@ -97,9 +107,33 @@ export struct TonePage {
     this.preferredDurationMs = this.durationMs;
     this.gainDb = settings.defaultGainDb;
     this.normalize = settings.autoNormalize;
+    // 切 tab 会走 aboutToDisappear→aboutToAppear，回来时要重新允许预热
+    this.preloadStopped = false;
+    this.scheduleBuiltinPreload();
+  }
+
+
+  /** 空闲时逐个预热内置音效，点开时直接命中缓存，不再现读现解 */
+  private scheduleBuiltinPreload(): void {
+    const tones: BuiltinTone[] = BuiltinToneCatalog.all();
+    let index: number = 0;
+    const step = (): void => {
+      if (this.preloadStopped || index >= tones.length) {
+        return;
+      }
+      const tone: BuiltinTone = tones[index];
+      index++;
+      BuiltinToneService.preload(this.abilityContext(), tone.id).then(() => {
+        setTimeout(step, BUILTIN_PRELOAD_GAP_MS);
+      }).catch(() => {
+        setTimeout(step, BUILTIN_PRELOAD_GAP_MS);
+      });
+    };
+    setTimeout(step, BUILTIN_PRELOAD_DELAY_MS);
   }
 
   aboutToDisappear(): void {
+    this.preloadStopped = true;
     this.stopImportProgress();
     if (this.preparing) {
       ImportControl.cancel();
@@ -160,6 +194,8 @@ export struct TonePage {
       }
       await AudioPlayService.stop();
       this.applySource(imported);
+      this.activeBuiltinId = '';
+      AudioPlayService.prewarmSourcePcm(imported.pcm);
       if (imported.truncated) {
         this.toast(I18n.f('tone.importedTruncated', [imported.name]));
       } else {
@@ -285,10 +321,10 @@ export struct TonePage {
     this.viewStartMs = 0;
     this.viewSpanMs = imported.durationMs;
     this.refreshViewPeaks();
+    // 载入新音源后起始位置归零、时长直接拉满：整段，只受 2.5s 上限与最小 0.2s 约束
     this.startMs = 0;
-    this.durationMs = Math.min(this.durationMs,
-      Math.min(ToneSpec.MAX_SECONDS * 1000,
-        Math.max(ToneSpec.MIN_SECONDS * 1000, imported.durationMs)));
+    this.durationMs = Math.min(ToneSpec.MAX_SECONDS * 1000,
+      Math.max(ToneSpec.MIN_SECONDS * 1000, imported.durationMs));
     this.preferredDurationMs = this.durationMs;
     this.savedName = '';
     if (this.autoGain) {
@@ -297,14 +333,15 @@ export struct TonePage {
     Logger.info(MODULE, `音源已就绪：${imported.name}，峰值 ${this.fullPeaks.length} 段`);
   }
 
-  private async usePreset(preset: SynthPreset): Promise<void> {
+  private async useBuiltinTone(tone: BuiltinTone): Promise<void> {
     this.busy = true;
     try {
-      const pcm = ToneSynthesizerService.generate(preset.id);
-      const synthSource: SourceAudio = {
+      const label: string = BuiltinToneCatalog.label(tone, I18n.isEnglish());
+      const pcm = await BuiltinToneService.load(this.abilityContext(), tone.id);
+      const builtinSource: SourceAudio = {
         path: '',
-        name: `${I18n.t(preset.nameKey)}${I18n.t('tone.builtinSuffix')}`,
-        format: 'SYNTH / 48kHz',
+        name: `${label}${I18n.t('tone.builtinSuffix')}`,
+        format: 'WAV',
         sampleRate: pcm.sampleRate,
         channels: pcm.channels,
         durationMs: pcm.frameCount * 1000 / pcm.sampleRate,
@@ -312,11 +349,14 @@ export struct TonePage {
         pcm: pcm
       };
       await AudioPlayService.stop();
-      this.applySource(synthSource);
-      this.toast(I18n.f('tone.ready', [I18n.t(preset.nameKey)]));
+      this.applySource(builtinSource);
+      this.activeBuiltinId = tone.id;
+      // 提前把 48kHz 试听缓冲算好，点「原声」时不用再等升采样
+      AudioPlayService.prewarmSourcePcm(pcm);
+      this.toast(I18n.f('tone.ready', [label]));
     } catch (error) {
-      Logger.exception(MODULE, '合成失败', error as BusinessError);
-      this.toast(I18n.t('tone.synthFailed'));
+      Logger.exception(MODULE, `载入内置音效失败 ${tone.id}`, error as BusinessError);
+      this.toast(I18n.t('tone.builtinFailed'));
     } finally {
       this.busy = false;
     }
@@ -591,13 +631,19 @@ export struct TonePage {
     }
   }
 
-  /** 写入失败：不支持/格式被拒引导反馈，其余失败给一段可执行的重试说明 */
+  /** 写入失败：先给「现在该做什么」，错误码放最后供反馈定位 */
   private showWriteFailure(result: WriteResult): void {
     const needReport: boolean = result.reason === WriteReason.UNSUPPORTED ||
       result.reason === WriteReason.FORMAT;
+    const hintKey: string = WriteCode.hintKey(result.code);
+    const hint: string = hintKey.length > 0 ? I18n.t(hintKey) : '';
+    const codeLine: string = I18n.f('lib.errorCode', [`${result.code}`]);
+    const body: string = hint.length > 0
+      ? `${result.message}\n\n${hint}\n\n${codeLine}`
+      : `${result.message}\n\n${codeLine}`;
     this.getUIContext().showAlertDialog({
       title: needReport ? I18n.t('lib.unsupportedTitle') : I18n.t('lib.writeIncomplete'),
-      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
+      message: body,
       primaryButton: {
         value: I18n.t('common.ok'),
         action: (): void => {
@@ -673,6 +719,7 @@ export struct TonePage {
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
   }
+
 
   @Builder
   buildHeader() {
@@ -793,31 +840,28 @@ export struct TonePage {
   buildPresetSection() {
     SectionTitle({ sectionText: I18n.t('tone.presets'), sectionHint: I18n.t('tone.presetsHint') })
 
-    Scroll() {
-      Row({ space: 8 }) {
-        ForEach(ToneSynthesizerService.PRESETS, (preset: SynthPreset) => {
-          Column({ space: 3 }) {
-            Text(I18n.t(preset.nameKey))
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(Palette.TEXT_PRIMARY)
-            Text(I18n.t(preset.descKey))
-              .fontSize(9)
-              .fontColor(Palette.TEXT_TERTIARY)
-              .maxLines(1)
-          }
-          .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-          .borderRadius(16)
-          .backgroundColor(Palette.BG_CARD)
-          .border({ width: 1, color: Palette.STROKE_SOFT })
-          .onClick(() => {
-            this.usePreset(preset);
-          })
-        }, (preset: SynthPreset) => preset.id)
-      }
+    // 胶囊自动换行；当前载入的那条用强调色描边 + 淡底高亮
+    Flex({ wrap: FlexWrap.Wrap }) {
+      ForEach(BuiltinToneCatalog.all(), (tone: BuiltinTone) => {
+        Column() {
+          Text(BuiltinToneCatalog.label(tone, I18n.isEnglish()))
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.activeBuiltinId === tone.id ? Palette.ACCENT_TEXT : Palette.TEXT_PRIMARY)
+        }
+        .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+        .margin({ right: 8, bottom: 8 })
+        .borderRadius(16)
+        .backgroundColor(this.activeBuiltinId === tone.id ? Palette.ACCENT_SOFT : Palette.BG_CARD)
+        .border({
+          width: 1,
+          color: this.activeBuiltinId === tone.id ? Palette.ACCENT_LINE : Palette.STROKE_SOFT
+        })
+        .onClick(() => {
+          this.useBuiltinTone(tone);
+        })
+      }, (tone: BuiltinTone) => tone.id)
     }
-    .scrollable(ScrollDirection.Horizontal)
-    .scrollBar(BarState.Off)
     .width('100%')
   }
 
@@ -1391,3 +1435,4 @@ struct ToggleBlock {
     }
   }
 }
+

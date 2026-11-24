@@ -147,6 +147,12 @@ function readPassword(file: string): LoadedPassword | undefined {
 }
 
 function selectProfile(buildMode: string): SignProfile {
+  // BOX_SIGN 可以强制指定签名，与 buildMode 解耦：
+  // release 编译 + debug 签名是日常验证混淆的常用组合（发布证书侧载会被系统拒绝）
+  const forced: string = process.env.BOX_SIGN ?? '';
+  if (forced === 'debug' || forced === 'release') {
+    return forced === 'release' ? RELEASE_PROFILE : DEBUG_PROFILE;
+  }
   return buildMode === 'release' ? RELEASE_PROFILE : DEBUG_PROFILE;
 }
 

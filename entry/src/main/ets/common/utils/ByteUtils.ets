@@ -103,8 +103,4 @@ export class ByteUtils {
     new Uint8Array(buffer).set(bytes);
     return buffer;
   }
-
-  static fromArrayBuffer(buffer: ArrayBuffer): Uint8Array {
-    return new Uint8Array(buffer);
-  }
 }

@@ -1,4 +1,7 @@
 import { cancelDecode, getDecodeProgress, DecodeProgress } from 'libaudiodec.so';
+import { Logger } from '../../common/utils/Logger';
+
+const MODULE: string = 'ImportControl';
 
 /** 用户主动取消导入时抛出；UI 捕获后静默处理，不弹失败提示 */
 export class ImportCancelledError extends Error {
@@ -25,6 +28,8 @@ export interface ImportProgressState {
  */
 export class ImportControl {
   private static cancelled: boolean = false;
+  /** 进度接口失效只报一次，避免 250ms 定时器把日志刷满 */
+  private static progressBroken: boolean = false;
 
   public static begin(): void {
     ImportControl.cancelled = false;
@@ -61,7 +66,12 @@ export class ImportControl {
         elapsedMs: raw.elapsedMs
       };
     } catch (error) {
-      // 保持默认值
+      // 保持默认值；只报一次，方便定位「release 包没有进度条」这类问题
+      if (!ImportControl.progressBroken) {
+        ImportControl.progressBroken = true;
+        const reason: string = error instanceof Error ? error.message : `${error}`;
+        Logger.warn(MODULE, `读取解码进度失败，导入遮罩退回不确定进度：${reason}`);
+      }
     }
     return state;
   }

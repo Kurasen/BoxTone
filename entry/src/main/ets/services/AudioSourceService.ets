@@ -397,15 +397,4 @@ export class AudioSourceService {
       return segment;
     }
   }
-
-  /** 删除导入的临时源文件 */
-  public static removeSource(path: string): void {
-    try {
-      if (path.length > 0 && fs.accessSync(path)) {
-        fs.unlinkSync(path);
-      }
-    } catch (error) {
-      Logger.exception(MODULE, '删除源文件失败', error as BusinessError);
-    }
-  }
 }

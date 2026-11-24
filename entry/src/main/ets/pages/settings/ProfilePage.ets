@@ -27,6 +27,14 @@ export struct ProfilePage {
   @State logCount: number = 0;
   @State logBytes: number = 0;
   @State showAbout: boolean = false;
+  /** 捐赠收款码弹窗 */
+  private donateDialog: CustomDialogController = new CustomDialogController({
+    builder: DonateQrDialog(),
+    autoCancel: true,
+    customStyle: true,
+    alignment: DialogAlignment.Center,
+    width: '88%'
+  });
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
@@ -356,7 +364,7 @@ export struct ProfilePage {
             rowAction: I18n.t('profile.donateAction'),
             rowIcon: $r('app.media.ic_feedback'),
             onTap: (): void => {
-              // 捐赠图片暂未提供：入口先保持无响应，后续在同一点击事件里打开图片
+              this.donateDialog.open();
             }
           })
           Divider()
@@ -683,5 +691,41 @@ struct AboutLinkRow {
     .onClick(() => {
       this.onTap();
     })
+  }
+}
+
+/** 捐赠收款码弹窗：展示微信 / 支付宝二维码，纯自愿支持 */
+@CustomDialog
+struct DonateQrDialog {
+  controller?: CustomDialogController;
+
+  build() {
+    Column({ space: 14 }) {
+      Image($r('app.media.donate_qr'))
+        .width('100%')
+        .objectFit(ImageFit.Contain)
+        .borderRadius(16)
+      Text(I18n.t('profile.donateHint'))
+        .fontSize(13)
+        .fontColor(Palette.TEXT_SECONDARY)
+        .textAlign(TextAlign.Center)
+        .width('100%')
+      Button(I18n.t('common.close'))
+        .fontSize(14)
+        .fontColor(Palette.TEXT_PRIMARY)
+        .backgroundColor(Palette.FILL_SOFT)
+        .borderRadius(12)
+        .width('100%')
+        .height(42)
+        .onClick(() => {
+          this.controller?.close();
+        })
+    }
+    .width('100%')
+    .padding(16)
+    // 弹窗必须用不透明底色：卡片色是 8% 白的玻璃拟态，放在这里会让背后的列表透出来
+    .backgroundColor(Palette.BG_END)
+    .border({ width: 1, color: Palette.STROKE })
+    .borderRadius(22)
   }
 }

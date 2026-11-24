@@ -4,6 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
+import { SettingsService } from '../services/SettingsService';
 import { AppEvent, BusyState, EventBus, SimpleHandler, TextHandler } from '../common/utils/EventBus';
 import { Logger } from '../common/utils/Logger';
 import { AppBackdrop } from '../components/AppBackdrop';
@@ -52,6 +53,13 @@ struct Index {
   @State busyProgress: number = -1;
   @State busyCancellable: boolean = false;
   @State privacyReady: boolean = false;
+  /**
+   * 首次上手引导。
+   * 必须挂在根页面：首屏默认是「设备」页，音效页要等用户切过去才创建，
+   * 挂在那里的话首次打开根本不会执行它的生命周期，引导自然不弹。
+   */
+  @State showOnboarding: boolean = false;
+  private onboardingShown: boolean = false;
   private tabsController: HdsTabsController = new HdsTabsController();
   private logHandler: SimpleHandler | undefined = undefined;
   private feedbackHandler: SimpleHandler | undefined = undefined;
@@ -121,9 +129,134 @@ struct Index {
     EventBus.onText(AppEvent.BUSY_PROGRESS, this.busyProgressHandler);
     // 托管弹窗可能在页面构建之后才被同意
     this.privacyHandler = (): void => {
+      Logger.info(MODULE, '收到 PRIVACY_READY');
       this.privacyReady = true;
+      // 系统隐私弹窗是嵌入在应用窗口里的 UIExtension，没有关闭回调可监听，
+      // 只能给它留出被点掉的时间，再从底部把引导滑上来
+      setTimeout(() => {
+        this.maybeShowOnboarding();
+      }, 3000);
     };
     EventBus.on(AppEvent.PRIVACY_READY, this.privacyHandler);
+    Logger.info(MODULE, 'aboutToAppear，开始检查引导');
+    this.maybeShowOnboarding();
+  }
+
+  /** 只弹一次；设置存储未就绪时短轮询兜底（最多 6 秒） */
+  private maybeShowOnboarding(retry: number = 0): void {
+    const storeReady: boolean = SettingsService.isReady();
+    const done: boolean = storeReady ? SettingsService.isOnboardingDone() : false;
+    Logger.info(MODULE, `引导检查 retry=${retry} privacyReady=${this.privacyReady} ` +
+      `shown=${this.onboardingShown} storeReady=${storeReady} done=${done}`);
+    if (this.onboardingShown || !this.privacyReady) {
+      return;
+    }
+    if (storeReady) {
+      if (!done) {
+        this.onboardingShown = true;
+        this.showOnboarding = true;
+        Logger.info(MODULE, '引导弹出');
+      } else {
+        Logger.info(MODULE, '引导已看过，跳过');
+      }
+      return;
+    }
+    if (retry < 30) {
+      setTimeout(() => {
+        this.maybeShowOnboarding(retry + 1);
+      }, 200);
+    } else {
+      Logger.warn(MODULE, '引导等待设置存储超时，放弃');
+    }
+  }
+
+  /** 首次上手引导：权限 → 选音效 → 自定义 → 写入 */
+  @Builder
+  buildOnboardingOverlay() {
+    // 页面内浮层而不是 bindSheet：sheet 挂在条件渲染的容器上，容器一重组就被销毁，
+    // 实测弹出 1.6 秒后自己消失
+    Stack({ alignContent: Alignment.Bottom }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(4, 8, 14, 0.55)')
+        .onClick(() => {
+          // 吞掉点击，避免误触下层
+        })
+
+      Column({ space: 18 }) {
+        Text(I18n.t('onboard.title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Palette.TEXT_PRIMARY)
+          .width('100%')
+
+        Column({ space: 14 }) {
+          this.buildOnboardStep('1', I18n.t('onboard.step1Title'), I18n.t('onboard.step1Body'))
+          this.buildOnboardStep('2', I18n.t('onboard.step2Title'), I18n.t('onboard.step2Body'))
+          this.buildOnboardStep('3', I18n.t('onboard.step3Title'), I18n.t('onboard.step3Body'))
+          this.buildOnboardStep('4', I18n.t('onboard.step4Title'), I18n.t('onboard.step4Body'))
+        }
+        .width('100%')
+
+        Button(I18n.t('onboard.start'))
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Palette.TEXT_PRIMARY)
+          .backgroundColor(Palette.ACCENT_SOFT)
+          .borderRadius(12)
+          .width('100%')
+          .height(46)
+          .margin({ top: 4 })
+          .onClick(() => {
+            Logger.info(MODULE, '引导点「开始使用」，标记已看过');
+            SettingsService.setOnboardingDone();
+            this.showOnboarding = false;
+          })
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 22, bottom: 32 })
+      .alignItems(HorizontalAlign.Start)
+      .backgroundColor(Palette.BG_END)
+      .border({ width: 1, color: Palette.STROKE })
+      .borderRadius({ topLeft: 26, topRight: 26 })
+      .transition(TransitionEffect.move(TransitionEdge.BOTTOM)
+        .combine(TransitionEffect.OPACITY)
+        .animation({ duration: 320, curve: Curve.Friction }))
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(200)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+  }
+
+  @Builder
+  buildOnboardStep(index: string, title: string, body: string) {
+    Row({ space: 11 }) {
+      Text(index)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Palette.ACCENT_TEXT)
+        .width(22)
+        .height(22)
+        .textAlign(TextAlign.Center)
+        .borderRadius(11)
+        .backgroundColor(Palette.ACCENT_SOFT)
+      Column({ space: 3 }) {
+        Text(title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Palette.TEXT_PRIMARY)
+        Text(body)
+          .fontSize(12)
+          .fontColor(Palette.TEXT_SECONDARY)
+          .lineHeight(18)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
   }
 
   aboutToDisappear(): void {
@@ -398,26 +531,26 @@ struct Index {
             .color(Palette.ACCENT)
           Text(this.busyText)
             .fontSize(12)
-            .fontColor(Palette.TEXT_SECONDARY)
+            .fontColor(Palette.OVERLAY_TEXT)
           if (this.busyProgress >= 0) {
             Progress({ value: Math.round(this.busyProgress * 100), total: 100, type: ProgressType.Linear })
               .width(180)
               .height(4)
               .color(Palette.ACCENT)
-              .backgroundColor(Palette.FILL_SOFT)
+              .backgroundColor(Palette.OVERLAY_CHIP)
           }
           if (this.busyDetail.length > 0) {
             Text(this.busyDetail)
               .fontSize(11)
-              .fontColor(Palette.TEXT_TERTIARY)
+              .fontColor(Palette.OVERLAY_TEXT_SUB)
           }
           if (this.busyCancellable) {
             Text(I18n.t('common.cancel'))
               .fontSize(12)
-              .fontColor(Palette.ACCENT_TEXT)
+              .fontColor(Palette.OVERLAY_TEXT)
               .padding({ left: 22, right: 22, top: 7, bottom: 7 })
               .borderRadius(10)
-              .backgroundColor(Palette.FILL_SOFT)
+              .backgroundColor(Palette.OVERLAY_CHIP)
               .margin({ top: 4 })
               .onClick((): void => {
                 ImportControl.cancel();
@@ -431,6 +564,10 @@ struct Index {
         .onClick(() => {
         })
         .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
+      }
+
+      if (this.showOnboarding) {
+        this.buildOnboardingOverlay()
       }
     }
     .width('100%')

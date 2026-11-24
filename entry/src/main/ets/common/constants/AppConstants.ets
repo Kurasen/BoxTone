@@ -8,8 +8,6 @@ import { I18n } from '../i18n/I18n';
 export class ToneSpec {
   /** 目标采样率：盒端标定 16700Hz（区分耳机提示音与手机通知音） */
   static readonly SAMPLE_RATE: number = 16700;
-  /** 单声道 */
-  static readonly CHANNELS: number = 1;
   /** 每帧字节数 = 声道 × 16bit / 8 */
   static readonly BYTES_PER_FRAME: number = 2;
   /** 每秒字节数 = 16700 * 2 = 33400 */
@@ -212,8 +210,9 @@ export class SupportInfo {
   static readonly EMAIL: string = 'kurasen@foxmail.com';
   /** 在线反馈开关：完成联网备案并部署后端后改为 true */
   static readonly FEEDBACK_ONLINE_ENABLED: boolean = false;
-  /** 应用市场详情页链接：上架后填入，例如 https://appgallery.huawei.com/app/detail?id=<bundleName> */
-  static readonly APP_GALLERY_URL: string = '';
+  /** 应用市场详情页链接：用于「五星好评」入口 */
+  static readonly APP_GALLERY_URL: string =
+    'https://appgallery.huawei.com/app/detail?id=com.boxtone.audiokit&channelId=SHARE&source=appshare';
 }
 
 /** 更新日志条目 */
@@ -226,14 +225,21 @@ export interface ChangelogEntry {
 export class Changelog {
   static readonly ENTRIES: ChangelogEntry[] = [
     {
+      version: 'v1.2.1',
+      noteKey: 'changelog.v121.note',
+      itemKeys: [
+        'changelog.v121.i1',
+        'changelog.v121.i2',
+        'changelog.v121.i3'
+      ]
+    },
+    {
       version: 'v1.2.0',
       noteKey: 'changelog.v120.note',
       itemKeys: [
-        'changelog.v120.i1',
         'changelog.v120.i2',
         'changelog.v120.i3',
         'changelog.v120.i4',
-        'changelog.v120.i5',
         'changelog.v120.i6',
         'changelog.v120.i7'
       ]
@@ -457,6 +463,8 @@ export class AppStorageKey {
   /** 最近一次成功写入盒内的音效 id：音效库的「盒内」标记 */
   static readonly KEY_LAST_WRITTEN_TONE: string = 'last_written_tone';
   static readonly KEY_THEME_MODE: string = 'theme_mode';
+  /** 首次上手引导是否已看过 */
+  static readonly KEY_ONBOARDING_DONE: string = 'onboarding_done';
   /** AppStorage 主题纪元：切换外观时自增，触发组件重绘 */
   static readonly THEME_EPOCH: string = 'themeEpoch';
 }

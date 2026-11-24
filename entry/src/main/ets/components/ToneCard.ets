@@ -30,6 +30,8 @@ export struct ToneCard {
   };
   onExport: () => void = () => {
   };
+  onShare: () => void = () => {
+  };
   onRename: () => void = () => {
   };
   onDelete: () => void = () => {
@@ -112,7 +114,8 @@ export struct ToneCard {
       })
 
       if (this.expanded) {
-        Row({ space: 8 }) {
+        // 五个操作：固定一行会挤爆窄屏，交给 wrap 自动换行
+        Flex({ wrap: FlexWrap.Wrap }) {
           WriteChip({
             chipText: this.writing ? this.writingText :
               (this.writeLocked ? I18n.t('card.unavailable') : I18n.t('card.write')),
@@ -122,6 +125,15 @@ export struct ToneCard {
               this.onWrite();
             }
           })
+          .margin({ right: 8, bottom: 8 })
+          ActionChip({
+            chipText: I18n.t('card.share'),
+            chipColor: Palette.ACCENT_TEXT,
+            onTap: (): void => {
+              this.onShare();
+            }
+          })
+          .margin({ right: 8, bottom: 8 })
           ActionChip({
             chipText: I18n.t('card.export'),
             chipColor: Palette.TEXT_SECONDARY,
@@ -129,6 +141,7 @@ export struct ToneCard {
               this.onExport();
             }
           })
+          .margin({ right: 8, bottom: 8 })
           ActionChip({
             chipText: I18n.t('card.rename'),
             chipColor: Palette.TEXT_SECONDARY,
@@ -136,6 +149,7 @@ export struct ToneCard {
               this.onRename();
             }
           })
+          .margin({ right: 8, bottom: 8 })
           ActionChip({
             chipText: this.deleteLocked ? I18n.t('card.deleteLocked') : I18n.t('card.delete'),
             chipColor: this.deleteLocked ? Palette.TEXT_TERTIARY : Palette.DANGER,
@@ -144,6 +158,7 @@ export struct ToneCard {
               this.onDelete();
             }
           })
+          .margin({ right: 8, bottom: 8 })
         }
         .width('100%')
         .margin({ top: 14 })
@@ -174,8 +189,9 @@ struct WriteChip {
       .maxLines(1)
       .textOverflow({ overflow: TextOverflow.Ellipsis })
       .fontColor(this.chipLocked ? Palette.TEXT_TERTIARY : (this.chipBusy ? Palette.TEXT_TERTIARY : Palette.ACCENT))
-      .layoutWeight(1)
+      // 不再 layoutWeight：Flex 里平分会让五个按钮挤成一行，改成按文字宽度自适应
       .height(34)
+      .padding({ left: 16, right: 16 })
       .textAlign(TextAlign.Center)
       .borderRadius(11)
       .backgroundColor(this.chipLocked ? Palette.BG_INPUT :
@@ -211,11 +227,12 @@ struct ActionChip {
     Text(this.chipText)
       .fontSize(12)
       .fontColor(this.chipColor.length > 0 ? this.chipColor : Palette.TEXT_SECONDARY)
-      .layoutWeight(1)
       .height(34)
+      .padding({ left: 16, right: 16 })
       .textAlign(TextAlign.Center)
       .borderRadius(11)
-      .backgroundColor(Palette.FILL_FAINT)
+      .backgroundColor(Palette.FILL_SOFT)
+      .border({ width: 1, color: Palette.STROKE_SOFT })
       .opacity(this.chipLocked ? 0.45 : 1)
       .enabled(!this.chipLocked)
       .onClick(() => {

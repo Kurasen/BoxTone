@@ -96,6 +96,26 @@ export class SettingsService {
     SettingsService.put(AppStorageKey.KEY_LAST_WRITTEN_TONE, toneId);
   }
 
+  /** 首次上手引导是否已看过；只弹一次，看过就不再打扰 */
+  public static isOnboardingDone(): boolean {
+    const store: preferences.Preferences | undefined = SettingsService.store;
+    if (store === undefined) {
+      // store 未就绪不能当成「已看过」：首次启动页面先于 init 构建时，
+      // 这样会把引导永久跳过
+      return false;
+    }
+    return store.getSync(AppStorageKey.KEY_ONBOARDING_DONE, false) as boolean;
+  }
+
+  /** 设置存储是否已就绪：引导这类「只弹一次」的判断必须等它 */
+  public static isReady(): boolean {
+    return SettingsService.store !== undefined;
+  }
+
+  public static setOnboardingDone(): void {
+    SettingsService.put(AppStorageKey.KEY_ONBOARDING_DONE, true);
+  }
+
   private static put(key: string, value: number | boolean | string): void {
     const store: preferences.Preferences | undefined = SettingsService.store;
     if (store === undefined) {

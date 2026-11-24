@@ -7,10 +7,6 @@ import { emitter } from '@kit.BasicServicesKit';
 export class AppEvent {
   /** 音效库发生变化（新增 / 删除 / 重命名） */
   static readonly TONE_CHANGED: number = 3001;
-  /** 日志新增 */
-  static readonly LOG_APPENDED: number = 3002;
-  /** 请求切换到指定页签 */
-  static readonly SWITCH_TAB: number = 3003;
   /** 打开日志中心 */
   static readonly OPEN_LOG: number = 3004;
   /** 打开反馈与建议 */

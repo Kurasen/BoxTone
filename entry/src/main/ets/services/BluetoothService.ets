@@ -281,6 +281,12 @@ export class BluetoothService {
    */
   private static connectedAudioDevices(): string[] {
     const merged: string[] = [];
+    // 没授权时 A2DP 接口必然抛 201（权限校验失败），这不是异常：
+    // 首页/音效库在用户点「允许」之前就会来问一次当前输出设备，
+    // 提前返回空数组，既不刷警告也不会误判成"读取失败"。
+    if (!BluetoothService.hasPermission()) {
+      return merged;
+    }
     try {
       const profile: a2dp.A2dpSourceProfile = a2dp.createA2dpSrcProfile();
       const ids: string[] = profile.getConnectedDevices();
@@ -288,7 +294,8 @@ export class BluetoothService {
         BluetoothService.pushAddress(merged, ids[i]);
       }
     } catch (error) {
-      Logger.warn(MODULE, `读取 A2DP 已连接设备失败 code=${(error as BusinessError).code}`);
+      const businessError: BusinessError = error as BusinessError;
+      Logger.warn(MODULE, `读取 A2DP 已连接设备失败 code=${businessError.code} ${businessError.message}`);
     }
     return merged;
   }

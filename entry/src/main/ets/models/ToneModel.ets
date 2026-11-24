@@ -79,13 +79,6 @@ export interface WavePeaks {
   durationMs: number;
 }
 
-/** 内置合成音色定义 */
-export interface SynthPreset {
-  id: string;
-  nameKey: string;
-  descKey: string;
-}
-
 export function createEmptyTone(): ToneEntry {
   const entry: ToneEntry = {
     id: '',

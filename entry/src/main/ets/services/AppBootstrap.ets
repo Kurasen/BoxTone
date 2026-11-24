@@ -5,6 +5,7 @@ import { FeedbackService } from './FeedbackService';
 import { LogService } from './LogService';
 import { SettingsService } from './SettingsService';
 import { ToneRepositoryService } from './ToneRepositoryService';
+import { SelfCheckService } from './SelfCheckService';
 
 const MODULE: string = 'Bootstrap';
 
@@ -31,5 +32,8 @@ export class AppBootstrap {
     ToneRepositoryService.init(context);
     BluetoothService.init(context);
     FeedbackService.init(context);
+    // 纯计算部分的自检：协议编解码、摘要、音效包结构、波形合成等改错后肉眼看不出来。
+    // runIfDebug 内部按 applicationInfo.debug 判断，release 包直接返回，不消耗任何性能
+    SelfCheckService.runIfDebug(context);
   }
 }

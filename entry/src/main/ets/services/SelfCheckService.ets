@@ -3,11 +3,10 @@ import { MbbSpec, ToneSpec } from '../common/constants/AppConstants';
 import { ByteUtils } from '../common/utils/ByteUtils';
 import { Logger } from '../common/utils/Logger';
 import { Sha256Utils } from '../common/utils/Sha256Utils';
-import { PcmAudio } from '../models/ToneModel';
+import { BuiltinTone, BuiltinToneCatalog } from './BuiltinToneCatalog';
 import { SettingsService } from './SettingsService';
 import type { AppSettings } from './SettingsService';
 import { MbbProtocol, PacketAssembler, ToneStatus } from './bluetooth/MbbProtocol';
-import { ToneSynthesizerService } from './ToneSynthesizerService';
 
 const MODULE: string = 'SelfCheck';
 
@@ -120,7 +119,7 @@ export class SelfCheckService {
       new CheckCase('TLV 编解码', SelfCheckService.checkTlv),
       new CheckCase('音效包结构', SelfCheckService.checkTonePackage),
       new CheckCase('状态解析', SelfCheckService.checkParseStatus),
-      new CheckCase('音色合成', SelfCheckService.checkSynthesizer),
+      new CheckCase('内置音效目录', SelfCheckService.checkBuiltinTones),
       new CheckCase('设置读取', SelfCheckService.checkSettings)
     ];
   }
@@ -324,33 +323,22 @@ export class SelfCheckService {
     SelfCheckService.assert(status.selected, 'selected 解析错误');
   }
 
-  /** 每个内置音色都要能合成出有效波形：长度一致、无 NaN、峰值合理 */
-  private static checkSynthesizer(): void {
-    const presets: string[] = ['dawn', 'drop', 'pulse', 'rise', 'wood', 'glass', 'rain', 'windchime', 'birds'];
-    for (let i = 0; i < presets.length; i++) {
-      const audio: PcmAudio = ToneSynthesizerService.generate(presets[i]);
-      const label: string = presets[i];
-      SelfCheckService.assert(audio.frameCount > 0, `${label} 帧数为 0`);
-      SelfCheckService.assert(audio.frames.length === audio.frameCount * audio.channels,
-        `${label} frames 长度与 frameCount 不一致`);
-      SelfCheckService.assert(audio.sampleRate > 0, `${label} 采样率无效`);
-
-      let peak: number = 0;
-      for (let s = 0; s < audio.frames.length; s++) {
-        const value: number = audio.frames[s];
-        if (!Number.isFinite(value)) {
-          throw new Error(`${label} 第 ${s} 个样本为 ${value}`);
-        }
-        if (value > 1 || value < -1) {
-          throw new Error(`${label} 第 ${s} 个样本越界：${value}`);
-        }
-        const magnitude: number = value < 0 ? -value : value;
-        if (magnitude > peak) {
-          peak = magnitude;
-        }
-      }
-      SelfCheckService.assert(peak > 0.05, `${label} 峰值仅 ${peak.toFixed(4)}，疑似静音`);
+  /** 内置音效目录：id 唯一、名称与路径合法、展示顺序固定 */
+  private static checkBuiltinTones(): void {
+    const tones: BuiltinTone[] = BuiltinToneCatalog.all();
+    SelfCheckService.assert(tones.length === 9, `内置音效数量异常：${tones.length}`);
+    const seen: string[] = [];
+    for (let i = 0; i < tones.length; i++) {
+      const tone: BuiltinTone = tones[i];
+      SelfCheckService.assert(tone.id.length > 0, `第 ${i} 项 id 为空`);
+      SelfCheckService.assert(tone.zh.length > 0, `${tone.id} 中文名为空`);
+      SelfCheckService.assert(seen.indexOf(tone.id) < 0, `id 重复：${tone.id}`);
+      SelfCheckService.assert(/^[a-z0-9_]+$/.test(tone.id), `id 含非法字符：${tone.id}`);
+      seen.push(tone.id);
     }
+    // 展示顺序由产品侧指定，防止改动时被重排
+    const expected: string = 'faq,demo,zako,wow,kobe,woqu,taishuai,xiexie,bendan';
+    SelfCheckService.assert(seen.join(',') === expected, `内置音效顺序错误：${seen.join(',')}`);
   }
 
   /** 设置读出的值必须落在业务允许区间内 */

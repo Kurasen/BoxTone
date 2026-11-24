@@ -1,5 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
@@ -514,6 +516,28 @@ export struct LibraryPage {
     }
   }
 
+  /** 通过系统分享面板发给微信 / QQ：先把裸 PCM 包成 WAV，否则对方打不开 */
+  private async shareTone(entry: ToneEntry): Promise<void> {
+    try {
+      const uri: string = await ToneRepositoryService.prepareShareFile(entry);
+      const shareData: systemShare.SharedData = new systemShare.SharedData({
+        utd: utd.UniformDataType.AUDIO,
+        uri: uri,
+        title: entry.name
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData);
+      const context: common.UIAbilityContext =
+        this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await controller.show(context, {
+        previewMode: systemShare.SharePreviewMode.DETAIL,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+    } catch (error) {
+      Logger.exception(MODULE, '分享失败', error as BusinessError);
+      this.toast(I18n.t('lib.shareFailed'));
+    }
+  }
+
   private confirmDelete(entry: ToneEntry): void {
     // 正在写入的音效不能删：文件被删会让传输中的校验与收尾失去依据
     if (this.writingId === entry.id || CaseWriteService.isToneWriting(entry.id)) {
@@ -852,6 +876,9 @@ export struct LibraryPage {
               },
               onExport: (): void => {
                 this.exportTone(entry);
+              },
+              onShare: (): void => {
+                this.shareTone(entry);
               },
               onRename: (): void => {
                 this.editingId = entry.id;

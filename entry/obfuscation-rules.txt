@@ -5,7 +5,15 @@
 -enable-export-obfuscation
 -keep-global-name
 AppStorage,LocalStorage,PersistentStorage
-# libaudiodec.so 由 C++ 导出，函数名和返回对象属性都不能被混淆
+# libaudiodec.so 由 C++ 导出，函数名和返回对象属性都不能被混淆。
+#
+# 这里的名字是运行时才存在的：C++ 侧 napi_set_named_property 写入字段名，
+# napi_define_properties 注册函数名，ArkTS 编译产物里没有它们的声明来源，
+# 混淆只会改 ArkTS 这一侧的读取名，两边对不上就静默失败：
+# - 函数名丢失 → getDecodeProgress() 直接 throw，被 catch 吞掉，
+#   导入遮罩永远停在「正在读取音频…」，没有百分比和倒计时
+# - 字段名丢失 → active/elapsedMs 读成 undefined，同上
+# - cancelDecode 丢失 → 「取消」按钮点了没反应，只能等解码跑完
 #
 # 与外界交换的 JSON 字段名同样必须保持原名：这些键由运行时外部数据
 # 或历史文件决定，混淆后 release 包读不到 debug 包（以及旧版本）写下的内容，
@@ -16,4 +24,4 @@ AppStorage,LocalStorage,PersistentStorage
 # - Preferences 里的反馈记录与上报体（FeedbackRecord / FeedbackPayload）
 # - 跨页面事件载荷 BusyState
 -keep-property-name
-decodeAudio,probeAudio,ok,error,stage,frames,sampleRate,channels,frameCount,truncated,mime,durationMs,resultType,appIndex,version,items,entries,id,name,fileName,byteLength,createdAt,sourceName,added,failed,text,detail,progress,cancellable,typeLabel,description,contact,device,appVersion,log,images,channel,status
+decodeAudio,probeAudio,getDecodeProgress,cancelDecode,ok,error,stage,frames,sampleRate,channels,frameCount,truncated,cancelled,active,elapsedMs,mime,durationMs,resultType,appIndex,version,items,entries,id,name,fileName,byteLength,createdAt,sourceName,added,failed,text,detail,progress,cancellable,typeLabel,description,contact,device,appVersion,log,images,channel,status
