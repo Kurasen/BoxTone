@@ -6,5 +6,14 @@
 -keep-global-name
 AppStorage,LocalStorage,PersistentStorage
 # libaudiodec.so 由 C++ 导出，函数名和返回对象属性都不能被混淆
+#
+# 与外界交换的 JSON 字段名同样必须保持原名：这些键由运行时外部数据
+# 或历史文件决定，混淆后 release 包读不到 debug 包（以及旧版本）写下的内容，
+# 表现就是「功能少了 / 数据没了」：
+# - 系统隐私弹窗回传的 resultType、appIndex
+# - 沙箱 index.json（ToneIndex / ToneEntry）
+# - .boxtone 备份清单（BackupManifest / BackupEntry）
+# - Preferences 里的反馈记录与上报体（FeedbackRecord / FeedbackPayload）
+# - 跨页面事件载荷 BusyState
 -keep-property-name
-decodeAudio,probeAudio,ok,error,stage,frames,sampleRate,channels,frameCount,truncated,mime,durationMs
+decodeAudio,probeAudio,ok,error,stage,frames,sampleRate,channels,frameCount,truncated,mime,durationMs,resultType,appIndex,version,items,entries,id,name,fileName,byteLength,createdAt,sourceName,added,failed,text,detail,progress,cancellable,typeLabel,description,contact,device,appVersion,log,images,channel,status
