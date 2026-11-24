@@ -53,10 +53,7 @@
 OpenHarmony 开源 SDK 中没有）。首次打开工程并等待 Sync 完成，会自动生成 `hvigorw` 包装器。
 
 ```bash
-./tools/dev.sh build                # 调试包，可直接安装
-./tools/dev.sh build release debug  # release 编译 + 调试签名，用于验证混淆后的行为
-./tools/dev.sh build release        # 发布包，用于上传应用市场
-./tools/dev.sh install              # 安装到已连接的设备
+./tools/dev.sh                      # 调试包，可直接安装到已连接的设备
 ./tools/dev.sh log                  # 查看应用日志
 ```
 
