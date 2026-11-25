@@ -20,6 +20,7 @@ import { AudioPlayService } from '../../services/AudioPlayService';
 import { BluetoothService } from '../../services/BluetoothService';
 import { CaseWriteService, WriteCheck, WriteCode, WriteReason, WriteResult } from '../../services/CaseWriteService';
 import { SettingsService } from '../../services/SettingsService';
+import { RatingService } from '../../services/RatingService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 
 const MODULE: string = 'LibraryPage';
@@ -51,16 +52,19 @@ export struct LibraryPage {
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
+    // 同意前音效库还没初始化，list() 返回空，渲染的是空态；放行时再刷一次真实数据
     this.reload();
     this.changeHandler = (): void => {
       this.reload();
     };
     EventBus.on(AppEvent.TONE_CHANGED, this.changeHandler);
+    EventBus.on(AppEvent.PRIVACY_CLEARED, this.changeHandler);
   }
 
   aboutToDisappear(): void {
     if (this.changeHandler !== undefined) {
-      EventBus.off(AppEvent.TONE_CHANGED);
+      EventBus.off(AppEvent.TONE_CHANGED, this.changeHandler);
+      EventBus.off(AppEvent.PRIVACY_CLEARED, this.changeHandler);
       this.changeHandler = undefined;
     }
     AudioPlayService.stop().then(() => {
@@ -162,7 +166,7 @@ export struct LibraryPage {
     this.writingId = entry.id;
     this.writeStage = I18n.t('lib.stageConnect');
     this.writeRatio = 0;
-    Logger.info(MODULE, `开始写入「entry.name}」`);
+    Logger.info(MODULE, `开始写入「${entry.name}」`);
     await this.setKeepScreenOn(true);
     try {
       const result: WriteResult = await CaseWriteService.write(entry,
@@ -174,22 +178,28 @@ export struct LibraryPage {
         // 补发选中成功时 upload 已经抛错，进度可能停在上一步，这里补到 100%
         this.writeRatio = 100;
         this.writeStage = I18n.t('lib.stageApplied');
-        Logger.info(MODULE, `写入成功「entry.name}」`);
+        Logger.info(MODULE, `写入成功「${entry.name}」`);
+        SettingsService.recordWriteSuccess();
         this.getUIContext().showAlertDialog({
           title: I18n.t('lib.writeDone'),
           message: I18n.f('lib.writeDoneMessage', [result.message]),
           confirm: {
             value: I18n.t('common.ok'),
             action: (): void => {
+              // 用户点掉「写入完成」之后再谈评分：两个弹窗叠在一起体验很差
+              RatingService.maybeAskAfterWrite(
+                this.getUIContext().getHostContext() as common.UIAbilityContext);
             }
           }
         });
       } else {
         Logger.warn(MODULE, `写入未完 code=${result.code}${result.message}`);
+        SettingsService.recordWriteFailure();
         this.showWriteFailure(result);
       }
     } catch (error) {
       Logger.exception(MODULE, '写入异常', error as BusinessError);
+      SettingsService.recordWriteFailure();
       this.toast(I18n.t('lib.writeFailed'));
     } finally {
       this.writingId = '';
@@ -516,7 +526,12 @@ export struct LibraryPage {
     }
   }
 
-  /** 通过系统分享面板发给微信 / QQ：先把裸 PCM 包成 WAV，否则对方打不开 */
+  /**
+   * 通过系统分享面板发给微信 / QQ：先把裸 PCM 包成 WAV，否则对方打不开。
+   *
+   * 入口暂时隐藏（ToneCard 的分享按钮已移除），实现保留以便随时恢复：
+   * 把 ToneCard 的 `onShare` 属性与 ActionChip、以及这里的 `onShare:` 传参加回来即可。
+   */
   private async shareTone(entry: ToneEntry): Promise<void> {
     try {
       const uri: string = await ToneRepositoryService.prepareShareFile(entry);
@@ -876,9 +891,6 @@ export struct LibraryPage {
               },
               onExport: (): void => {
                 this.exportTone(entry);
-              },
-              onShare: (): void => {
-                this.shareTone(entry);
               },
               onRename: (): void => {
                 this.editingId = entry.id;

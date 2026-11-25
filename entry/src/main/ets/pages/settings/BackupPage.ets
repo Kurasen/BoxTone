@@ -212,10 +212,13 @@ export struct BackupPage {
           if (this.note.length > 0) {
             GlassCard({ cardPadding: 14 }) {
               Row({ space: 8 }) {
-                Circle()
+                // 用圆角方块代替 Circle().fill()：fill 属性要到 API 26 才可用，
+                // 而本工程 compatibleSdkVersion 是 6.1.0(23)，低版本设备上这个点会渲染不出来
+                Row()
                   .width(4)
                   .height(4)
-                  .fill(Palette.ACCENT)
+                  .borderRadius(2)
+                  .backgroundColor(Palette.ACCENT)
                 Text(this.note)
                   .fontSize(11)
                   .fontColor(Palette.TEXT_PRIMARY)
@@ -292,10 +295,12 @@ export struct BackupPage {
   @Builder
   buildNote(text: string) {
     Row({ space: 8 }) {
-      Circle()
+      // 同上：避免 Circle().fill()（API 26）在 6.1.0(23) 设备上不渲染
+      Row()
         .width(4)
         .height(4)
-        .fill(Palette.ACCENT)
+        .borderRadius(2)
+        .backgroundColor(Palette.ACCENT)
         .margin({ top: 7 })
       Text(text)
         .fontSize(11)

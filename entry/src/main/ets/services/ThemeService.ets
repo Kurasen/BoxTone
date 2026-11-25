@@ -28,16 +28,44 @@ export class ThemeService {
   private static dark: boolean = true;
   /** 系统当前深浅色缓存：启动时读取，跟随系统模式下由配置回调更新 */
   private static systemDark: boolean = true;
+  /**
+   * 冷启动时首页是否需要「启动衔接遮罩」：系统启动页跟随系统深浅色绘制，
+   * 应用外观与系统不一致时，首帧会从启动页底色直接跳到应用底色。
+   * 只在本进程第一次 init 时判定，由首页取走一次后清零。
+   */
+  private static launchVeilPending: boolean = false;
 
   public static init(context: common.UIAbilityContext): void {
+    // 本进程第一次 init 时还没调过 setColorMode，读到的才是系统真实深浅色；
+    // Ability 重建时应用级外观已经生效，读到的可能是应用自己的设置，不能拿来判断启动页颜色
+    const firstInit: boolean = ThemeService.context === undefined;
     ThemeService.context = context;
     ThemeService.systemDark = ThemeService.readSystemDark(context);
     const stored: number = SettingsService.getThemeMode();
-    ThemeService.mode = stored === ThemeMode.LIGHT ? ThemeMode.LIGHT :
-      (stored === ThemeMode.SYSTEM ? ThemeMode.SYSTEM : ThemeMode.DARK);
+    // 未知取值（数据损坏 / 老版本迁移）一律回落到跟随系统，与 SettingsService 的默认值保持一致
+    ThemeService.mode = stored === ThemeMode.DARK ? ThemeMode.DARK :
+      (stored === ThemeMode.LIGHT ? ThemeMode.LIGHT : ThemeMode.SYSTEM);
     // 此时窗口还没创建，系统栏属性由 EntryAbility.onWindowStageCreate 设置
     ThemeService.apply(false);
-    Logger.info(MODULE, `外观初始化 mode=${ThemeService.mode} dark=${ThemeService.dark}`);
+    ThemeService.launchVeilPending = firstInit && ThemeService.dark !== ThemeService.systemDark;
+    Logger.info(MODULE,
+      `外观初始化 mode=${ThemeService.mode} dark=${ThemeService.dark} systemDark=${ThemeService.systemDark} ` +
+        `firstInit=${firstInit} launchVeil=${ThemeService.launchVeilPending}`);
+  }
+
+  /** 系统深浅色（启动时读取，跟随系统模式下随配置回调更新） */
+  public static isSystemDark(): boolean {
+    return ThemeService.systemDark;
+  }
+
+  /**
+   * 取走冷启动衔接遮罩标记：返回 true 表示应用外观与系统启动页不一致，
+   * 首页应先铺一层启动页底色再淡出。只返回一次，之后页面重建不会再出现遮罩。
+   */
+  public static takeLaunchVeil(): boolean {
+    const pending: boolean = ThemeService.launchVeilPending;
+    ThemeService.launchVeilPending = false;
+    return pending;
   }
 
   private static readSystemDark(context: common.UIAbilityContext): boolean {

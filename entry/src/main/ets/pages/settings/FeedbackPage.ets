@@ -37,13 +37,10 @@ export struct FeedbackPage {
   @State imagePaths: string[] = [];
   @State sending: boolean = false;
   @State policyAgreed: boolean = false;
-  @State privacyAvailable: boolean = false;
   @State records: FeedbackRecord[] = [];
 
   aboutToAppear(): void {
     this.records = FeedbackService.list();
-    // 托管链接由 AGC 下发；本地调试或非市场安装时取不到，隐藏入口
-    this.privacyAvailable = PrivacyLinkService.statementUrl().length > 0;
   }
 
   aboutToDisappear(): void {
@@ -527,17 +524,15 @@ export struct FeedbackPage {
             .onChange((checked: boolean) => {
               this.policyAgreed = checked;
             })
-          Text(I18n.t(this.privacyAvailable ? 'fb.agree' : 'fb.agreeNoLink'))
+          Text(I18n.t('fb.agree'))
             .fontSize(11)
             .fontColor(Palette.TEXT_SECONDARY)
-          if (this.privacyAvailable) {
-            Text(I18n.t('fb.privacyDoc'))
-              .fontSize(11)
-              .fontColor(Palette.ACCENT_TEXT)
-              .onClick(() => {
-                this.openPrivacy();
-              })
-          }
+          Text(I18n.t('fb.privacyDoc'))
+            .fontSize(11)
+            .fontColor(Palette.ACCENT_TEXT)
+            .onClick(() => {
+              this.openPrivacy();
+            })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)

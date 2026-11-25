@@ -52,12 +52,13 @@ export class PrivacyLinkService {
     return FALLBACK_STATEMENT_URL;
   }
 
-  /** 打开隐私声明（托管优先，失败回退公开链接）；打开失败返回 false */
+  /**
+   * 打开隐私声明。
+   * 链接一定有值（托管取不到时回退到内置公开声明），失败只可能是系统打不开链接，
+   * 因此这里不再判断空串——那个分支永远走不到。
+   */
   public static async open(context: common.UIAbilityContext): Promise<boolean> {
     const url: string = PrivacyLinkService.statementUrl();
-    if (url.length === 0) {
-      return false;
-    }
     try {
       await context.openLink(url);
       return true;

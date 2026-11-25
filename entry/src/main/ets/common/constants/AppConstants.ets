@@ -13,17 +13,18 @@ export class ToneSpec {
   /** 每秒字节数 = 16700 * 2 = 33400 */
   static readonly BYTES_PER_SECOND: number = 33400;
   /**
-   * 可写音效的字节上限 = 2.5s × 33400 = 83500。
+   * 可写音效的字节上限 = 2.8s × 33400 = 93520。
    *
-   * 统一 2.5 秒、以稳定优先。2026-11 真机实测结论：
+   * 2026-11 真机实测结论：
    * - 2.5s（83KB）稳定；3.2s（106KB）压线；
    * - 4.5s / 5.7s 数据能完整送达，但耳机擦写第二阶段会卡死（>106KB 不稳）；
    * - 系统 SPP 分段 480B / 20ms ≈ 23KB/s，应用层没有接口可改。
+   * 2.8 秒（92KB）落在「稳定」与「压线」之间，放开后的实际表现需继续观察。
    * 详见 docs/write-duration-gap.md。
    */
-  static readonly MAX_BYTES: number = 83500;
-  /** 对应时长 83500 / 33400 = 2.5 秒 */
-  static readonly MAX_SECONDS: number = 2.5;
+  static readonly MAX_BYTES: number = 93520;
+  /** 对应时长 93520 / 33400 = 2.8 秒 */
+  static readonly MAX_SECONDS: number = 2.8;
   /** 导入/备份恢复允许的上限：兼容旧版本生成的长音效，真正写入仍受 MAX_BYTES 约束 */
   static readonly MAX_IMPORT_BYTES: number = 192000;
   /** 时长下限（秒），过短会被盒端忽略 */
@@ -230,7 +231,8 @@ export class Changelog {
       itemKeys: [
         'changelog.v121.i1',
         'changelog.v121.i2',
-        'changelog.v121.i3'
+        'changelog.v121.i3',
+        'changelog.v121.i4'
       ]
     },
     {
@@ -463,8 +465,14 @@ export class AppStorageKey {
   /** 最近一次成功写入盒内的音效 id：音效库的「盒内」标记 */
   static readonly KEY_LAST_WRITTEN_TONE: string = 'last_written_tone';
   static readonly KEY_THEME_MODE: string = 'theme_mode';
-  /** 首次上手引导是否已看过 */
-  static readonly KEY_ONBOARDING_DONE: string = 'onboarding_done';
+  /** 累计成功写入次数：应用评分的前置条件之一 */
+  static readonly KEY_WRITE_SUCCESS_COUNT: string = 'write_success_count';
+  /** 首次成功写入的时间戳：用来判断「用了一段时间」而不是刚装上就来要评分 */
+  static readonly KEY_FIRST_USE_AT: string = 'first_use_at';
+  /** 最近一次写入失败的时间戳：刚失败过的用户不打扰 */
+  static readonly KEY_LAST_WRITE_FAIL_AT: string = 'last_write_fail_at';
+  /** 上次请求应用评分的时间戳：90 天内不重复请求 */
+  static readonly KEY_RATING_ASKED_AT: string = 'rating_asked_at';
   /** AppStorage 主题纪元：切换外观时自增，触发组件重绘 */
   static readonly THEME_EPOCH: string = 'themeEpoch';
 }

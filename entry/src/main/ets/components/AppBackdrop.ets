@@ -20,7 +20,7 @@ export struct AppBackdrop {
         .radialGradient({
           center: ['10%', '4%'],
           radius: 360,
-          colors: [[Palette.HALO_CYAN, 0.0], ['rgba(78, 216, 255, 0.0)', 1.0]]
+          colors: [[Palette.HALO_CYAN, 0.0], ['rgba(56, 189, 248, 0.0)', 1.0]]
         })
 
       Column()
@@ -29,7 +29,7 @@ export struct AppBackdrop {
         .radialGradient({
           center: ['88%', '16%'],
           radius: 320,
-          colors: [[Palette.HALO_VIOLET, 0.0], ['rgba(155, 123, 255, 0.0)', 1.0]]
+          colors: [[Palette.HALO_VIOLET, 0.0], ['rgba(167, 139, 250, 0.0)', 1.0]]
         })
 
       Column()
@@ -38,7 +38,7 @@ export struct AppBackdrop {
         .radialGradient({
           center: ['4%', '74%'],
           radius: 380,
-          colors: [[Palette.HALO_TEAL, 0.0], ['rgba(31, 168, 216, 0.0)', 1.0]]
+          colors: [[Palette.HALO_TEAL, 0.0], ['rgba(56, 189, 248, 0.0)', 1.0]]
         })
     }
     .width('100%')

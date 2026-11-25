@@ -18,8 +18,19 @@ export class DateUtils {
   /** yyyy-MM-dd HH:mm */
   public static dateTime(timestamp: number): string {
     const d: Date = new Date(timestamp);
-    return `${d.getFullYear()}-${DateUtils.pad(d.getMonth() + 1)}-${DateUtils.pad(d.getDate())} ` +
-      `${DateUtils.pad(d.getHours())}:${DateUtils.pad(d.getMinutes())}`;
+    return `${DateUtils.dateOnly(timestamp)} ${DateUtils.pad(d.getHours())}:${DateUtils.pad(d.getMinutes())}`;
+  }
+
+  /** yyyy-MM-dd */
+  public static dateOnly(timestamp: number): string {
+    const d: Date = new Date(timestamp);
+    return `${d.getFullYear()}-${DateUtils.pad(d.getMonth() + 1)}-${DateUtils.pad(d.getDate())}`;
+  }
+
+  /** yyyyMMdd：按天分文件、判断是否跨天用 */
+  public static dayKey(timestamp: number): string {
+    const d: Date = new Date(timestamp);
+    return `${d.getFullYear()}${DateUtils.pad(d.getMonth() + 1)}${DateUtils.pad(d.getDate())}`;
   }
 
   /** yyyyMMdd-HHmmss，文件名用 */

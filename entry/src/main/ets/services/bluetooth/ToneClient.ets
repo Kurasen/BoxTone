@@ -2,6 +2,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { a2dp, connection, constant, socket } from '@kit.ConnectivityKit';
 import { MbbSpec } from '../../common/constants/AppConstants';
 import { I18n } from '../../common/i18n/I18n';
+import { AppEnv } from '../../common/utils/AppEnv';
 import { ByteUtils } from '../../common/utils/ByteUtils';
 import { Logger } from '../../common/utils/Logger';
 import { MbbProtocol, PacketAssembler, ToneStatus, ToneStatusCodec } from './MbbProtocol';
@@ -310,7 +311,9 @@ export class ToneClient {
   }
 
   private trace(line: string): void {
-    if (this.detailLog) {
+    // detailLog 由 acquire 传入（写入流程默认开），但只对 debug 包生效：
+    // 正式包不记录 SPP 报文，避免用户设备上的日志文件堆积设备地址与通信内容
+    if (this.detailLog && AppEnv.isDebug()) {
       Logger.debug(MODULE, line);
     }
   }

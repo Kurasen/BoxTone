@@ -15,14 +15,14 @@ export class AppEvent {
   static readonly BUSY_CHANGED: number = 3005;
   /** 忙碌遮罩的进度明细（JSON 字符串，见 BusyState） */
   static readonly BUSY_PROGRESS: number = 3010;
-  /** 托管隐私弹窗已签署同意，业务服务完成初始化 */
-  static readonly PRIVACY_READY: number = 3007;
   /** 打开支持机型页 */
   static readonly OPEN_DEVICE_SUPPORT: number = 3008;
   /** 打开更新日志 */
   static readonly OPEN_CHANGELOG: number = 3009;
   /** 打开备份与导入页 */
   static readonly OPEN_BACKUP: number = 3011;
+  /** 隐私闸门放行（已同意 / 确认无从征询）：需要读文件、连设备的重活等这个事件再做 */
+  static readonly PRIVACY_CLEARED: number = 3012;
 }
 
 export type SimpleHandler = (payload: number) => void;
@@ -36,7 +36,22 @@ export interface BusyState {
   cancellable: boolean;
 }
 
+/** 业务回调与实际注册给 emitter 的包装回调的对应关系：off 时要按包装回调精确移除 */
+interface Binding {
+  eventId: number;
+  handler: SimpleHandler | TextHandler;
+  callback: (data: emitter.EventData) => void;
+}
+
+/**
+ * 订阅与取消必须成对使用同一个 handler 引用：
+ *   EventBus.on(AppEvent.TONE_CHANGED, this.changeHandler);
+ *   EventBus.off(AppEvent.TONE_CHANGED, this.changeHandler);
+ * off 只移除这一个订阅，不影响其他页面对同一事件的监听。
+ */
 export class EventBus {
+  private static bindings: Binding[] = [];
+
   public static on(eventId: number, handler: SimpleHandler): void {
     const event: emitter.InnerEvent = { eventId: eventId };
     const callback: (data: emitter.EventData) => void = (data: emitter.EventData): void => {
@@ -50,11 +65,23 @@ export class EventBus {
       }
       handler(value);
     };
+    EventBus.bindings.push({ eventId: eventId, handler: handler, callback: callback });
     emitter.on(event, callback);
   }
 
-  public static off(eventId: number): void {
-    emitter.off(eventId);
+  /**
+   * 取消一个订阅。
+   * 不能用 emitter.off(eventId)：它会把这个事件的全部监听一起移除，
+   * 例如 ProfilePage 与 LibraryPage 都订阅了 TONE_CHANGED，一方销毁会让另一方再也收不到刷新。
+   */
+  public static off(eventId: number, handler: SimpleHandler | TextHandler): void {
+    for (let i = EventBus.bindings.length - 1; i >= 0; i--) {
+      const binding: Binding = EventBus.bindings[i];
+      if (binding.eventId === eventId && binding.handler === handler) {
+        emitter.off(eventId, binding.callback);
+        EventBus.bindings.splice(i, 1);
+      }
+    }
   }
 
   public static emit(eventId: number, payload: number = 0): void {
@@ -76,6 +103,7 @@ export class EventBus {
       }
       handler(value);
     };
+    EventBus.bindings.push({ eventId: eventId, handler: handler, callback: callback });
     emitter.on(event, callback);
   }
 

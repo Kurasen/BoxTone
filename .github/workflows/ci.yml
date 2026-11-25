@@ -39,8 +39,8 @@ jobs:
         shell: bash
         run: bash tools/check-release.sh static
 
-      - name: Scan staged files for secrets
+      # 扫描全部已跟踪文件：CI 检出的是干净工作区，暂存区永远为空，
+      # 只扫暂存区（旧写法 git add -A 后再扫）会直接 exit 0，等于没检查。
+      - name: Scan tracked files for secrets
         shell: pwsh
-        run: |
-          git add -A
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check-sensitive-staged.ps1
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./tools/check-sensitive-staged.ps1 -All

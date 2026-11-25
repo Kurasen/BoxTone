@@ -1,6 +1,7 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
+import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { Logger } from '../../common/utils/Logger';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { DeviceRow } from '../../components/DeviceRow';
@@ -11,6 +12,7 @@ import { SectionTitle } from '../../components/SectionTitle';
 import { StatPill } from '../../components/StatPill';
 import { BtDevice, BtSnapshot, createEmptySnapshot } from '../../models/DeviceModel';
 import { BluetoothService, BtChangeListener } from '../../services/BluetoothService';
+import { PrivacyConsentService } from '../../services/PrivacyConsentService';
 import { WriteCompatibility } from '../../services/WriteCompatibility';
 import { NearLinkService, NearLinkSnapshot } from '../../services/NearLinkService';
 
@@ -24,6 +26,8 @@ export struct DevicePage {
   private listener: BtChangeListener | undefined = undefined;
   private liveTimer: number = -1;
   private pollingLive: boolean = false;
+  /** 隐私放行事件的监听：同意前不读设备，放行后再拉状态 */
+  private privacyHandler: SimpleHandler | undefined = undefined;
   /** 已提醒过的星闪设备名：断开后清空，重新连上时再提醒一次 */
   private nearLinkNotified: string = '';
 
@@ -33,9 +37,19 @@ export struct DevicePage {
       this.warnNearLinkOnce();
     };
     this.listener = handler;
+    // 只是挂监听，不读任何设备数据
     BluetoothService.onChange(handler);
-    this.startLiveRefresh();
-    this.bootstrap();
+    if (PrivacyConsentService.isCleared()) {
+      this.startLiveRefresh();
+      this.bootstrap();
+      return;
+    }
+    // 同意前先渲染空态（未连接 / 0 台），放行后再拉真实状态
+    this.privacyHandler = (): void => {
+      this.startLiveRefresh();
+      this.bootstrap();
+    };
+    EventBus.on(AppEvent.PRIVACY_CLEARED, this.privacyHandler);
   }
 
   /**
@@ -44,6 +58,10 @@ export struct DevicePage {
    * 把「合盖断开 / 再次连上」的界面延迟压到 1.5 秒级。
    */
   private startLiveRefresh(): void {
+    // 未放行前不轮询：pollNearLink 会读已配对设备
+    if (!PrivacyConsentService.isCleared()) {
+      return;
+    }
     if (this.liveTimer >= 0) {
       return;
     }
@@ -91,9 +109,17 @@ export struct DevicePage {
       BluetoothService.offChange(this.listener);
       this.listener = undefined;
     }
+    if (this.privacyHandler !== undefined) {
+      EventBus.off(AppEvent.PRIVACY_CLEARED, this.privacyHandler);
+      this.privacyHandler = undefined;
+    }
   }
 
   private async load(): Promise<void> {
+    // 同意前不读设备：refresh 会取已配对设备与设备名
+    if (!PrivacyConsentService.isCleared()) {
+      return;
+    }
     try {
       this.snapshot = await BluetoothService.refresh();
       this.warnNearLinkOnce();
@@ -278,6 +304,15 @@ export struct DevicePage {
     .height('100%')
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
+    // 切到别的页签时停掉星闪轮询：TabContent 不会销毁子页，不显式停就会在后台每 2 秒空跑一次。
+    // 若某些版本不回调，aboutToAppear 里已经启动过，行为与改动前一致，不会退化
+    .onVisibleAreaChange([0.0, 1.0], (isVisible: boolean, currentRatio: number) => {
+      if (isVisible && currentRatio > 0) {
+        this.startLiveRefresh();
+        return;
+      }
+      this.stopLiveRefresh();
+    })
   }
 
   @Builder

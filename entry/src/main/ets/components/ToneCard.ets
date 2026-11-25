@@ -30,8 +30,6 @@ export struct ToneCard {
   };
   onExport: () => void = () => {
   };
-  onShare: () => void = () => {
-  };
   onRename: () => void = () => {
   };
   onDelete: () => void = () => {
@@ -123,14 +121,6 @@ export struct ToneCard {
             chipLocked: this.writeLocked,
             onTap: (): void => {
               this.onWrite();
-            }
-          })
-          .margin({ right: 8, bottom: 8 })
-          ActionChip({
-            chipText: I18n.t('card.share'),
-            chipColor: Palette.ACCENT_TEXT,
-            onTap: (): void => {
-              this.onShare();
             }
           })
           .margin({ right: 8, bottom: 8 })

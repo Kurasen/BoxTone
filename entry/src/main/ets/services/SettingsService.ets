@@ -6,6 +6,12 @@ import { Logger } from '../common/utils/Logger';
 
 const MODULE: string = 'Settings';
 
+/**
+ * 外观模式默认值：2 = 跟随系统。
+ * 与 ThemeService.ThemeMode.SYSTEM 对应，这里写数字是为了避免 ThemeService ↔ SettingsService 循环依赖。
+ */
+const THEME_MODE_DEFAULT: number = 2;
+
 export interface AppSettings {
   /** 新建音效的默认时长（毫秒） */
   defaultDurationMs: number;
@@ -15,6 +21,14 @@ export interface AppSettings {
   autoNormalize: boolean;
 }
 
+/** 评分相关计数的快照：测试入口改完这些值之后要原样还回去 */
+export interface RatingState {
+  writeCount: number;
+  firstUseAt: number;
+  lastFailAt: number;
+  askedAt: number;
+}
+
 /**
  * 轻量设置存储（Preferences）
  */
@@ -22,7 +36,11 @@ export class SettingsService {
   private static store: preferences.Preferences | undefined = undefined;
   private static current: AppSettings = { defaultDurationMs: 2000, defaultGainDb: 0, autoNormalize: true };
 
+  /** 在 EntryAbility.onCreate 最早调用（早于 ThemeService）；本地 Preferences，不涉及个人信息，可在隐私同意前加载 */
   public static init(context: common.UIAbilityContext): void {
+    if (SettingsService.store !== undefined) {
+      return;
+    }
     const options: preferences.Options = { name: AppStorageKey.PREFS_NAME };
     try {
       SettingsService.store = preferences.getPreferencesSync(context, options);
@@ -64,13 +82,16 @@ export class SettingsService {
     SettingsService.put(AppStorageKey.KEY_AUTO_NORMALIZE, enabled);
   }
 
-  /** 外观模式：0 深色 / 1 浅色 / 2 跟随系统（默认深色，保持原有视觉） */
+  /**
+   * 外观模式：0 深色 / 1 浅色 / 2 跟随系统。
+   * 默认跟随系统：首次打开时按用户设备的深浅色显示，不做强制深色。
+   */
   public static getThemeMode(): number {
     const store: preferences.Preferences | undefined = SettingsService.store;
     if (store === undefined) {
-      return 0;
+      return THEME_MODE_DEFAULT;
     }
-    return store.getSync(AppStorageKey.KEY_THEME_MODE, 0) as number;
+    return store.getSync(AppStorageKey.KEY_THEME_MODE, THEME_MODE_DEFAULT) as number;
   }
 
   public static setThemeMode(mode: number): void {
@@ -96,24 +117,87 @@ export class SettingsService {
     SettingsService.put(AppStorageKey.KEY_LAST_WRITTEN_TONE, toneId);
   }
 
-  /** 首次上手引导是否已看过；只弹一次，看过就不再打扰 */
-  public static isOnboardingDone(): boolean {
-    const store: preferences.Preferences | undefined = SettingsService.store;
-    if (store === undefined) {
-      // store 未就绪不能当成「已看过」：首次启动页面先于 init 构建时，
-      // 这样会把引导永久跳过
-      return false;
-    }
-    return store.getSync(AppStorageKey.KEY_ONBOARDING_DONE, false) as boolean;
-  }
-
-  /** 设置存储是否已就绪：引导这类「只弹一次」的判断必须等它 */
+  /** 设置存储是否已就绪：依赖「只做一次」判断的功能（如评分）必须等它 */
   public static isReady(): boolean {
     return SettingsService.store !== undefined;
   }
 
-  public static setOnboardingDone(): void {
-    SettingsService.put(AppStorageKey.KEY_ONBOARDING_DONE, true);
+  // ---- 应用评分的判断依据 ----
+
+  /** 成功写入一次：累加计数，首次成功时记下「开始使用」的时间 */
+  public static recordWriteSuccess(): void {
+    const count: number = SettingsService.getNumber(AppStorageKey.KEY_WRITE_SUCCESS_COUNT, 0) + 1;
+    SettingsService.put(AppStorageKey.KEY_WRITE_SUCCESS_COUNT, count);
+    if (SettingsService.getNumber(AppStorageKey.KEY_FIRST_USE_AT, 0) === 0) {
+      SettingsService.put(AppStorageKey.KEY_FIRST_USE_AT, Date.now());
+    }
+  }
+
+  /** 写入失败：记下时间，七天内不再请求评分 */
+  public static recordWriteFailure(): void {
+    SettingsService.put(AppStorageKey.KEY_LAST_WRITE_FAIL_AT, Date.now());
+  }
+
+  public static getWriteSuccessCount(): number {
+    return SettingsService.getNumber(AppStorageKey.KEY_WRITE_SUCCESS_COUNT, 0);
+  }
+
+  public static getFirstUseAt(): number {
+    return SettingsService.getNumber(AppStorageKey.KEY_FIRST_USE_AT, 0);
+  }
+
+  public static getLastWriteFailureAt(): number {
+    return SettingsService.getNumber(AppStorageKey.KEY_LAST_WRITE_FAIL_AT, 0);
+  }
+
+  /** 「下次最早可再问」的时间戳：0 表示从未请求过 */
+  public static getRatingAskedAt(): number {
+    return SettingsService.getNumber(AppStorageKey.KEY_RATING_ASKED_AT, 0);
+  }
+
+  /**
+   * 记下「下次最早可再问」的时间戳。
+   * 传绝对时间戳则按它记（由上次弹窗结果决定冷却时长）；不传则记当前时间。
+   */
+  public static markRatingAsked(at?: number): void {
+    SettingsService.put(AppStorageKey.KEY_RATING_ASKED_AT, at !== undefined ? at : Date.now());
+  }
+
+  public static snapshotRating(): RatingState {
+    const state: RatingState = {
+      writeCount: SettingsService.getWriteSuccessCount(),
+      firstUseAt: SettingsService.getFirstUseAt(),
+      lastFailAt: SettingsService.getLastWriteFailureAt(),
+      askedAt: SettingsService.getRatingAskedAt()
+    };
+    return state;
+  }
+
+  public static restoreRating(state: RatingState): void {
+    SettingsService.put(AppStorageKey.KEY_WRITE_SUCCESS_COUNT, state.writeCount);
+    SettingsService.put(AppStorageKey.KEY_FIRST_USE_AT, state.firstUseAt);
+    SettingsService.put(AppStorageKey.KEY_LAST_WRITE_FAIL_AT, state.lastFailAt);
+    SettingsService.put(AppStorageKey.KEY_RATING_ASKED_AT, state.askedAt);
+  }
+
+  /**
+   * 仅供测试：把评分的前置条件一次性置为「刚好满足」。
+   * 写入 2 次、三天前开始使用、没有失败记录、从未请求过。
+   */
+  public static seedRatingSatisfied(): void {
+    const threeDaysAgo: number = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    SettingsService.put(AppStorageKey.KEY_WRITE_SUCCESS_COUNT, 2);
+    SettingsService.put(AppStorageKey.KEY_FIRST_USE_AT, threeDaysAgo);
+    SettingsService.put(AppStorageKey.KEY_LAST_WRITE_FAIL_AT, 0);
+    SettingsService.put(AppStorageKey.KEY_RATING_ASKED_AT, 0);
+  }
+
+  private static getNumber(key: string, fallback: number): number {
+    const store: preferences.Preferences | undefined = SettingsService.store;
+    if (store === undefined) {
+      return fallback;
+    }
+    return store.getSync(key, fallback) as number;
   }
 
   private static put(key: string, value: number | boolean | string): void {

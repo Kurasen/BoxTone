@@ -200,7 +200,15 @@ export class BluetoothService {
       Logger.info(MODULE, granted ? '蓝牙权限已在设置中开启' : '蓝牙权限仍未开启');
       return granted;
     } catch (error) {
-      Logger.exception(MODULE, '拉起权限设置失败', error as BusinessError);
+      const err: BusinessError = error as BusinessError;
+      // 12100012：权限列表里包含「用户尚未拒绝过」的权限。
+      // 说明刚才的拒绝是系统因隐私未同意而做的静默拒绝（授权框根本没弹），
+      // 这种权限不能跳设置页；回退到标准授权框，等隐私同意后它会正常弹出。
+      if (err.code === 12100012) {
+        Logger.warn(MODULE, '权限尚未被用户拒绝（隐私未同意导致的静默拒绝），回退标准授权框');
+        return BluetoothService.ensurePermission();
+      }
+      Logger.exception(MODULE, '拉起权限设置失败', err);
       return false;
     }
   }

@@ -1,6 +1,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { LogLevel, LogTag } from '../constants/AppConstants';
+import { AppEnv } from './AppEnv';
 
 export type LogSink = (level: LogLevel, module: string, message: string) => void;
 
@@ -15,7 +16,16 @@ export class Logger {
     Logger.sink = sink;
   }
 
+  /**
+   * 调试级日志：release 构建直接丢弃，既不写 hilog 也不进日志中心。
+   *
+   * 这条门控是「正式包不在用户设备上留报文」的关键：ToneClient 的 SPP 收发帧
+   * 全部走这里，release 下连字符串都不会落盘（日志中心 2MB 上限里不会出现设备地址）。
+   */
   public static debug(module: string, message: string): void {
+    if (!AppEnv.isDebug()) {
+      return;
+    }
     hilog.debug(LogTag.DOMAIN, LogTag.TAG, '[%{public}s] %{public}s', module, message);
     Logger.dispatch(LogLevel.DEBUG, module, message);
   }
@@ -33,6 +43,20 @@ export class Logger {
   public static error(module: string, message: string): void {
     hilog.error(LogTag.DOMAIN, LogTag.TAG, '[%{public}s] %{public}s', module, message);
     Logger.dispatch(LogLevel.ERROR, module, message);
+  }
+
+  /**
+   * 仅开发期输出：release 构建直接丢弃。
+   *
+   * debug 包本身是给开发/测试用的，日志中心里记一份方便排查；
+   * release 包连 hilog 都不写，用户翻日志中心也看不到任何内部判断过程。
+   */
+  public static dev(module: string, message: string): void {
+    if (!AppEnv.isDebug()) {
+      return;
+    }
+    hilog.debug(LogTag.DOMAIN, LogTag.TAG, '[%{public}s] %{public}s', module, message);
+    Logger.dispatch(LogLevel.DEBUG, module, message);
   }
 
   /** 记录异常，自动展开 code / message / stack */

@@ -104,17 +104,6 @@ export const ZH_STRINGS: Record<string, string> = {
   'tone.original': '原声',
   'tone.caseTone': '盒音 16.7kHz',
   'tone.presets': '内置音效',
-  // 首次上手引导：只弹一次，四步走完就能用
-  'onboard.title': '四步换上你的开盒音',
-  'onboard.step1Title': '授予蓝牙权限',
-  'onboard.step1Body': '首次连接耳机时系统会弹窗，点「允许」。没有权限会被直接拦下。',
-  'onboard.step2Title': '在音效页选一个音效',
-  'onboard.step2Body': '顶部有一排内置音效，也可以导入手机里的音频（MP3 / WAV 等常见格式）。',
-  'onboard.step3Title': '自定义音效',
-  'onboard.step3Body': '拖动波形调整起点和时长。盒端上限 2.5 秒，界面会实时提示是否超限。',
-  'onboard.step4Title': '写入耳机盒',
-  'onboard.step4Body': '双耳放入盒内、打开盒盖，点「写入」等进度跑完，合盖 3 秒再开盖就听到了。',
-  'onboard.start': '开始使用',
   'tone.presetsHint': '点选即可载入',
   'tone.noSource': '尚未导入音频',
   'tone.waveTitle': '波形与裁剪区间',
@@ -227,6 +216,9 @@ export const ZH_STRINGS: Record<string, string> = {
   'profile.title': '我的',
   'profile.subtitle': '应用信息、支持机型与诊断工具',
   'profile.appTagline': 'v{0} · 为蓝牙耳机充电盒定制提示音',
+  'profile.ratingTestTitle': '测试应用评分',
+  'profile.ratingTestBody': '把评分条件模拟为「写入 2 次、3 天前开始使用」，走完正式判断后拉起系统弹窗；测试结束自动恢复真实计数。仅用于本地验证。',
+  'profile.ratingTestGo': '开始模拟',
   'profile.statTone': '音效',
   'profile.statStorage': '存储',
   'profile.statLog': '日志',
@@ -290,12 +282,6 @@ export const ZH_STRINGS: Record<string, string> = {
   'profile.galleryMissing': '应用市场链接暂未配置',
   'profile.galleryFailed': '无法打开应用市场',
   'profile.privacyUnavailable': '隐私政策链接暂不可用，请稍后重试',
-  'privacy.gateBody': '使用盒音工坊前，请先阅读并同意隐私声明。同意后才会初始化蓝牙、星闪和日志功能。',
-  'privacy.consent': '阅读并同意',
-  'privacy.exit': '退出应用',
-  'privacy.viewStatement': '查看隐私声明',
-  'privacy.consentRequired': '需要同意隐私声明后才能继续使用',
-  'privacy.consentFailed': '隐私声明打开失败，请稍后重试',
   'profile.writeInfo': '开盒音通过蓝牙串口（SPP）直接写入充电盒，无需导出文件。' +
     '写入时请把双耳放入盒内并打开盒盖，过程中会临时断开音频通道。',
 
@@ -336,7 +322,6 @@ export const ZH_STRINGS: Record<string, string> = {
   'fb.contact': '联系方式',
   'fb.contactPlaceholder': 'QQ / 邮箱，仅用于需要补充信息时联系',
   'fb.agree': '我已阅读并同意',
-  'fb.agreeNoLink': '我已阅读并同意提交内容仅用于问题排查',
   'fb.privacyDoc': '《隐私政策》',
   'fb.send': '提交反馈',
   'fb.empty': '还没有提交过反馈',
@@ -405,9 +390,10 @@ export const ZH_STRINGS: Record<string, string> = {
   'changelog.title': '更新日志',
   'changelog.subtitle': '版本更新记录',
   'changelog.v121.note': '当前版本',
-  'changelog.v121.i1': '新增首次上手引导、音效分享功能',
-  'changelog.v121.i2': '修复合盖后仍立马再次写入、未检测连接状态的问题',
-  'changelog.v121.i3': '修复浅色模式下导入进度文字看不清的问题',
+  'changelog.v121.i1': '修复了一些已知问题',
+  'changelog.v121.i2': '音效时长上限延长到 2.8 秒',
+  'changelog.v121.i3': '修复合盖后仍立马再次写入、未检测连接状态的问题',
+  'changelog.v121.i4': '优化深色与浅色模式色彩：背景更纯、卡片层次更分明、文字对比更清晰',
   'changelog.v120.note': '上一版本',
   'changelog.v120.i2': '音效库支持批量删除；正在写入的音效会锁定删除，避免写入过程中误删',
   'changelog.v120.i3': '新增「备份与导入」页：可整库备份/恢复，也能直接导入 .pcm / .raw 音效文件',
@@ -516,7 +502,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'write.failedWith': '写入失败（{0}），详见日志',
   // 写入失败的下一步建议：错误码本身只有反馈时才需要，用户要的是「现在该做什么」
   'write.hint.emptyTone': '回到音效页重新生成一次，再回来写入',
-  'write.hint.tooLong': '把起始位置往后挪，或把时长压到 2.5 秒以内再重新生成',
+  'write.hint.tooLong': '把起始位置往后挪，或把时长压到 2.8 秒以内再重新生成',
   'write.hint.tooLarge': '缩短时长后重新生成；关掉「峰值归一化」通常能让文件更小',
   'write.hint.fileMissing': '音效文件已不在本机，回到音效页重新生成一次',
   'write.hint.btOff': '下拉通知栏打开蓝牙，然后点「重试」',
@@ -594,7 +580,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'toneErr.flushTimeout': '数据已全部送达耳机，但没等到擦写完成。应用会在后台尝试切回默认开盒音；' +
     '若开盖无声，请合盖再开盖。',
   'toneErr.flushAborted': '耳机在擦写阶段自己重启了，这条音效没写进去。当前串口约 {0}KB/s。' +
-    '应用会在后台尝试切回默认开盒音；长音效的稳定上限约 2.5 秒。',
+    '应用会在后台尝试切回默认开盒音；长音效的稳定上限约 2.8 秒。',
   'toneErr.formatRejected': '该机型不接受当前音效格式（16700Hz / 16bit / {0} 字节），' +
     '本次没有写入任何数据。请把机型和这条日志一起反馈',
   'toneErr.noFormat': '耳机没有返回正确的音效格式',
@@ -682,7 +668,7 @@ export const ZH_STRINGS: Record<string, string> = {
   'backup.rawAction': '导入音效文件',
   'backup.rawDesc': '直接导入 16700Hz / 16bit / 单声道的 .pcm 或 .raw，最多 20 个',
   'backup.note1': '备份是未压缩的原始波形，体积与音效库占用量相当；文件里不含设备信息。',
-  'backup.note2': '恢复时按新条目追加，同名音效不会覆盖；超过 2.5 秒的旧音效可以恢复，但写入前仍需重新裁剪。',
+  'backup.note2': '恢复时按新条目追加，同名音效不会覆盖；超过 2.8 秒的旧音效可以恢复，但写入前仍需重新裁剪。',
   'backup.exported': '已导出备份 {0}',
   'backup.cancelled': '已取消',
   'backup.imported': '已恢复 {0} 条音效',
@@ -696,6 +682,12 @@ export const ZH_STRINGS: Record<string, string> = {
   'backup.failed': '备份或导入失败，请查看日志',
   'backup.busyExport': '正在导出备份…',
   'backup.busyImport': '正在恢复备份…',
-  'backup.busyRaw': '正在导入音效文件…'
+  'backup.busyRaw': '正在导入音效文件…',
+
+  // 隐私闸门：同意前只渲染启动页同款画面，不读取任何个人信息
+  'privacy.failed': '隐私服务暂时不可用，请重试',
+  'privacy.retry': '重试',
+  'privacy.viewStatement': '查看隐私声明',
+  'privacy.exit': '退出应用'
 };
 

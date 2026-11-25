@@ -43,5 +43,5 @@
 # CodeArts / opencode 本地工具目录
 /.opencode/
 
-# 自测录音素材：本地采集的原始录音，文件名含中文会让 pre-commit 钩子的路径转义失败
+# 自测录音素材：本地采集的原始录音，只在本机保留，不入库
 /tools/recordings

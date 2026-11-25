@@ -1,7 +1,8 @@
 import { common, bundleManager } from '@kit.AbilityKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
-import { LogLevel } from '../common/constants/AppConstants';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+import { LogLevel, LogTag } from '../common/constants/AppConstants';
 import { I18n } from '../common/i18n/I18n';
 import { DateUtils } from '../common/utils/DateUtils';
 import { Logger } from '../common/utils/Logger';
@@ -41,8 +42,18 @@ export class LogService {
   private listeners: LogChangeListener[] = [];
   private context?: common.UIAbilityContext;
   private logFilePath: string = '';
+  /** 日志目录；为空表示没有可写目录（仅内存日志） */
+  private logDir: string = '';
+  /** 当前日志文件对应的日期 yyyyMMdd：应用跨过零点后据此切换到新一天的文件 */
+  private logDay: string = '';
   private sequence: number = 0;
   private dirty: boolean = false;
+  /** 防重入：Ability 重建时 onCreate 可能再次调用 init */
+  private initialized: boolean = false;
+  /** 日志目录不可用时只保留内存日志：否则 pending 永远落不了盘，会无限增长 */
+  private diskEnabled: boolean = true;
+  /** 正在落盘：写文件失败时不能再经 Logger 记录，否则 append(ERROR) → flush → 再失败，无限递归 */
+  private flushing: boolean = false;
 
   public static getInstance(): LogService {
     if (LogService.instance === undefined) {
@@ -52,22 +63,51 @@ export class LogService {
   }
 
   public init(context: common.UIAbilityContext): void {
-    this.context = context;
-    const dir: string = `${context.filesDir}/logs`;
-    if (!fs.accessSync(dir)) {
-      fs.mkdirSync(dir);
+    if (this.initialized) {
+      return;
     }
-    LogService.pruneLogs(dir);
-    const today: string = DateUtils.fileStamp(Date.now()).substring(0, 8);
-    this.logFilePath = `${dir}/boxtone-${today}.log`;
+    this.initialized = true;
+    this.context = context;
+    // 先接管 Logger：之后清理历史日志的输出也能进日志中心（文件路径就绪前暂存在 pending）
     Logger.setSink((level: LogLevel, module: string, message: string): void => {
       this.append(level, module, message);
     });
+    const dir: string = `${context.filesDir}/logs`;
+    try {
+      if (!fs.accessSync(dir)) {
+        fs.mkdirSync(dir);
+      }
+    } catch (error) {
+      // 日志中心在 onCreate 最早初始化，这里抛出会直接带崩启动：降级为仅内存日志
+      this.diskEnabled = false;
+      this.pending = [];
+      hilog.error(LogTag.DOMAIN, LogTag.TAG, '[%{public}s] 创建日志目录失败 code=%{public}d',
+        MODULE, (error as BusinessError).code);
+      this.append(LogLevel.WARN, MODULE, '日志中心已启动（日志目录不可用，仅保留内存日志）');
+      return;
+    }
+    this.logDir = dir;
+    this.switchDay(DateUtils.dayKey(Date.now()));
     this.append(LogLevel.INFO, MODULE, '日志中心已启动');
   }
 
   /**
-   * 启动时清理历史日志：
+   * 切换到指定日期的日志文件，并顺带清理过期日志。
+   * 启动时调用一次；应用跨过零点后由 append 再次调用，否则会一直写进前一天的文件。
+   */
+  private switchDay(day: string): void {
+    // 先更新日期与路径再清理：清理时输出的日志会经 append 回到这里，日期已一致就不会再次切换
+    const first: boolean = this.logDay.length === 0;
+    this.logDay = day;
+    this.logFilePath = `${this.logDir}/${LOG_FILE_PREFIX}${day}${LOG_FILE_SUFFIX}`;
+    LogService.pruneLogs(this.logDir);
+    if (!first) {
+      Logger.info(MODULE, `跨天，切换日志文件 ${LOG_FILE_PREFIX}${day}${LOG_FILE_SUFFIX}`);
+    }
+  }
+
+  /**
+   * 清理历史日志（启动与跨天时）：
    * 1. 删除保留期之外的文件；
    * 2. 总量超过上限时从最旧的开始删。
    * 日期直接读文件名，避免依赖 stat.mtime 的单位差异。
@@ -152,19 +192,30 @@ export class LogService {
   }
 
   public append(level: LogLevel, module: string, message: string): void {
+    const now: number = Date.now();
+    // 跨过零点：先把缓冲区里前一天的日志写回旧文件，再切到新一天的文件
+    if (this.logDir.length > 0) {
+      const day: string = DateUtils.dayKey(now);
+      if (day !== this.logDay) {
+        this.flush();
+        this.switchDay(day);
+      }
+    }
     this.sequence++;
     const entry: LogEntry = {
       id: `log-${this.sequence}`,
       level: level as string,
       module: module,
       message: message,
-      timestamp: Date.now()
+      timestamp: now
     };
     this.entries.push(entry);
     if (this.entries.length > MAX_MEMORY_ENTRIES) {
       this.entries.splice(0, this.entries.length - MAX_MEMORY_ENTRIES);
     }
-    this.pending.push(this.formatLine(entry));
+    if (this.diskEnabled) {
+      this.pending.push(this.formatLine(entry));
+    }
     this.dirty = true;
     // 错误立即落盘：进程被系统杀掉时，缓冲区里没刷下去的内容会一起消失
     if (this.pending.length >= FLUSH_THRESHOLD || level === LogLevel.ERROR) {
@@ -173,16 +224,18 @@ export class LogService {
     this.notify();
   }
 
+  /** yyyy-MM-dd HH:mm:ss.SSS [级别] 模块: 内容 */
   private formatLine(entry: LogEntry): string {
-    return `${DateUtils.dateTime(entry.timestamp)} ${DateUtils.timeWithMillis(entry.timestamp)} ` +
+    return `${DateUtils.dateOnly(entry.timestamp)} ${DateUtils.timeWithMillis(entry.timestamp)} ` +
       `[${entry.level}] ${entry.module}: ${entry.message}`;
   }
 
   /** 把缓冲区内容写入日志文件 */
   public flush(): void {
-    if (this.pending.length === 0 || this.logFilePath.length === 0) {
+    if (this.flushing || this.pending.length === 0 || this.logFilePath.length === 0) {
       return;
     }
+    this.flushing = true;
     const payload: string = `${this.pending.join('\n')}\n`;
     this.pending = [];
     try {
@@ -191,7 +244,12 @@ export class LogService {
       fs.writeSync(file.fd, payload);
       fs.closeSync(file);
     } catch (error) {
-      Logger.exception(MODULE, '写入日志文件失败', error as BusinessError);
+      // 只写 hilog，不能走 Logger：会再次 append(ERROR) → flush → 再失败，无限递归直到栈溢出
+      const err: BusinessError = error as BusinessError;
+      hilog.error(LogTag.DOMAIN, LogTag.TAG, '[%{public}s] 写入日志文件失败 code=%{public}d %{public}s',
+        MODULE, err.code, err.message);
+    } finally {
+      this.flushing = false;
     }
   }
 

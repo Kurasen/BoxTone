@@ -6,6 +6,8 @@ import { DeviceSupport, DeviceSupportLevel, SupportInfo, ToneSpec } from '../../
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
+import { RatingService } from '../../services/RatingService';
+import { AppEnv } from '../../common/utils/AppEnv';
 import { GlassCard } from '../../components/GlassCard';
 import { SectionTitle } from '../../components/SectionTitle';
 import { SpecRow } from '../../components/SpecRow';
@@ -21,6 +23,8 @@ const ABOUT_HEADER_HEIGHT: number = 64;
 export struct ProfilePage {
   @StorageProp('themeEpoch') themeEpoch: number = 0;
   @State versionName: string = '1.0.0';
+  /** 连点版本号 3 次进入评分测试，普通用户碰不到 */
+  @State versionTapCount: number = 0;
   @State versionCode: number = 0;
   @State toneCount: number = 0;
   @State toneBytes: number = 0;
@@ -38,19 +42,56 @@ export struct ProfilePage {
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
+    // 同意前统计读到的是 0（业务服务未初始化）；放行时再刷一次真实数据
     this.refresh();
     this.readVersion();
     this.changeHandler = (): void => {
       this.refresh();
     };
     EventBus.on(AppEvent.TONE_CHANGED, this.changeHandler);
+    EventBus.on(AppEvent.PRIVACY_CLEARED, this.changeHandler);
   }
 
   aboutToDisappear(): void {
     if (this.changeHandler !== undefined) {
-      EventBus.off(AppEvent.TONE_CHANGED);
+      EventBus.off(AppEvent.TONE_CHANGED, this.changeHandler);
+      EventBus.off(AppEvent.PRIVACY_CLEARED, this.changeHandler);
       this.changeHandler = undefined;
     }
+  }
+
+  /**
+   * 连点版本号 3 次进入评分测试。
+   *
+   * 评分的四个前置条件（写入 2 次、使用 3 天、近 7 天无失败、冷却间隔）在本地没法自然凑齐，
+   * 这里把条件模拟成「刚好满足」后走完整正式判断，验证系统弹窗本身是否正常。
+   */
+  private onVersionTap(): void {
+    // 正式版完全不响应：连点也什么都不发生，避免测试入口漏到线上
+    if (!AppEnv.isDebug()) {
+      return;
+    }
+    this.versionTapCount++;
+    if (this.versionTapCount < 3) {
+      return;
+    }
+    this.versionTapCount = 0;
+    this.getUIContext().showAlertDialog({
+      title: I18n.t('profile.ratingTestTitle'),
+      message: I18n.t('profile.ratingTestBody'),
+      primaryButton: {
+        value: I18n.t('common.cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: I18n.t('profile.ratingTestGo'),
+        action: (): void => {
+          RatingService.simulateSatisfied(
+            this.getUIContext().getHostContext() as common.UIAbilityContext);
+        }
+      }
+    });
   }
 
   private refresh(): void {
@@ -146,6 +187,9 @@ export struct ProfilePage {
           Text(I18n.f('profile.appTagline', [this.versionName]))
             .fontSize(11)
             .fontColor(Palette.TEXT_TERTIARY)
+            .onClick((): void => {
+              this.onVersionTap();
+            })
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)

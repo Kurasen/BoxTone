@@ -6,7 +6,7 @@ import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { ToneSpec } from '../../common/constants/AppConstants';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
-import { AppEvent, BusyState, EventBus } from '../../common/utils/EventBus';
+import { AppEvent, BusyState, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { GhostButton } from '../../components/GhostButton';
 import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
@@ -28,6 +28,8 @@ import { CaseWriteService,
 } from '../../services/CaseWriteService';
 import { ImportCancelledError, ImportControl, ImportProgressState } from '../../services/audio/ImportControl';
 import { AppSettings, SettingsService } from '../../services/SettingsService';
+import { RatingService } from '../../services/RatingService';
+import { PrivacyConsentService } from '../../services/PrivacyConsentService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 import { BuiltinTone, BuiltinToneCatalog } from '../../services/BuiltinToneCatalog';
 import { BuiltinToneService } from '../../services/BuiltinToneService';
@@ -60,6 +62,8 @@ export struct TonePage {
   private fullPeaks: number[] = [];
   /** 页面销毁后停止后台预热，避免往缓存里继续堆无用解码 */
   private preloadStopped: boolean = false;
+  /** 隐私放行事件的监听器：同意前不预热，等事件到了再开始 */
+  private privacyHandler: SimpleHandler | undefined = undefined;
   private waveWidth: number = 0;
   private pinchStartViewMs: number = 0;
   private pinchStartSpanMs: number = 0;
@@ -68,7 +72,6 @@ export struct TonePage {
   @State durationMs: number = 2000;
   /** 当前已载入的内置音效 id，用于在网格里高亮选中项 */
   @State activeBuiltinId: string = '';
-  /** 首次上手引导：状态驱动，由 bindSheet 渲染（CustomDialogController 在页面未挂载时会静默失败） */
   @State gainDb: number = 0;
   @State fadeInMs: number = 40;
   @State fadeOutMs: number = 120;
@@ -113,8 +116,27 @@ export struct TonePage {
   }
 
 
-  /** 空闲时逐个预热内置音效，点开时直接命中缓存，不再现读现解 */
+  /**
+   * 空闲时逐个预热内置音效，点开时直接命中缓存，不再现读现解。
+   *
+   * 隐私声明放行前不预热：系统隐私弹窗可能正盖在屏幕上，
+   * 这时候解码音频等于在用户同意前就处理数据。等放行事件到了再开始。
+   */
   private scheduleBuiltinPreload(): void {
+    if (!PrivacyConsentService.isCleared()) {
+      this.privacyHandler = (): void => {
+        this.privacyHandler = undefined;
+        if (!this.preloadStopped) {
+          this.startBuiltinPreload();
+        }
+      };
+      EventBus.on(AppEvent.PRIVACY_CLEARED, this.privacyHandler);
+      return;
+    }
+    this.startBuiltinPreload();
+  }
+
+  private startBuiltinPreload(): void {
     const tones: BuiltinTone[] = BuiltinToneCatalog.all();
     let index: number = 0;
     const step = (): void => {
@@ -134,6 +156,10 @@ export struct TonePage {
 
   aboutToDisappear(): void {
     this.preloadStopped = true;
+    if (this.privacyHandler !== undefined) {
+      EventBus.off(AppEvent.PRIVACY_CLEARED, this.privacyHandler);
+      this.privacyHandler = undefined;
+    }
     this.stopImportProgress();
     if (this.preparing) {
       ImportControl.cancel();
@@ -602,20 +628,26 @@ export struct TonePage {
         });
       if (result.ok) {
         this.writeRatio = 100;
+        SettingsService.recordWriteSuccess();
         this.getUIContext().showAlertDialog({
           title: I18n.t('lib.writeDone'),
           message: I18n.f('lib.writeDoneMessage', [result.message]),
           confirm: {
             value: I18n.t('common.ok'),
             action: (): void => {
+              // 用户点掉「写入完成」之后再谈评分：两个弹窗叠在一起体验很差
+              RatingService.maybeAskAfterWrite(
+                this.getUIContext().getHostContext() as common.UIAbilityContext);
             }
           }
         });
       } else {
+        SettingsService.recordWriteFailure();
         this.showWriteFailure(result);
       }
     } catch (error) {
       Logger.exception(MODULE, '写入异常', error as BusinessError);
+      SettingsService.recordWriteFailure();
       this.toast(I18n.t('lib.writeFailed'));
     } finally {
       this.writing = false;
