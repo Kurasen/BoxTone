@@ -11,6 +11,7 @@ import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
+import { AppRestart } from '../../common/utils/AppRestart';
 import { EmptyView } from '../../components/EmptyView';
 import { GhostButton } from '../../components/GhostButton';
 import { PillButton, PillTone } from '../../components/PillButton';
@@ -61,6 +62,7 @@ export struct LibraryPage {
     EventBus.on(AppEvent.TONE_CHANGED, this.changeHandler);
     EventBus.on(AppEvent.PRIVACY_CLEARED, this.changeHandler);
   }
+
 
   aboutToDisappear(): void {
     if (this.changeHandler !== undefined) {
@@ -272,6 +274,10 @@ export struct LibraryPage {
         });
       } else {
         Logger.warn(MODULE, `恢复默认开盒音未完 code=${result.code}${result.message}`);
+        if (result.reason === WriteReason.WEDGED) {
+          this.showWedged(result);
+          return;
+        }
         this.getUIContext().showAlertDialog({
           title: I18n.t('lib.restoreIncomplete'),
           message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
@@ -441,7 +447,46 @@ export struct LibraryPage {
     NearLinkAlert.show(this.getUIContext(), message);
   }
 
+
+  /**
+   * 蓝牙串口卡死。两种恢复办法都实测有效：
+   * - 重启应用（首选）：约 3 秒，耳机音频不断，回来就能写；秒拒、挂起两种形态都验证过；
+   * - 重启蓝牙（备用）：关开一次要 8~9 秒，之后还要等耳机重连，合计约 20 秒，只在重启应用无效时用。
+   * 恢复后由用户自己重新写入。
+   */
+  private showWedged(result: WriteResult): void {
+    this.getUIContext().showAlertDialog({
+      title: I18n.t('lib.writeIncomplete'),
+      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
+      primaryButton: {
+        value: I18n.t('lib.restartBluetooth'),
+        action: (): void => {
+          BluetoothService.restartAdapter().then((ok: boolean) => {
+            this.getUIContext().getPromptAction().showToast({
+              message: ok ? I18n.t('lib.btRestarted') : I18n.t('lib.btRestartFailed'),
+              duration: 3000
+            });
+          });
+        }
+      },
+      secondaryButton: {
+        value: I18n.t('lib.restartApp'),
+        fontColor: Palette.ACCENT,
+        action: (): void => {
+          const context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          if (!AppRestart.restart(context)) {
+            this.getUIContext().getPromptAction().showToast({ message: I18n.t('lib.restartFailed') });
+          }
+        }
+      }
+    });
+  }
+
   private showWriteFailure(result: WriteResult): void {
+    if (result.reason === WriteReason.WEDGED) {
+      this.showWedged(result);
+      return;
+    }
     // 星闪链路失败：同样引导去系统设置切换连接方式
     if (result.reason === WriteReason.NEARLINK) {
       this.showNearLinkBlocked(result.message);
@@ -751,7 +796,11 @@ export struct LibraryPage {
       if (result.ok) {
         this.builtinLabel = label;
       }
-      this.toast(result.message);
+      if (result.reason === WriteReason.WEDGED) {
+        this.showWedged(result);
+      } else {
+        this.toast(result.message);
+      }
     } catch (error) {
       Logger.exception(MODULE, '切换内置音效异常', error as BusinessError);
       this.toast(I18n.t('write.builtinFailed'));

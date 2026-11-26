@@ -19,7 +19,7 @@ export class Logger {
   /**
    * 调试级日志：release 构建直接丢弃，既不写 hilog 也不进日志中心。
    *
-   * 这条门控是「正式包不在用户设备上留报文」的关键：ToneClient 的 SPP 收发帧
+   * 这条门控是「正式包不在用户设备上留报文」的关键：写入引擎（WriteTrace）的 SPP 收发帧
    * 全部走这里，release 下连字符串都不会落盘（日志中心 2MB 上限里不会出现设备地址）。
    */
   public static debug(module: string, message: string): void {

@@ -676,6 +676,42 @@ export class BluetoothService {
   }
 
   /**
+   * 关闭再打开手机蓝牙，用于恢复卡死的蓝牙串口（备用；首选是重启应用）。
+   *
+   * 2026-11-26 21:00 / 21:08 真机：串口卡死后关开一次蓝牙即恢复，但从点按到蓝牙重新打开要 8~9 秒，
+   * 再等耳机重连，合计约 20 秒；重启应用约 3 秒且耳机音频不断，所以只作备用。
+   * access.disableBluetooth / enableBluetooth（API 10，ACCESS_BLUETOOTH 权限）是否弹系统确认框
+   * 以系统行为为准；任一步失败返回 false，由界面引导用户去控制中心手动操作。
+   * 会断开手机上所有蓝牙设备，只能由用户点按钮触发。
+   */
+  public static async restartAdapter(): Promise<boolean> {
+    const wait = (ms: number): Promise<void> => new Promise<void>((resolve: () => void) => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
+    try {
+      Logger.warn(MODULE, '用户确认重启蓝牙以恢复串口');
+      access.disableBluetooth();
+      const offBy: number = Date.now() + 8000;
+      while (Date.now() < offBy && access.getState() !== access.BluetoothState.STATE_OFF) {
+        await wait(200);
+      }
+      if (access.getState() !== access.BluetoothState.STATE_OFF) {
+        Logger.warn(MODULE, '重启蓝牙：等待关闭超时');
+        return false;
+      }
+      await wait(500);
+      access.enableBluetooth();
+      Logger.info(MODULE, '重启蓝牙：已重新打开');
+      return true;
+    } catch (error) {
+      Logger.warn(MODULE, `重启蓝牙失败 code=${(error as BusinessError).code}`);
+      return false;
+    }
+  }
+
+  /**
    * 连接已配对设备的 profile（A2DP / HFP / HID）
    * 系统蓝牙界面需要应用主动连接 profile 才会显示"已连接"，
    * 且该接口仅允许在发起配对后 30s 内调用一次。

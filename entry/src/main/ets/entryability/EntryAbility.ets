@@ -9,6 +9,7 @@ import { LanguageService } from '../services/LanguageService';
 import { PrivacyConsentService } from '../services/PrivacyConsentService';
 import { SettingsService } from '../services/SettingsService';
 import { ThemeService } from '../services/ThemeService';
+import { WriteGuard } from '../services/write/WriteGuard';
 
 const MODULE: string = 'EntryAbility';
 
@@ -20,6 +21,8 @@ export default class EntryAbility extends UIAbility {
     // 日志中心紧随其后：隐私状态查询、签署事件都发生在业务服务之前，
     // 晚于此刻初始化会导致这些早期日志只写 hilog、进不了日志中心，release 包排查困难
     LogService.getInstance().init(this.context);
+    // 写入保护（短时任务 + 屏幕常亮）需要 UIAbility 上下文；只登记，不申请任何东西
+    WriteGuard.attach(this.context);
     // 应用语言：按设备地区自动选择简体中文 / English（每次启动判定，幂等）
     LanguageService.apply();
     // 设置存储必须早于外观：ThemeService 要读取保存的外观模式，存储未就绪会一直读到默认深色
@@ -71,10 +74,13 @@ export default class EntryAbility extends UIAbility {
   }
 
   onBackground(): void {
+    // 写入中退到后台：短时任务保住进程，这里只记一笔，便于对照断链日志
+    WriteGuard.setForeground(false);
     LogService.getInstance().flush();
   }
 
   onForeground(): void {
+    WriteGuard.setForeground(true);
     // 后台期间蓝牙/星闪状态可能变化且没有事件补发：回前台立即拉一次。
     // 隐私放行前不读取蓝牙状态（refresh 会补注册监听并读取已配对设备）
     if (PrivacyConsentService.isCleared()) {

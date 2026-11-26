@@ -34,6 +34,8 @@ export class ToneErrorReason {
   static readonly FLUSH_TIMEOUT: string = 'flushTimeout';
   static readonly DATA_WRITTEN: string = 'dataWritten';
   static readonly CANCELLED: string = 'cancelled';
+  /** 本进程的蓝牙串口卡死：重试、合盖都没用，只有重启应用进程能恢复 */
+  static readonly WEDGED: string = 'wedged';
 }
 
 export class CancelledError extends ToneError {

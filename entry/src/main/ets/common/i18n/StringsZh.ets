@@ -560,6 +560,13 @@ export const ZH_STRINGS: Record<string, string> = {
     '请关闭占用连接的应用后重试；非华为耳机可能暂不支持本功能',
   'toneErr.linkLost': '蓝牙串口通信中断，请合盖后再开盖后重试',
   'toneErr.rejected': '耳机拒绝了这次串口连接：通道可能被智慧音频占用，请把它从后台移除后再试',
+  'toneErr.linkWedged': '蓝牙串口卡住了，继续重试和合盖都不会好转。点「重启应用」后重新写入即可；' +
+    '还不行就点「重启蓝牙」，等耳机重新连上后再写入',
+  'lib.restartApp': '重启应用',
+  'lib.restartBluetooth': '重启蓝牙',
+  'lib.btRestarted': '蓝牙已重新打开，等耳机连上后再写入',
+  'lib.btRestartFailed': '无法自动重启蓝牙，请在控制中心关闭再打开蓝牙',
+  'lib.restartFailed': '无法自动重启，请从后台划掉盒音工坊后重新打开',
   'toneErr.notReady': '耳机这次没接受连接，可能是刚开盖还没准备好。请把双耳放回盒里，合上盒盖等 3 秒再打开，然后重新写入',
   'toneErr.audioHeld': '串口连接被拒绝了，同时耳机音频通道一直保持连接（系统不允许本应用断开它）。' +
     '请合盖 5 秒后再开盖，或在系统蓝牙设置里先断开这副耳机后重试。',

@@ -35,6 +35,7 @@ import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 import { BuiltinTone, BuiltinToneCatalog } from '../../services/BuiltinToneCatalog';
 import { BuiltinToneService } from '../../services/BuiltinToneService';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
+import { AppRestart } from '../../common/utils/AppRestart';
 
 const MODULE: string = 'TonePage';
 /** 全段峰值缓存桶数：放大到 1 秒窗口时仍有足够细节 */
@@ -204,7 +205,7 @@ export struct TonePage {
   // ---------------- 导入 ----------------
 
   private async importAudio(): Promise<void> {
-    if (this.busy) {
+    if (this.busy || this.writing) {
       return;
     }
     this.busy = true;
@@ -681,7 +682,46 @@ export struct TonePage {
   }
 
   /** 写入失败：先给「现在该做什么」，错误码放最后供反馈定位 */
+
+  /**
+   * 蓝牙串口卡死。两种恢复办法都实测有效：
+   * - 重启应用（首选）：约 3 秒，耳机音频不断，回来就能写；秒拒、挂起两种形态都验证过；
+   * - 重启蓝牙（备用）：关开一次要 8~9 秒，之后还要等耳机重连，合计约 20 秒，只在重启应用无效时用。
+   * 恢复后由用户自己重新写入。
+   */
+  private showWedged(result: WriteResult): void {
+    this.getUIContext().showAlertDialog({
+      title: I18n.t('lib.writeIncomplete'),
+      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
+      primaryButton: {
+        value: I18n.t('lib.restartBluetooth'),
+        action: (): void => {
+          BluetoothService.restartAdapter().then((ok: boolean) => {
+            this.getUIContext().getPromptAction().showToast({
+              message: ok ? I18n.t('lib.btRestarted') : I18n.t('lib.btRestartFailed'),
+              duration: 3000
+            });
+          });
+        }
+      },
+      secondaryButton: {
+        value: I18n.t('lib.restartApp'),
+        fontColor: Palette.ACCENT,
+        action: (): void => {
+          const context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          if (!AppRestart.restart(context)) {
+            this.getUIContext().getPromptAction().showToast({ message: I18n.t('lib.restartFailed') });
+          }
+        }
+      }
+    });
+  }
+
   private showWriteFailure(result: WriteResult): void {
+    if (result.reason === WriteReason.WEDGED) {
+      this.showWedged(result);
+      return;
+    }
     const needReport: boolean = result.reason === WriteReason.UNSUPPORTED ||
       result.reason === WriteReason.FORMAT;
     const hintKey: string = WriteCode.hintKey(result.code);
@@ -853,6 +893,8 @@ export struct TonePage {
           PillButton({
             pillText: I18n.t('tone.replace'),
             pillTone: PillTone.ACCENT,
+            // 生成或写入期间不能换源：写入用的是已生成的音效，换源会让界面与正在写的内容对不上
+            pillEnabled: !this.writing && !this.busy,
             onTap: (): void => {
               this.importAudio();
             }

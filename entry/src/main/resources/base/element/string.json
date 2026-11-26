@@ -1,28 +1,32 @@
 {
-    "string":  [
-                   {
-                       "name":  "module_desc",
-                       "value":  "华为耳机开盖音效定制工具"
-                   },
-                   {
-                       "name":  "EntryAbility_desc",
-                       "value":  "盒音工坊：连接耳机、制作并写入开盖音效"
-                   },
-                   {
-                       "name":  "EntryAbility_label",
-                       "value":  "盒音工坊"
-                   },
-                   {
-                       "name":  "perm_bluetooth_reason",
-                       "value":  "用于搜索、配对并连接你的华为蓝牙耳机，读取耳机连接状态"
-                   },
-                   {
-                       "name":  "perm_nearlink_reason",
-                       "value":  "用于识别耳机是否通过星闪连接，避免星闪连接时误判为未连接"
-                   },
-                   {
-                       "name":  "perm_internet_reason",
-                       "value":  "用于把反馈内容和诊断日志发送给开发者"
-                   }
-               ]
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "华为耳机开盖音效定制工具"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "盒音工坊：连接耳机、制作并写入开盖音效"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "盒音工坊"
+    },
+    {
+      "name": "perm_bluetooth_reason",
+      "value": "用于搜索、配对并连接你的华为蓝牙耳机，读取耳机连接状态"
+    },
+    {
+      "name": "perm_nearlink_reason",
+      "value": "用于识别耳机是否通过星闪连接，避免星闪连接时误判为未连接"
+    },
+    {
+      "name": "perm_internet_reason",
+      "value": "用于把反馈内容和诊断日志发送给开发者"
+    },
+    {
+      "name": "perm_keep_bg_reason",
+      "value": "写入音效期间切到后台时，保持与耳机的蓝牙连接不被系统中断"
+    }
+  ]
 }

@@ -554,6 +554,13 @@ export const EN_STRINGS: Record<string, string> = {
   'toneErr.linkLost': 'Bluetooth serial communication was interrupted. Close and reopen the lid, then retry.',
   'toneErr.rejected': 'The earbuds rejected the serial connection. The channel may be held by AI Life; ' +
     'remove it from recents and retry.',
+  'toneErr.linkWedged': 'The Bluetooth serial channel is stuck. Retrying or closing the case will not help. ' +
+    'Tap "Restart app" and write again. If that does not help, tap "Restart Bluetooth" and wait for the earbuds to reconnect.',
+  'lib.restartApp': 'Restart app',
+  'lib.restartBluetooth': 'Restart Bluetooth',
+  'lib.btRestarted': 'Bluetooth is back on. Write again once the earbuds reconnect.',
+  'lib.btRestartFailed': 'Could not restart Bluetooth. Turn it off and on in Control Panel.',
+  'lib.restartFailed': 'Could not restart automatically. Swipe the app away and reopen it.',
   'toneErr.notReady': 'The earbuds did not accept the connection, probably because they were not ready yet. ' +
     'Put both earbuds back in the case, close the lid for 3 seconds, reopen it, then write again.',
   'toneErr.audioHeld': 'The serial connection was refused while the earbud audio link stayed connected ' +

@@ -23,6 +23,10 @@
     {
       "name": "perm_internet_reason",
       "value": "Used to send feedback and diagnostic logs to the developer"
+    },
+    {
+      "name": "perm_keep_bg_reason",
+      "value": "Keeps the Bluetooth link to the earbuds alive if you switch away while a tone is being written"
     }
   ]
 }
