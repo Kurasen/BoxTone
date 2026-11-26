@@ -15,6 +15,8 @@ import { LogService } from '../../services/LogService';
 import { PrivacyLinkService } from '../../services/PrivacyLinkService';
 import { ThemeMode, ThemeService } from '../../services/ThemeService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
+import { SettingsService } from '../../services/SettingsService';
+import { WriteSpec } from '../../services/write/WriteSpec';
 
 const MODULE: string = 'ProfilePage';
 const ABOUT_HEADER_HEIGHT: number = 64;
@@ -76,6 +78,45 @@ export struct ProfilePage {
       return;
     }
     this.versionTapCount = 0;
+    this.showDebugMenu();
+  }
+
+  /**
+   * 调试菜单（只在 debug 包出现）：评分测试，以及写后间隔测试。
+   * 间隔改动立即生效并保存，重启后仍保留；日志里每次写入都会打 GAP_TEST，便于和结局对照。
+   */
+  private showDebugMenu(): void {
+    const current: number = WriteSpec.postFlashGapMs();
+    const pick: (ms: number) => void = (ms: number): void => {
+      WriteSpec.gapOverrideMs = ms === WriteSpec.POST_FLASH_GAP_MS ? 0 : ms;
+      SettingsService.setDebugFlashGapMs(WriteSpec.gapOverrideMs);
+      Logger.info(MODULE, `调试：写后间隔改为 ${WriteSpec.postFlashGapMs()}ms`);
+      this.toast(`写后间隔：${Math.round(WriteSpec.postFlashGapMs() / 1000)} 秒`);
+    };
+    const gaps: number[] = [25000, 20000, 15000, 10000];
+    const sheets: SheetInfo[] = [{
+      title: I18n.t('profile.ratingTestTitle'),
+      action: (): void => {
+        this.showRatingTest();
+      }
+    }];
+    for (let i = 0; i < gaps.length; i++) {
+      const ms: number = gaps[i];
+      sheets.push({
+        title: `写后间隔 ${ms / 1000} 秒${ms === WriteSpec.POST_FLASH_GAP_MS ? '（默认）' : ''}${ms === current ? ' ✓' : ''}`,
+        action: (): void => {
+          pick(ms);
+        }
+      });
+    }
+    this.getUIContext().showActionSheet({
+      title: '调试',
+      message: `当前写后间隔 ${Math.round(current / 1000)} 秒`,
+      sheets: sheets
+    });
+  }
+
+  private showRatingTest(): void {
     this.getUIContext().showAlertDialog({
       title: I18n.t('profile.ratingTestTitle'),
       message: I18n.t('profile.ratingTestBody'),

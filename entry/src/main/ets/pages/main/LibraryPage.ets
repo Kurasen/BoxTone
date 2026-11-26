@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
-import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { ToneCatalog, ToneOption } from '../../common/constants/ToneCatalog';
@@ -10,7 +10,7 @@ import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
-import { AppRestart } from '../../common/utils/AppRestart';
+import { WriteConfirm } from '../../common/utils/WriteConfirm';
 import { EmptyView } from '../../components/EmptyView';
 import { GhostButton } from '../../components/GhostButton';
 import { PillButton, PillTone } from '../../components/PillButton';
@@ -19,10 +19,10 @@ import { ToneCard } from '../../components/ToneCard';
 import { ToneEntry } from '../../models/ToneModel';
 import { AudioPlayService } from '../../services/AudioPlayService';
 import { BluetoothService } from '../../services/BluetoothService';
-import { CaseWriteService, WriteCheck, WriteCode, WriteReason, WriteResult } from '../../services/CaseWriteService';
+import { CaseWriteService, WriteCheck, WriteCode, WriteResult } from '../../services/CaseWriteService';
 import { SettingsService } from '../../services/SettingsService';
-import { RatingService } from '../../services/RatingService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
+import { WriteTask } from '../../services/write/WriteTask';
 
 const MODULE: string = 'LibraryPage';
 
@@ -36,9 +36,6 @@ export struct LibraryPage {
   @State totalBytes: number = 0;
   @State expandedId: string = '';
   @State playingId: string = '';
-  @State writingId: string = '';
-  @State writeStage: string = '';
-  @State writeRatio: number = 0;
   @State editingId: string = '';
   @State editingName: string = '';
   @State sortMode: string = 'time';
@@ -47,8 +44,9 @@ export struct LibraryPage {
   /** 批量删除：选择模式与已勾选 id */
   @State selecting: boolean = false;
   @State selectedIds: string[] = [];
-  @State restoring: boolean = false;
-  @State builtinBusy: boolean = false;
+  /** 写入弹窗在显示：期间禁用会改动盒内状态或音效库的按钮 */
+  @State taskActive: boolean = false;
+  @StorageProp('writeEpoch') @Watch('onTaskChange') writeEpoch: number = 0;
   @State builtinLabel: string = '';
   private changeHandler: SimpleHandler | undefined = undefined;
 
@@ -62,6 +60,10 @@ export struct LibraryPage {
     EventBus.on(AppEvent.PRIVACY_CLEARED, this.changeHandler);
   }
 
+
+  onTaskChange(changed: string): void {
+    this.taskActive = WriteTask.isActive();
+  }
 
   aboutToDisappear(): void {
     if (this.changeHandler !== undefined) {
@@ -108,13 +110,10 @@ export struct LibraryPage {
     }
   }
 
-  /**
-   * 写入耳机盒：先检查耳机状态，未连接时给出确认，再走 SPP 控制通道上传
-   */
+  /** 写入充电盒：先检查耳机状态，确认后交给写入弹窗 */
   private async writeToCase(entry: ToneEntry): Promise<void> {
-    if (this.writingId.length > 0 || this.restoring) {
-      this.toast(this.restoring ? I18n.t('lib.restoringDefault')
-        : (this.writingId === entry.id ? I18n.t('lib.writingThis') : I18n.t('lib.writingOther')));
+    if (WriteTask.isActive()) {
+      this.toast(I18n.t('wp.busy'));
       return;
     }
     // 先刷新一次：配对列表与音频连接状态决定写入目标设备
@@ -123,87 +122,22 @@ export struct LibraryPage {
     if (!check.ok) {
       Logger.warn(MODULE, `写入前置检查未通过 code=${check.code}：${check.message}`);
       if (check.code === WriteCode.NEARLINK_UNSUPPORTED) {
-        this.showNearLinkBlocked(check.message);
+        NearLinkAlert.show(this.getUIContext(), check.message);
       } else {
         this.toast(check.message);
       }
       return;
     }
-    const baseHint: string = I18n.t('lib.writeHint');
-    const hint: string = check.warn.length > 0 ? `${check.warn}\n${baseHint}` : baseHint;
-    this.getUIContext().showAlertDialog({
-      title: I18n.t('lib.writeTitle'),
-      message: I18n.f('lib.writeMessage', [hint]),
-      primaryButton: {
-        value: I18n.t('common.cancel'),
-        action: (): void => {
-        }
-      },
-      secondaryButton: {
-        value: I18n.t('lib.startWrite'),
-        fontColor: Palette.ACCENT,
-        action: (): void => {
-          this.runWrite(entry);
-        }
-      }
+    WriteConfirm.tone(this.getUIContext(), entry.name, check.warn, (): void => {
+      Logger.info(MODULE, `开始写入「${entry.name}」`);
+      WriteTask.writeTone(entry);
     });
-  }
-
-  private async runWrite(entry: ToneEntry): Promise<void> {
-    this.writingId = entry.id;
-    this.writeStage = I18n.t('lib.stageConnect');
-    this.writeRatio = 0;
-    Logger.info(MODULE, `开始写入「${entry.name}」`);
-    try {
-      const result: WriteResult = await CaseWriteService.write(entry,
-        (ratio: number, stage: string): void => {
-          this.writeRatio = Math.round(ratio * 100);
-          this.writeStage = stage;
-        });
-      if (result.ok) {
-        // 补发选中成功时 upload 已经抛错，进度可能停在上一步，这里补到 100%
-        this.writeRatio = 100;
-        this.writeStage = I18n.t('lib.stageApplied');
-        Logger.info(MODULE, `写入成功「${entry.name}」`);
-        SettingsService.recordWriteSuccess();
-        this.getUIContext().showAlertDialog({
-          title: I18n.t('lib.writeDone'),
-          message: I18n.f('lib.writeDoneMessage', [result.message]),
-          confirm: {
-            value: I18n.t('common.ok'),
-            action: (): void => {
-              // 用户点掉「写入完成」之后再谈评分：两个弹窗叠在一起体验很差
-              RatingService.maybeAskAfterWrite(
-                this.getUIContext().getHostContext() as common.UIAbilityContext);
-            }
-          }
-        });
-      } else {
-        Logger.warn(MODULE, `写入未完 code=${result.code}${result.message}`);
-        SettingsService.recordWriteFailure();
-        this.showWriteFailure(result);
-      }
-    } catch (error) {
-      Logger.exception(MODULE, '写入异常', error as BusinessError);
-      SettingsService.recordWriteFailure();
-      this.toast(I18n.t('lib.writeFailed'));
-    } finally {
-      this.writingId = '';
-      this.writeStage = '';
-      this.writeRatio = 0;
-      this.lastWrittenId = SettingsService.getLastWrittenTone();
-      // 写入过程会断开音频通道，刷新一次让设备页的状态跟上
-      BluetoothService.refresh().then(() => {
-      }).catch((error: BusinessError) => {
-        Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);
-      });
-    }
   }
 
   /** 恢复默认开盒音：先刷新设备状态，再给出可执行的确认信息 */
   private async confirmRestore(): Promise<void> {
-    if (this.writingId.length > 0 || this.restoring) {
-      this.toast(this.restoring ? I18n.t('lib.restoringDefault') : I18n.t('lib.writingNow'));
+    if (WriteTask.isActive()) {
+      this.toast(I18n.t('wp.busy'));
       return;
     }
     await BluetoothService.refresh();
@@ -211,7 +145,7 @@ export struct LibraryPage {
     if (!check.ok) {
       Logger.warn(MODULE, `恢复默认前置检查未通过 code=${check.code}：${check.message}`);
       if (check.code === WriteCode.NEARLINK_UNSUPPORTED) {
-        this.showNearLinkBlocked(check.message);
+        NearLinkAlert.show(this.getUIContext(), check.message);
       } else {
         this.toast(check.message);
       }
@@ -230,64 +164,11 @@ export struct LibraryPage {
         value: I18n.t('lib.restoreAction'),
         fontColor: Palette.ACCENT,
         action: (): void => {
-          this.runRestore();
+          Logger.info(MODULE, '开始恢复默认开盒音');
+          WriteTask.restoreDefault();
         }
       }
     });
-  }
-
-  private async runRestore(): Promise<void> {
-    this.restoring = true;
-    EventBus.emitText(AppEvent.BUSY_CHANGED, I18n.t('lib.restoreBusy'));
-    Logger.info(MODULE, '开始恢复默认开盒音');
-    try {
-      const result: WriteResult = await CaseWriteService.restoreDefault();
-      if (result.ok) {
-        Logger.info(MODULE, '恢复默认开盒音成功');
-        this.getUIContext().showAlertDialog({
-          title: I18n.t('lib.restoreDone'),
-          message: I18n.f('lib.restoreDoneMessage', [result.message]),
-          confirm: {
-            value: I18n.t('common.ok'),
-            action: (): void => {
-            }
-          }
-        });
-      } else {
-        Logger.warn(MODULE, `恢复默认开盒音未完 code=${result.code}${result.message}`);
-        if (result.reason === WriteReason.WEDGED) {
-          this.showWedged(result);
-          return;
-        }
-        this.getUIContext().showAlertDialog({
-          title: I18n.t('lib.restoreIncomplete'),
-          message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
-          primaryButton: {
-            value: I18n.t('common.ok'),
-            action: (): void => {
-            }
-          },
-          secondaryButton: {
-            value: I18n.t('lib.viewLog'),
-            fontColor: Palette.ACCENT,
-            action: (): void => {
-              EventBus.emit(AppEvent.OPEN_LOG, 1);
-            }
-          }
-        });
-      }
-    } catch (error) {
-      Logger.exception(MODULE, '恢复默认开盒音异常', error as BusinessError);
-      this.toast(I18n.t('lib.restoreFailed'));
-    } finally {
-      this.restoring = false;
-      this.lastWrittenId = SettingsService.getLastWrittenTone();
-      EventBus.emitText(AppEvent.BUSY_CHANGED, '');
-      BluetoothService.refresh().then(() => {
-      }).catch((error: BusinessError) => {
-        Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);
-      });
-    }
   }
 
   /** 列表展示用：按时间/名称排序 */
@@ -305,7 +186,7 @@ export struct LibraryPage {
 
   /** 进入批量选择：写入/恢复期间不允许，避免把正在使用的文件删掉 */
   private enterSelecting(): void {
-    if (CaseWriteService.isBusy() || this.writingId.length > 0) {
+    if (CaseWriteService.isBusy() || this.taskActive) {
       this.toast(I18n.t('lib.selectBusy'));
       return;
     }
@@ -372,7 +253,7 @@ export struct LibraryPage {
       this.toast(I18n.t('lib.selectNoneHint'));
       return;
     }
-    if (CaseWriteService.isBusy() || this.writingId.length > 0) {
+    if (CaseWriteService.isBusy() || this.taskActive) {
       this.toast(I18n.t('lib.selectBusy'));
       return;
     }
@@ -399,7 +280,7 @@ export struct LibraryPage {
     let markerCleared: boolean = false;
     for (let i = 0; i < this.items.length; i++) {
       const entry: ToneEntry = this.items[i];
-      if (!this.isSelected(entry.id) || this.writingId === entry.id ||
+      if (!this.isSelected(entry.id) ||
         CaseWriteService.isToneWriting(entry.id)) {
         continue;
       }
@@ -420,124 +301,6 @@ export struct LibraryPage {
     this.selectedIds = [];
     this.reload();
     this.toast(I18n.f('lib.deleteBatchDone', [`${removed}`]));
-  }
-
-  /** 星闪连接下写入被前置拦截：给出明确的切换指引和跳转入口 */
-  private showNearLinkBlocked(message: string): void {
-    NearLinkAlert.show(this.getUIContext(), message);
-  }
-
-
-  /**
-   * 蓝牙串口卡死。两种恢复办法都实测有效：
-   * - 重启应用（首选）：约 3 秒，耳机音频不断，回来就能写；秒拒、挂起两种形态都验证过；
-   * - 重启蓝牙（备用）：关开一次要 8~9 秒，之后还要等耳机重连，合计约 20 秒，只在重启应用无效时用。
-   * 恢复后由用户自己重新写入。
-   */
-  private showWedged(result: WriteResult): void {
-    this.getUIContext().showAlertDialog({
-      title: I18n.t('lib.writeIncomplete'),
-      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
-      primaryButton: {
-        value: I18n.t('lib.restartBluetooth'),
-        action: (): void => {
-          BluetoothService.restartAdapter().then((ok: boolean) => {
-            this.getUIContext().getPromptAction().showToast({
-              message: ok ? I18n.t('lib.btRestarted') : I18n.t('lib.btRestartFailed'),
-              duration: 3000
-            });
-          });
-        }
-      },
-      secondaryButton: {
-        value: I18n.t('lib.restartApp'),
-        fontColor: Palette.ACCENT,
-        action: (): void => {
-          const context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
-          if (!AppRestart.restart(context)) {
-            this.getUIContext().getPromptAction().showToast({ message: I18n.t('lib.restartFailed') });
-          }
-        }
-      }
-    });
-  }
-
-  private showWriteFailure(result: WriteResult): void {
-    if (result.reason === WriteReason.WEDGED) {
-      this.showWedged(result);
-      return;
-    }
-    // 星闪链路失败：同样引导去系统设置切换连接方式
-    if (result.reason === WriteReason.NEARLINK) {
-      this.showNearLinkBlocked(result.message);
-      return;
-    }
-    // 不支持 / 格式被拒：把现场一键带回给开发者；其它失败保留查看日志
-    const needReport: boolean = result.reason === WriteReason.UNSUPPORTED ||
-      result.reason === WriteReason.FORMAT;
-    if (needReport) {
-      const title: string = result.reason === WriteReason.UNSUPPORTED ?
-        I18n.t('lib.unsupportedTitle') : I18n.t('lib.rejectedTitle');
-      this.getUIContext().showAlertDialog({
-        title: title,
-        message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
-        primaryButton: {
-          value: I18n.t('common.close'),
-          action: (): void => {
-          }
-        },
-        secondaryButton: {
-          value: I18n.t('lib.copyDiagnostic'),
-          fontColor: Palette.ACCENT,
-          action: (): void => {
-            this.copyDiagnostic(result.diagnostic);
-          }
-        }
-      });
-      return;
-    }
-    const isLink: boolean = result.reason === WriteReason.LINK;
-    this.getUIContext().showAlertDialog({
-      title: I18n.t('lib.writeIncomplete'),
-      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
-      primaryButton: {
-        value: isLink ? I18n.t('device.openSettings') : I18n.t('common.ok'),
-        action: (): void => {
-          if (isLink) {
-            this.openBluetoothSettings();
-          }
-        }
-      },
-      secondaryButton: {
-        value: I18n.t('lib.viewLog'),
-        fontColor: Palette.ACCENT,
-        action: (): void => {
-          EventBus.emit(AppEvent.OPEN_LOG, 1);
-        }
-      }
-    });
-  }
-
-  private openBluetoothSettings(): void {
-    BluetoothService.openSystemBluetoothSettings().catch((error: BusinessError) => {
-      Logger.warn(MODULE, `打开系统蓝牙设置失败 code=${error.code}`);
-      this.toast(I18n.t('device.openSettingsFailed'));
-    });
-  }
-
-  private async copyDiagnostic(text: string): Promise<void> {
-    if (text.length === 0) {
-      this.toast(I18n.t('lib.noDiagnostic'));
-      return;
-    }
-    try {
-      const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
-      await pasteboard.getSystemPasteboard().setData(data);
-      this.toast(I18n.t('lib.diagnosticCopied'));
-    } catch (error) {
-      Logger.warn(MODULE, `复制诊断信息失败 code=${(error as BusinessError).code}`);
-      this.toast(I18n.t('common.copyFailed'));
-    }
   }
 
   private async exportTone(entry: ToneEntry): Promise<void> {
@@ -581,7 +344,7 @@ export struct LibraryPage {
 
   private confirmDelete(entry: ToneEntry): void {
     // 正在写入的音效不能删：文件被删会让传输中的校验与收尾失去依据
-    if (this.writingId === entry.id || CaseWriteService.isToneWriting(entry.id)) {
+    if (CaseWriteService.isToneWriting(entry.id)) {
       this.toast(I18n.t('lib.deleteLockedWriting'));
       return;
     }
@@ -712,8 +475,8 @@ export struct LibraryPage {
   buildRestoreAction() {
     Column({ space: 8 }) {
       GhostButton({
-        ghostLabel: this.restoring ? I18n.t('lib.restoring') : I18n.t('lib.restoreDefault'),
-        ghostEnabled: !this.restoring && !this.builtinBusy && this.writingId.length === 0,
+        ghostLabel: I18n.t('lib.restoreDefault'),
+        ghostEnabled: !this.taskActive,
         onTap: (): void => {
           this.confirmRestore();
         }
@@ -726,11 +489,11 @@ export struct LibraryPage {
             .fontColor(Palette.TEXT_SECONDARY)
           Select(this.builtinOptions())
             .selected(-1)
-            .value(this.builtinBusy ? I18n.t('lib.builtinBusy') : this.builtinLabel)
+            .value(this.builtinLabel)
             .font({ size: 11 })
             .optionFont({ size: 12 })
             .selectedOptionFont({ size: 12 })
-            .enabled(!this.restoring && !this.builtinBusy && this.writingId.length === 0)
+            .enabled(!this.taskActive)
             .layoutWeight(1)
             .onSelect((index: number): void => {
               this.pickBuiltIn(index);
@@ -757,37 +520,18 @@ export struct LibraryPage {
     return options;
   }
 
-  /** 切换内置音效：不写闪存，只发一条选中命令 */
+  /** 切换内置音效：不写闪存，只发一条选中命令；过程和结局显示在写入弹窗里 */
   private async pickBuiltIn(index: number): Promise<void> {
     const catalog: ToneOption[] = this.builtinCatalog();
-    if (index < 0 || index >= catalog.length) {
-      return;
-    }
-    if (this.builtinBusy || this.restoring || this.writingId.length > 0) {
+    if (index < 0 || index >= catalog.length || WriteTask.isActive()) {
       return;
     }
     const option: ToneOption = catalog[index];
     const label: string = ToneCatalog.label(option);
-    this.builtinBusy = true;
-    EventBus.emitText(AppEvent.BUSY_CHANGED, I18n.t('lib.builtinBusy'));
     Logger.info(MODULE, `切换内置音效 id=${option.id}`);
-    try {
-      const result: WriteResult = await CaseWriteService.selectBuiltIn(option.id, label);
-      if (result.ok) {
-        this.builtinLabel = label;
-      }
-      if (result.reason === WriteReason.WEDGED) {
-        this.showWedged(result);
-      } else {
-        this.toast(result.message);
-      }
-    } catch (error) {
-      Logger.exception(MODULE, '切换内置音效异常', error as BusinessError);
-      this.toast(I18n.t('write.builtinFailed'));
-    } finally {
-      this.builtinBusy = false;
-      this.lastWrittenId = SettingsService.getLastWrittenTone();
-      EventBus.emitText(AppEvent.BUSY_CHANGED, '');
+    const result: WriteResult = await WriteTask.selectBuiltIn(option.id, label);
+    if (result.ok) {
+      this.builtinLabel = label;
     }
   }
 
@@ -803,7 +547,7 @@ export struct LibraryPage {
       PillButton({
         pillText: I18n.t('lib.select'),
         pillTone: PillTone.ACCENT,
-        pillEnabled: !(this.writingId.length > 0 || this.restoring),
+        pillEnabled: !this.taskActive,
         onTap: (): void => {
           this.enterSelecting();
         }
@@ -887,14 +631,9 @@ export struct LibraryPage {
               inCase: this.lastWrittenId === entry.id,
               selecting: this.selecting,
               selected: this.isSelected(entry.id),
-              deleteLocked: this.writingId === entry.id || CaseWriteService.isToneWriting(entry.id),
+              deleteLocked: this.taskActive && CaseWriteService.isToneWriting(entry.id),
               expanded: !this.selecting && this.expandedId === entry.id,
               playing: this.playingId === entry.id,
-              writing: this.writingId === entry.id,
-              writingText: this.writingId === entry.id && this.writeRatio > 0
-                ? I18n.f('lib.writeProgress', [`${this.writeRatio}`]) : I18n.t('lib.writing'),
-              writeLocked: this.restoring ||
-                (this.writingId.length > 0 && this.writingId !== entry.id),
               onToggle: (): void => {
                 if (this.selecting) {
                   this.toggleSelected(entry.id);
@@ -925,29 +664,6 @@ export struct LibraryPage {
                 this.confirmDelete(entry);
               }
             })
-
-            if (this.writingId === entry.id) {
-              Column({ space: 6 }) {
-                Row() {
-                  Text(this.writeStage.length > 0 ? this.writeStage : I18n.t('lib.writingStage'))
-                    .fontSize(11)
-                    .fontColor(Palette.ACCENT_TEXT)
-                    .layoutWeight(1)
-                  Text(`${this.writeRatio}%`)
-                    .fontSize(11)
-                    .fontColor(Palette.TEXT_TERTIARY)
-                }
-                .width('100%')
-
-                Progress({ value: this.writeRatio, total: 100, type: ProgressType.Linear })
-                  .width('100%')
-                  .height(3)
-                  .color(Palette.ACCENT)
-                  .backgroundColor(Palette.FILL_SOFT)
-              }
-              .width('100%')
-              .padding({ left: 4, right: 4, top: 2 })
-            }
 
             if (this.editingId === entry.id) {
               Row({ space: 8 }) {

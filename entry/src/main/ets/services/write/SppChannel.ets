@@ -237,7 +237,8 @@ export class SppChannel {
       }
       try {
         const bytes: Uint8Array = new Uint8Array(data);
-        if (Date.now() >= this.muteRxUntil) {
+        // 09 05 进度帧每 70~90ms 一条、一次写入约 37 条，占掉诊断日志三成：由 ToneUploader 按里程碑汇总
+        if (Date.now() >= this.muteRxUntil && !SppChannel.isProgressFrame(bytes)) {
           this.trace(`RX ${SppChannel.shortHex(bytes)}`);
         }
         this.assembler.feed(bytes);
@@ -485,6 +486,19 @@ export class SppChannel {
     this.closed = true;
     this.closeSocketOnly();
     this.assembler.reset();
+  }
+
+  /**
+   * 单独一帧的 09 05（上传/擦写进度）：5A | 长度 2B | 00 | 09 05 … | CRC 2B。
+   * 只认「这一次回调恰好是一整帧」的情况，粘包或半包照常打印，不丢信息。
+   */
+  static isProgressFrame(bytes: Uint8Array): boolean {
+    if (bytes.length < 6 || ByteUtils.byteAt(bytes, 0) !== 0x5A) {
+      return false;
+    }
+    const length: number = (ByteUtils.byteAt(bytes, 1) << 8) | ByteUtils.byteAt(bytes, 2);
+    return bytes.length === length + 5 && ByteUtils.byteAt(bytes, 4) === 0x09 &&
+      ByteUtils.byteAt(bytes, 5) === 0x05;
   }
 
   private static shortHex(data: Uint8Array): string {

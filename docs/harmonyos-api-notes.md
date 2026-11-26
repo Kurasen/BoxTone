@@ -29,10 +29,8 @@
 **配置位置**：`entry/src/main/module.json5` 的 `abilities[]`
 
 ```json5
-{
-  "startWindowIcon": "$media:startIcon",
-  "startWindowBackground": "$color:start_window_background"
-}
+"startWindowIcon": "$media:startIcon",
+"startWindowBackground": "$color:start_window_background",
 ```
 
 | 要点 | 说明 |
@@ -141,7 +139,6 @@ import { uiMaterial } from '@kit.ArkUI';
 | `connection.disconnectAllowedProfiles` | **26.0.0** | 断开 profile。**高于最低兼容版本 23**，所有调用都已包在 `try/catch` 里，旧设备上失败只记日志 |
 | `connection.getProfileConnectionState` | — | 查 A2DP/HFP 是否已连接 |
 | `access.getState` / `enableBluetooth` / `on('stateChange')` | — | 蓝牙开关状态 |
-| `backgroundTaskManager.requestSuspendDelay` / `cancelSuspendDelay` | 9 | 写入期间申请短时任务，退到后台不被挂起（`services/write/WriteGuard.ets`） |
 
 ```ts
 const options: socket.SppOptions = {
@@ -153,15 +150,13 @@ const options: socket.SppOptions = {
 
 **踩过的坑**
 
-- FreeClip 2 实测（2026-11-26，34 次成功建链）：断开音频 1 秒后，非加密第一枪几乎总是 -1，加密通道 31 次连上，加密传 93KB 整包也全部正常。项目固定「加密优先、非加密兜底」。旧版「多数只接受非加密、加密传大包会断」的结论来自加音频沉降之前，已不成立。
-- 耳机串口**静默约 4 秒就会被收掉**，要用定时器发保活包（`MbbSession.startKeepAlive`）。传输与擦写期间保活必须静默，否则心跳会被当成中止信号。
-- 所有写入必须**串行**：保活、命令、数据窗口各自调 `sppWriteAsync` 时，一条跨多次写入的帧中间可能被插进别的帧（`SppChannel` 内部用写队列保证）。
-- 应用退到后台很快会被挂起，`sppRead` 回调与定时器都会停：写入期间要持有短时任务，只开屏幕常亮挡不住切后台和按电源键。
+- FreeClip 2 等机型多数只接受**非加密通道**，`secure: true` 经常直接返回 -1。项目会优先用上次成功的取值，其余取值作为兜底。加密通道传大包还会被耳机掐断。
+- 耳机串口**静默约 4 秒就会被收掉**，要用定时器发保活包（`ToneClient.startKeepAlive`）。
 - `getMaxTransmitDataSize` 查询失败或返回值小于 256 时，退回默认分片 `MbbSpec.SPP_WRITE_CHUNK`；正常情况下取 `min(max, 8192)`。协议栈拒收过大的包时，自动降级为逐帧写。
 - 双耳放回盒里、手机没有任何播放时，系统仍可能把 A2DP 报成"已连接"。这时 `disconnectAllowedProfiles` 常返回 **2900099**（这条连接不是本应用发起的）。**不能当致命错误。**
   - 解法：先 `connectAllowedProfiles` 把连接"认领"到本应用名下，等约 250ms，再 `disconnectAllowedProfiles` 就能断开。
   - 擦写期间不要认领，因为认领本身会建立音频连接。
-- 鸿蒙侧 SPP 实测约 23KB/s。单条音效超过约 106KB 后，耳机在擦写阶段会失去响应，所以音效上限定为 2.8 秒。详见 `docs/write-duration-gap.md`；写入引擎结构见 `docs/write-engine.md`。
+- 鸿蒙侧 SPP 实测约 23KB/s。单条音效超过约 106KB 后，耳机在擦写阶段会失去响应，所以音效上限定为 2.8 秒。详见 `docs/write-duration-gap.md`。
 
 ---
 

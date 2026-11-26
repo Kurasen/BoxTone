@@ -454,6 +454,8 @@ export class AppStorageKey {
   static readonly KEY_LAST_WRITE_FAIL_AT: string = 'last_write_fail_at';
   /** 上次请求应用评分的时间戳：90 天内不重复请求 */
   static readonly KEY_RATING_ASKED_AT: string = 'rating_asked_at';
+  /** 调试：写后间隔覆盖（毫秒），0 = 默认。只在 debug 包读取 */
+  static readonly KEY_DEBUG_FLASH_GAP: string = 'debug_flash_gap_ms';
   /** AppStorage 主题纪元：切换外观时自增，触发组件重绘 */
   static readonly THEME_EPOCH: string = 'themeEpoch';
 }

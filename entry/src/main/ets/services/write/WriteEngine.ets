@@ -18,7 +18,8 @@ import { WriteGuard } from './WriteGuard';
 import { WriteSpec } from './WriteSpec';
 import {
   CommandOutcome,
-  StageProgress,
+  StepProgress,
+  WriteStep,
   TraceSink,
   UploadReport,
   UploadState,
@@ -75,22 +76,25 @@ class SerialQueue {
  * 阶段文案变化与 97% 之后的收尾进度不限频，保证界面不会停在旧阶段上。
  */
 class ProgressGate {
-  private readonly sink: StageProgress | undefined;
+  private readonly sink: StepProgress | undefined;
   private shown: number = 0;
   private lastAt: number = 0;
   private lastStage: string = '';
+  private lastStep: string = '';
 
-  constructor(sink: StageProgress | undefined) {
+  constructor(sink: StepProgress | undefined) {
     this.sink = sink;
   }
 
-  emit(ratio: number, stage: string): void {
-    const sink: StageProgress | undefined = this.sink;
+  /** step 为空时按进度区间推出；只有「等耳机收尾」需要显式传 WriteStep.WAIT */
+  emit(ratio: number, stage: string, step: string = ''): void {
+    const sink: StepProgress | undefined = this.sink;
     if (sink === undefined) {
       return;
     }
     let bounded: number = ratio > 1 ? 1 : (ratio < 0 ? 0 : ratio);
-    const stageChanged: boolean = stage !== this.lastStage;
+    const resolved: string = step.length > 0 ? step : WriteStep.of(bounded);
+    const stageChanged: boolean = stage !== this.lastStage || resolved !== this.lastStep;
     if (bounded <= this.shown) {
       if (!stageChanged) {
         return;
@@ -104,13 +108,15 @@ class ProgressGate {
     this.shown = bounded;
     this.lastAt = now;
     this.lastStage = stage;
-    sink(bounded, stage);
+    this.lastStep = resolved;
+    sink(bounded, stage, resolved);
   }
 
   /** 整包重来：进度如实回到起点 */
   reset(): void {
     this.shown = 0;
     this.lastStage = '';
+    this.lastStep = '';
     this.lastAt = 0;
   }
 }
@@ -224,7 +230,7 @@ export class WriteEngine {
     const reason: string = toneError.reason;
     if (reason === ToneErrorReason.FLUSH_TIMEOUT || reason === ToneErrorReason.DATA_WRITTEN ||
       reason === ToneErrorReason.CANCELLED || reason === ToneErrorReason.AUDIO_HELD ||
-      reason === ToneErrorReason.WEDGED) {
+      reason === ToneErrorReason.WEDGED || reason === ToneErrorReason.STALLED) {
       return false;
     }
     if (reason === ToneErrorReason.LINK || reason === ToneErrorReason.ACK_TIMEOUT) {
@@ -239,7 +245,7 @@ export class WriteEngine {
 
   /** 写入一条自定义音效；失败抛 ToneError */
   static async write(deviceId: string, toneId: string, pcm: Uint8Array, neutral: boolean,
-    onProgress?: StageProgress): Promise<WriteOutcome> {
+    onProgress?: StepProgress): Promise<WriteOutcome> {
     WriteEngine.abandonRollback();
     WriteEngine.writing = true;
     WriteEngine.writingToneId = toneId;
@@ -262,6 +268,10 @@ export class WriteEngine {
     await WriteGuard.acquire();
     const startedAt: number = Date.now();
     let settleWait: number = 0;
+    // 间隔测试：上一条写完到这一条点下去隔了多久、这次按多少秒等，和本条结局对照看
+    const lastFlash: number = DeviceTimeline.of(deviceId).lastFlashedAt;
+    const gapNote: string = `gap=${WriteSpec.postFlashGapMs()}ms sinceFlash=${lastFlash > 0 ? startedAt - lastFlash : -1}ms`;
+    Logger.info(MODULE, `GAP_TEST ${gapNote}`);
     try {
       for (let round = 1; round <= WriteSpec.MAX_UPLOAD_ROUNDS; round++) {
         if (round > 1) {
@@ -272,6 +282,7 @@ export class WriteEngine {
             settleWait += waitedMs;
           });
         WriteEngine.active = session;
+        const linkedAt: number = Date.now();
         let before: ToneStatus | null = null;
         let uploadState: UploadState | null = null;
         try {
@@ -280,6 +291,10 @@ export class WriteEngine {
           gate.emit(0.06, I18n.t('stage.readTone'));
           await session.readDeviceModel();
           const protocol: number = await session.protocolVersion();
+          // 诊断：握手花了多久、此刻音频是否已被连回。21:47:02 那次在握手结束后 100ms 内被连回，
+          // 随后 09 09 没有任何窗口；先攒样本，不据此改时序（docs/write-engine.md 第 12 节）
+          trace(`HANDSHAKE_DONE ms=${Date.now() - linkedAt} audio=${session.audio.isLinked() ? 'linked' : 'down'} ` +
+            `sinceRelease=${WriteEngine.sinceRelease(session.audio)}ms`);
           // 传输前音频又被系统连回：数据还没开始发，可以完整走「认领 + 断开 + 等它真正掉下去」
           if (session.audio.isLinked()) {
             trace('AUDIO_PRE_SUPPRESS 传输前音频已连回，先断开');
@@ -307,8 +322,9 @@ export class WriteEngine {
           outcome.attempts = round;
           WriteEngine.fillOutcome(outcome, session, deviceId, startedAt, settleWait);
           WriteEngine.logMatrix(deviceId, session, 'ok', `bytes=${pcm.length} rounds=${round} ` +
-            `transfer=${report.transferMs}ms confirm=${report.flushConfirmed ? '09 06' : 'silent'}`);
-          WriteEngine.scheduleAudioRestore(deviceId);
+            `transfer=${report.transferMs}ms confirm=${report.flushConfirmed ? '09 06' : 'silent'} ${gapNote}`);
+          // 保存窗口在下面 finally 里按沉降期设置，这里只排音频恢复
+          WriteEngine.scheduleAudioRestore(deviceId, 0);
           return outcome;
         } catch (error) {
           // 失败过的会话不再进热会话池：链路可能已被耳机收回（合盖），复用只会对着死 socket 写
@@ -317,12 +333,13 @@ export class WriteEngine {
           const receivedAll: boolean = uploadState !== null && uploadState.receivedAll;
           const preselected: boolean = uploadState !== null && uploadState.preselected;
           WriteEngine.logMatrix(deviceId, session, 'fail', `code=${failure.code} reason=${failure.reason} ` +
-            `round=${round} received=${receivedAll} preselected=${preselected}`);
+            `round=${round} received=${receivedAll} preselected=${preselected} ${gapNote}`);
           if (failure instanceof CancelledError || WriteEngine.cancelRequested) {
             if (preselected && !receivedAll) {
               WriteEngine.scheduleRollback(deviceId, neutral, before);
             }
-            throw failure;
+            // 取消时串口被我们自己关掉，底层报的可能是「链路断开」：统一按取消上报
+            throw WriteEngine.cancelRequested ? new CancelledError() : failure;
           }
           // 数据已经完整写进耳机、只差选中：换一条链路补一条命令，不重传整包
           if (failure.reason === ToneErrorReason.DATA_WRITTEN) {
@@ -332,7 +349,8 @@ export class WriteEngine {
           }
           // 数据还没收完就断链：耳机侧没有落盘，整包重来一轮
           if (round < WriteSpec.MAX_UPLOAD_ROUNDS && !receivedAll && WriteEngine.isLinkFailure(failure)) {
-            Logger.warn(MODULE, `串口在传输中断开，整包重来 code=${failure.code} round=${round}`);
+            // 回执超时（-98）时串口其实还开着，日志按 reason 区分，免得误读成断链
+            Logger.warn(MODULE, `传输未完成，整包重来 reason=${failure.reason} code=${failure.code} round=${round}`);
             gate.emit(0.02, I18n.t('write.stageLinkRetry'));
             await sleep(WriteSpec.ROUND_GAP_MS);
             continue;
@@ -345,7 +363,14 @@ export class WriteEngine {
           WriteEngine.active = null;
           // 耳机收完整包才会去擦闪存：这时记沉降期，下一次连接要等它。
           // 传到一半断开不记——那种情况由串口掉线时记下的冷却负责，和旧实现一致
-          session.endUpload(uploadState !== null && uploadState.receivedAll);
+          const flashed: boolean = uploadState !== null && uploadState.receivedAll;
+          session.endUpload(flashed);
+          if (flashed) {
+            // 设备页「保存中」与沉降期用同一个时钟：设备页、写入弹窗倒计时、前置提示的秒数一致，
+            // 设备页一变回已连接，下一条写入就不再等待（docs/write-engine.md 13.1）。
+            // 放在 endUpload 之后：成功路径上 try 里的 return 先于这里执行，那时沉降期还没记
+            BluetoothService.markCaseSettling(deviceId, DeviceTimeline.of(deviceId).settleLeft());
+          }
           WriteEngine.releaseSession(session);
         }
       }
@@ -371,7 +396,8 @@ export class WriteEngine {
       outcome.attempts = 2;
       WriteEngine.fillOutcome(outcome, session, deviceId, startedAt, settleWait);
       WriteEngine.logMatrix(deviceId, session, 'ok', 'via=apply-only');
-      WriteEngine.scheduleAudioRestore(deviceId);
+      // 数据是上一轮写进去的：保存窗口由那一轮的 finally 按沉降期设置
+      WriteEngine.scheduleAudioRestore(deviceId, 0);
       return outcome;
     } catch (error) {
       Logger.warn(MODULE, `补发选中失败：${SppErrors.messageOf(error)}`);
@@ -431,7 +457,7 @@ export class WriteEngine {
           outcome.protocol = session.protocolUsed;
           outcome.audioGate = session.audio.state;
           WriteEngine.logMatrix(deviceId, session, 'ok', `action=${action} tone=${status.toneId}`);
-          WriteEngine.scheduleAudioRestore(deviceId);
+          WriteEngine.scheduleAudioRestore(deviceId, WriteSpec.AUDIO_RESTORE_DELAY_MS);
           return outcome;
         } catch (error) {
           session.close();
@@ -470,7 +496,7 @@ export class WriteEngine {
     const connector: LinkConnector = new LinkConnector(deviceId, neutral, timeline, audio, trace, cancelled);
 
     if (gate !== null) {
-      gate.emit(0.02, round > 1 ? I18n.t('write.stageReconnect') : I18n.t('write.stageConnect'));
+      gate.emit(0.02, round > 1 ? I18n.t('write.stageReconnect') : I18n.t('write.stageKeepCase'));
     }
     let logged: boolean = false;
     const waited: number = await connector.waitDeviceReady((kind: string, leftMs: number): void => {
@@ -478,10 +504,11 @@ export class WriteEngine {
         return;
       }
       if (kind === LinkConnector.WAIT_SETTLE) {
-        // 刚写完上一条时耳机要擦闪存，这段静默常有 10 秒以上：把剩余秒数告诉用户
-        gate.emit(0.02, I18n.f('write.stageWaitFlash', [`${Math.max(1, Math.ceil(leftMs / 1000))}`]));
+        // 刚写完上一条时耳机要收尾，这段静默常有 10 秒以上：把剩余秒数告诉用户
+        gate.emit(0.02, I18n.f('write.stageWaitFlash', [`${Math.max(1, Math.ceil(leftMs / 1000))}`]),
+          WriteStep.WAIT);
       } else {
-        gate.emit(0.02, I18n.t('write.stageWaitReady'));
+        gate.emit(0.02, I18n.t('write.stageWaitReady'), WriteStep.WAIT);
       }
       if (!logged) {
         logged = true;
@@ -490,7 +517,8 @@ export class WriteEngine {
     });
     onWaited(waited);
     if (waited > 0 && gate !== null) {
-      gate.emit(0.02, I18n.t('write.stageConnect'));
+      // 标题已是「正在连接耳机」：细节行不再重复，改为提醒保持入盒开盖
+      gate.emit(0.02, I18n.t('write.stageKeepCase'));
     }
 
     if (pooled !== null) {
@@ -509,12 +537,27 @@ export class WriteEngine {
     Logger.info(MODULE, `SOCKET_LEDGER before_connect ${SppChannel.ledger()}`);
     SppChannel.sweepOrphans();
     const startedAt: number = Date.now();
-    const channel: SppChannel = await freshConnector.open(budgetMs);
+    let channel: SppChannel = await freshConnector.open(budgetMs);
+    const lateMs: number = WriteEngine.sinceRelease(fresh);
+    if (lateMs > WriteSpec.STALE_LINK_MS) {
+      // 这时系统多半正把音频连回来：用这条串口要么收不到窗口，要么断音频时被一起带走（WriteSpec.STALE_LINK_MS）。
+      // 自己关掉是「主动关闭活链路」，只记收尾间隔、不记冷却，也不算一轮；重建只做一次，再晚也照用
+      Logger.warn(MODULE, `LINK_STALE sinceRelease=${lateMs}ms audio=${fresh.isLinked() ? 'linked' : 'down'} ` +
+        `secure=${channel.secure}，关掉按标准顺序重建一次`);
+      channel.close();
+      channel = await freshConnector.open(budgetMs);
+    }
     const session: MbbSession = new MbbSession(channel, fresh, timeline, trace);
     session.startKeepAlive();
-    Logger.info(MODULE, `LINK_OPEN ms=${Date.now() - startedAt} secure=${channel.secure} audio=${fresh.state}`);
+    Logger.info(MODULE, `LINK_OPEN ms=${Date.now() - startedAt} secure=${channel.secure} audio=${fresh.state} ` +
+      `sinceRelease=${WriteEngine.sinceRelease(fresh)}ms`);
     // 加密通道曾被认为传大包会断（旧注释），但 2026-11-26 的 31 次加密写入全部正常，不再告警
     return session;
+  }
+
+  /** 距最近一次确认音频断开多久；没断开过（复用热会话 / 音频本来就没连）记 -1 */
+  private static sinceRelease(audio: AudioLink): number {
+    return audio.releasedAt > 0 ? Date.now() - audio.releasedAt : -1;
   }
 
   private static takePooled(deviceId: string): MbbSession | null {
@@ -605,7 +648,7 @@ export class WriteEngine {
           WriteEngine.rollbackPending = false;
           Logger.warn(MODULE, `回滚已放弃：耳机仍不可达 tries=${plan.connectTries} result=${result}`);
           // 恢复不了也要把音频通道放回来，免得用户连歌都听不了
-          WriteEngine.scheduleAudioRestore(plan.deviceId);
+          WriteEngine.scheduleAudioRestore(plan.deviceId, WriteSpec.AUDIO_RESTORE_DELAY_MS);
         }).catch((error: Error) => {
           WriteEngine.rollbackPending = false;
           Logger.warn(MODULE, `回滚异常：${error.message}`);
@@ -635,13 +678,14 @@ export class WriteEngine {
         await session.restoreDefault();
       Logger.info(MODULE, `回滚完成（第 ${attempt + 1} 次）tone=${status.toneId}`);
       WriteEngine.rollbackPending = false;
-      WriteEngine.scheduleAudioRestore(plan.deviceId);
+      WriteEngine.scheduleAudioRestore(plan.deviceId, WriteSpec.AUDIO_RESTORE_DELAY_MS);
       return RollbackResult.DONE;
     } catch (error) {
       const failure: ToneError = SppErrors.describe(error, plan.neutral);
       Logger.warn(MODULE, `回滚失败（第 ${attempt + 1} 次）code=${failure.code} reason=${failure.reason}`);
       // 卡死或被用户打断：再试也没用，交给用户
-      if (failure.reason === ToneErrorReason.WEDGED || failure instanceof CancelledError) {
+      if (failure.reason === ToneErrorReason.WEDGED || failure.reason === ToneErrorReason.STALLED ||
+        failure instanceof CancelledError) {
         return RollbackResult.GIVE_UP;
       }
       return RollbackResult.RETRY;
@@ -666,13 +710,18 @@ export class WriteEngine {
   /**
    * 写入过程中断开了音频通道：结束后延迟重连，尽力恢复听歌状态。
    * 耳机擦闪存期间不接受新连接，所以要等；耳机常在写完后自己把 A2DP 连回来，那就不必再连。
+   *
+   * @param settleMs 设备页「保存中」窗口的时长；0 = 由调用方按沉降期自己设置（写入路径）。
+   *   窗口只由 BluetoothService 自己的定时器结束：这里到点不再 endCaseSettling，
+   *   否则写入路径 20~25 秒的窗口会在 16 秒时被提前掐掉，设备页又和写入弹窗对不上
    */
-  private static scheduleAudioRestore(deviceId: string): void {
+  private static scheduleAudioRestore(deviceId: string, settleMs: number): void {
     WriteEngine.cancelAudioRestore();
-    BluetoothService.markCaseSettling(deviceId, WriteSpec.AUDIO_RESTORE_DELAY_MS);
+    if (settleMs > 0) {
+      BluetoothService.markCaseSettling(deviceId, settleMs);
+    }
     WriteEngine.audioRestoreTimer = setTimeout(() => {
       WriteEngine.audioRestoreTimer = -1;
-      BluetoothService.endCaseSettling();
       if (WriteEngine.isBusy()) {
         Logger.info(MODULE, '有新的设备操作在进行，跳过音频恢复');
         return;
@@ -731,7 +780,8 @@ export class WriteEngine {
   /** 机型矩阵：收集未验证机型兼容性的关键一行，成功失败都记 */
   private static logMatrix(deviceId: string, session: MbbSession, result: string, extra: string): void {
     const hwModel: string = WriteEngine.rememberModel(deviceId, session);
-    const btName: string = BluetoothService.getSnapshot().activeName;
+    // 写入期间音频被我们断开，activeName 常是空的：退回配对表里同一地址的名字
+    const btName: string = BluetoothService.nameOf(deviceId);
     const line: string = `DEVICE_MATRIX hwModel=${hwModel.length > 0 ? hwModel : '未知'} ` +
       `btName=${btName.length > 0 ? btName : '未知'} id=${FormatUtils.maskAddress(deviceId)} ` +
       `protocol=${session.protocolUsed} audio=${session.audio.state} secure=${session.channel.secure} ` +

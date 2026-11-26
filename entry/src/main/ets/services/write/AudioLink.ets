@@ -16,6 +16,16 @@ function sleep(ms: number): Promise<void> {
  * 音频通道（A2DP/HFP）的处理结果，只作诊断：
  * idle=本来没连，released=已断开，kept=系统拒绝断开且仍在连，reused=复用热会话没动过音频。
  */
+/** 最近一次「把音频连回来」的结局：只有 TIMEOUT 说明耳机够不着（多半盒盖合着） */
+export class RestoreOutcome {
+  static readonly NONE: string = 'none';
+  static readonly RESTORED: string = 'restored';
+  /** connectAllowedProfiles 被系统拒：判断不了耳机状态，照旧去试串口 */
+  static readonly DENIED: string = 'denied';
+  /** 请求发出去了，等满也没连上 */
+  static readonly TIMEOUT: string = 'timeout';
+}
+
 export class AudioGateState {
   static readonly IDLE: string = 'idle';
   static readonly RELEASED: string = 'released';
@@ -38,6 +48,8 @@ export class AudioLink {
   state: string = AudioGateState.IDLE;
   /** 最近一次确认音频已断开的时刻：建链日志里记「距断开多久」，用来判断失败是时序还是通道 */
   releasedAt: number = 0;
+  /** 最近一次 restore() 的结局，见 RestoreOutcome */
+  lastRestore: string = RestoreOutcome.NONE;
 
   constructor(address: string, timeline: DeviceTimeline, trace: TraceSink, cancelled: () => boolean) {
     this.address = address;
@@ -147,10 +159,11 @@ export class AudioLink {
    * 2026-11-26 19:50 真机：上一条写完时音频被我们压下去后再没回来，下一条建链时音频是断开的，
    * 串口连续 11 次被耳机拒（每次约 500ms 的 -1，请求到了耳机）。而所有成功的建链都发生在
    * 「音频连着 → 我们断开 → 1 秒后连串口」这个顺序上。所以音频不在时先把它连回来，再走正常的断开流程。
-   * 返回是否连上；连不上（例如盒盖合着）不抛错，照常去试串口。
+   * 返回是否连上，从不抛错；结局细分记在 lastRestore，由 LinkConnector 决定要不要继续试串口。
    */
   async restore(timeoutMs: number): Promise<boolean> {
     if (this.isLinked()) {
+      this.lastRestore = RestoreOutcome.RESTORED;
       return true;
     }
     const startedAt: number = Date.now();
@@ -159,10 +172,12 @@ export class AudioLink {
       this.trace('AUDIO_RESTORE_SENT');
     } catch (error) {
       this.trace(`AUDIO_RESTORE_DENIED code=${SppErrors.codeOf(error)}`);
+      this.lastRestore = RestoreOutcome.DENIED;
       return false;
     }
     while (Date.now() - startedAt < timeoutMs && !this.cancelled()) {
       if (this.isLinked()) {
+        this.lastRestore = RestoreOutcome.RESTORED;
         this.trace(`AUDIO_RESTORED ms=${Date.now() - startedAt}`);
         // 刚连上时 A2DP 还在协商，立刻断开容易被拒：留一点时间
         await sleep(500);
@@ -170,7 +185,13 @@ export class AudioLink {
       }
       await sleep(150);
     }
+    if (this.cancelled()) {
+      // 用户取消打断了等待：不算「够不着」，否则取消会被报成「连不上耳机」
+      this.lastRestore = RestoreOutcome.NONE;
+      return false;
+    }
     this.trace(`AUDIO_RESTORE_TIMEOUT ms=${Date.now() - startedAt}`);
+    this.lastRestore = RestoreOutcome.TIMEOUT;
     return false;
   }
 

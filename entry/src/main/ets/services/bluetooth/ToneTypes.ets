@@ -1,7 +1,5 @@
 import { I18n } from '../../common/i18n/I18n';
 
-export type ToneProgress = (ratio: number, stage: string) => void;
-export type ToneLog = (line: string) => void;
 
 /** 协议层异常：code 为耳机或系统错误码，message 直接面向用户 */
 export class ToneError extends Error {
@@ -24,6 +22,9 @@ export class ToneError extends Error {
 /** 耳机/固件不支持盒音自定义：是终端结局，区别于值得重试的链路问题 */
 export const TONE_CODE_UNSUPPORTED: number = -96;
 
+/** 耳机够不着（音频连不回来，多半盒盖合着）：与 CaseWriteService 的 WriteCode.NO_EARBUD 同值，界面沿用那条下一步建议 */
+export const TONE_CODE_UNREACHABLE: number = 2002;
+
 export class ToneErrorReason {
   static readonly UNSUPPORTED: string = 'unsupported';
   static readonly FORMAT: string = 'format';
@@ -36,6 +37,13 @@ export class ToneErrorReason {
   static readonly CANCELLED: string = 'cancelled';
   /** 本进程的蓝牙串口卡死：重试、合盖都没用，只有重启应用进程能恢复 */
   static readonly WEDGED: string = 'wedged';
+  /**
+   * 连接请求挂起后一直没回来（耳机不回应）：可能自己恢复，也可能发展成卡死。
+   * 与 WEDGED（本机秒拒）分开：给「重试」，再失败若变成秒拒才要重启应用。
+   */
+  static readonly STALLED: string = 'stalled';
+  /** 建链前音频连不回来：不再试串口，让用户开盖后重试（不算一次失败写入） */
+  static readonly UNREACHABLE: string = 'unreachable';
 }
 
 export class CancelledError extends ToneError {

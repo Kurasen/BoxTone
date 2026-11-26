@@ -37,6 +37,16 @@ class FlushEnd {
 }
 
 /**
+ * 诊断用：发出「开始传输」后多久还没等到第一个窗口就记一笔（只记日志，不影响判定）。
+ * 2026-11-26 真机正常 93~451ms；21:47:02 那次握手中耳机连回音频，09 09 之后 8 秒没有任何窗口，
+ * 最后以 idleMs 超时整包重来。见 docs/write-engine.md 第 12 节。
+ */
+const START_STALL_NOTE_MS: number = 2000;
+
+/** 诊断用：擦写进度按这几个百分比各记一行（09 05 原始帧不再逐条打印，见 SppChannel.isProgressFrame） */
+const PROGRESS_MILESTONES: number[] = [25, 50, 75];
+
+/**
  * 音效上传状态机。
  *
  * 只依赖 UploadPort，不碰系统接口，所以能在本地单测里用「假耳机」跑完整流程。
@@ -110,6 +120,12 @@ export class ToneUploader {
     let flushFull: boolean = false;
     let flushEnd: number = FlushEnd.NONE;
     let completed: boolean = false;
+    /** 发出「开始传输」命令的时刻；是否已发看 startSent，不拿 0 当哨兵（理由同 acked） */
+    let startSentAt: number = 0;
+    let startSent: boolean = false;
+    let stallNoted: boolean = false;
+    let windows: number = 0;
+    let milestone: number = 0;
 
     while (!completed) {
       if (this.port.now() - started > this.timing.totalMs) {
@@ -150,8 +166,17 @@ export class ToneUploader {
           if (!(error instanceof AckTimeoutError)) {
             throw error as Error;
           }
+          const waitedFrom: number = this.port.now();
+          if (startSent && !acked && !stallNoted && waitedFrom - startSentAt >= START_STALL_NOTE_MS) {
+            stallNoted = true;
+            this.trace(`UPLOAD_START_STALL ${waitedFrom - startSentAt}ms 未收到第一个窗口`);
+          }
           await this.port.idle(true);
           if (this.port.now() - lastPacketAt > this.timing.idleMs) {
+            const now: number = this.port.now();
+            this.trace(`UPLOAD_IDLE_TIMEOUT stage=${acked ? 'transfer' : (startSent ? 'start' : 'handshake')} ` +
+              `idle=${now - lastPacketAt}ms windows=${windows}` +
+              (startSent ? ` sinceStart=${now - startSentAt}ms` : ''));
             throw error as Error;
           }
           continue;
@@ -199,6 +224,8 @@ export class ToneUploader {
             ByteUtils.be32(data.length),
             ByteUtils.fromHex('030100')
           ]));
+          startSentAt = this.port.now();
+          startSent = true;
         } else {
           await this.port.send(ByteUtils.fromHex('0902'));
         }
@@ -217,6 +244,8 @@ export class ToneUploader {
         this.trace(`UPLOAD_CHUNK_SIZE ${chunkSize}`);
         this.port.chunkHint(chunkSize);
         await this.port.send(ByteUtils.fromHex('0909010101'));
+        startSentAt = this.port.now();
+        startSent = true;
       } else if (type === UploadEvent.WINDOW) {
         const offsetField: Uint8Array | undefined = fields.get(protocol === 1 ? 2 : 1);
         if (offsetField === undefined || offsetField.length !== 4) {
@@ -240,6 +269,10 @@ export class ToneUploader {
         }
         const bitmap: number = ByteUtils.byteAt(bitmapField, 0);
         const windowAt: number = this.port.now();
+        if (!acked && startSent) {
+          this.trace(`UPLOAD_START_LAG ${windowAt - startSentAt}ms`);
+        }
+        windows++;
         const payloads: Uint8Array[] = [];
         let retx: number = 0;
         for (let index = 0; index < 8; index++) {
@@ -280,6 +313,15 @@ export class ToneUploader {
             flushTotal = total;
             written = done;
             lastProgressAt = this.port.now();
+            // 原始 09 05 帧不再逐条打印：只在跨过 25/50/75% 时记一行，并带上那一帧的原文以免漏掉异常字段
+            let crossed: number = -1;
+            while (milestone < PROGRESS_MILESTONES.length && done * 100 >= total * PROGRESS_MILESTONES[milestone]) {
+              crossed = milestone;
+              milestone++;
+            }
+            if (crossed >= 0) {
+              this.trace(`UPLOAD_PROGRESS ${PROGRESS_MILESTONES[crossed]}% ${done}/${total} raw=${ByteUtils.toHex(packet)}`);
+            }
             // 耳机的 total 是整包的两倍（接收 + 校验写），擦写单独一段进度
             this.emit(0.5 + 0.45 * (done / total), I18n.t('stage.flash'));
             if (!this.state.receivedAll && done >= data.length) {

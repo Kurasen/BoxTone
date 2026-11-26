@@ -19,10 +19,7 @@ export struct ToneCard {
   @Prop deleteLocked: boolean = false;
   @Prop expanded: boolean = false;
   @Prop playing: boolean = false;
-  @Prop writing: boolean = false;
-  @Prop writingText: string = I18n.t('lib.writing');
   /** 有其他音效正在写入：本条的写入入口置灰锁定 */
-  @Prop writeLocked: boolean = false;
   onToggle: () => void = () => {
   };
   onPlay: () => void = () => {
@@ -118,10 +115,7 @@ export struct ToneCard {
         // 五个操作：固定一行会挤爆窄屏，交给 wrap 自动换行
         Flex({ wrap: FlexWrap.Wrap }) {
           WriteChip({
-            chipText: this.writing ? this.writingText :
-              (this.writeLocked ? I18n.t('card.unavailable') : I18n.t('card.write')),
-            chipBusy: this.writing,
-            chipLocked: this.writeLocked,
+            chipText: I18n.t('card.write'),
             onTap: (): void => {
               this.onWrite();
             }
@@ -175,13 +169,11 @@ export struct ToneCard {
   }
 }
 
-/** 写入耳机盒：主操作，强调色；写入进行中或被他条占用时置灰 */
+/** 写入充电盒：主操作，强调色。写入期间由写入弹窗遮住整页，这里不再需要忙碌态 */
 @Component
 struct WriteChip {
   @StorageProp('themeEpoch') themeEpoch: number = 0;
   @Prop chipText: string = I18n.t('card.write');
-  @Prop chipBusy: boolean = false;
-  @Prop chipLocked: boolean = false;
   onTap: () => void = () => {
   };
 
@@ -191,25 +183,16 @@ struct WriteChip {
       .fontWeight(FontWeight.Medium)
       .maxLines(1)
       .textOverflow({ overflow: TextOverflow.Ellipsis })
-      .fontColor(this.chipLocked ? Palette.TEXT_TERTIARY : (this.chipBusy ? Palette.TEXT_TERTIARY : Palette.ACCENT_TEXT))
+      .fontColor(Palette.ACCENT_TEXT)
       // 不再 layoutWeight：Flex 里平分会让五个按钮挤成一行，改成按文字宽度自适应
       .height(34)
       .padding({ left: 16, right: 16 })
       .textAlign(TextAlign.Center)
       .borderRadius(17)
-      .backgroundColor(this.chipLocked ? Palette.BG_INPUT :
-        (this.chipBusy ? Palette.FILL_FAINT : Palette.CHIP_IDLE))
-      .border({
-        width: 1,
-        color: this.chipLocked ? Palette.BG_INPUT :
-          (this.chipBusy ? Palette.STROKE_SOFT : Palette.CHIP_IDLE_STROKE)
-      })
-      .opacity(this.chipLocked ? 0.55 : 1)
-      .enabled(!this.chipBusy && !this.chipLocked)
+      .backgroundColor(Palette.CHIP_IDLE)
+      .border({ width: 1, color: Palette.CHIP_IDLE_STROKE })
       .onClick(() => {
-        if (!this.chipBusy && !this.chipLocked) {
-          this.onTap();
-        }
+        this.onTap();
       })
   }
 }

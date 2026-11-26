@@ -117,6 +117,15 @@ export class SettingsService {
     SettingsService.put(AppStorageKey.KEY_LAST_WRITTEN_TONE, toneId);
   }
 
+  /** 调试：写后间隔覆盖（毫秒），0 = 默认 */
+  public static getDebugFlashGapMs(): number {
+    return SettingsService.getNumber(AppStorageKey.KEY_DEBUG_FLASH_GAP, 0);
+  }
+
+  public static setDebugFlashGapMs(ms: number): void {
+    SettingsService.put(AppStorageKey.KEY_DEBUG_FLASH_GAP, ms);
+  }
+
   /** 设置存储是否已就绪：依赖「只做一次」判断的功能（如评分）必须等它 */
   public static isReady(): boolean {
     return SettingsService.store !== undefined;

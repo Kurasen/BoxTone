@@ -270,6 +270,12 @@ export class PacketAssembler {
 
 /** 耳机侧错误码翻译：这些码是实测中会稳定出现的拒绝原因 */
 export class ToneStatusCodec {
+  /**
+   * 传输中合上盒盖：耳机以 09 07 上报 0x0001A9D9。
+   * 2026-11-26 19:37:16、22:55:37 两次真机都是用户中途合盖（docs/write-engine.md 8.1、14 节）。
+   */
+  static readonly LID_CLOSED: number = 109017;
+
   /** 是否是已知的、有明确处置建议的错误码 */
   static isKnown(code: number): boolean {
     if (code === 100010 || code === 109012) {
@@ -279,6 +285,9 @@ export class ToneStatusCodec {
       return true;
     }
     if (code === 100012 || code === 109006 || code === 100013 || code === 109022) {
+      return true;
+    }
+    if (code === ToneStatusCodec.LID_CLOSED) {
       return true;
     }
     return false;
@@ -299,6 +308,9 @@ export class ToneStatusCodec {
     }
     if (code === 109022) {
       return I18n.t('status.recording');
+    }
+    if (code === ToneStatusCodec.LID_CLOSED) {
+      return I18n.t('status.lidClosed');
     }
     return I18n.f('status.rejected', [`${code}`]);
   }

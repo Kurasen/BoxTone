@@ -16,6 +16,8 @@ export class DeviceTimeline {
   cooldownUntil: number = 0;
   /** 写完音效后耳机在擦闪存：这段时间不能开始新的传输 */
   settleUntil: number = 0;
+  /** 上一条写入收完整包（耳机开始收尾）的时刻：间隔测试用 */
+  lastFlashedAt: number = 0;
   /** 上一条活着的串口被主动关掉的时刻 */
   lastCloseAt: number = 0;
   /** 上一次主动断开音频是否成功：成功过才在建链前抢先断开 */
@@ -55,7 +57,8 @@ export class DeviceTimeline {
 
   /** 一段写入结束：开始沉降期 */
   noteFlashed(): void {
-    this.settleUntil = Date.now() + WriteSpec.POST_FLASH_GAP_MS;
+    this.lastFlashedAt = Date.now();
+    this.settleUntil = this.lastFlashedAt + WriteSpec.postFlashGapMs();
   }
 
   noteSocketClosed(): void {

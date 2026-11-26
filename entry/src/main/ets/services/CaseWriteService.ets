@@ -11,9 +11,9 @@ import { BluetoothService } from './BluetoothService';
 import { SettingsService } from './SettingsService';
 import { ToneRepositoryService } from './ToneRepositoryService';
 import { WriteCompatibility } from './WriteCompatibility';
-import { isToneError, ToneError, ToneErrorReason, ToneProgress } from './bluetooth/ToneTypes';
+import { isToneError, ToneError, ToneErrorReason } from './bluetooth/ToneTypes';
 import { WriteEngine } from './write/WriteEngine';
-import { CommandOutcome, WriteOutcome } from './write/WriteTypes';
+import { CommandOutcome, StepProgress, WriteOutcome } from './write/WriteTypes';
 
 const MODULE: string = 'CaseWrite';
 
@@ -34,6 +34,8 @@ export class WriteCode {
   static readonly NEARLINK_UNSUPPORTED: number = 2004;
   /** 本进程的蓝牙串口卡死：只能重启应用，没有对应的「下一步」文案（正文已经说清楚） */
   static readonly LINK_WEDGED: number = 3005;
+  /** 连接请求挂起、耳机不回应：可以重试，不一定要重启 */
+  static readonly LINK_STALLED: number = 3006;
 
   /**
    * 错误码对应的「下一步该做什么」，返回 i18n key。
@@ -66,8 +68,13 @@ export class WriteCode {
       case WriteCode.FORMAT_REJECTED:
         return 'write.hint.formatRejected';
       // 耳机拒绝串口：系统错误码直接透传上来，这里单独给一条动作
+      case WriteCode.LINK_STALLED:
+        return 'write.hint.linkStalled';
       case 2900099:
         return 'write.hint.serialRefused';
+      // 耳机上报的传输中合盖（ToneStatusCodec.LID_CLOSED），透传上来的是耳机错误码
+      case 109017:
+        return 'write.hint.lidClosed';
       default:
         return '';
     }
@@ -82,8 +89,12 @@ export class WriteReason {
   static readonly LINK: string = 'link';
   static readonly NEARLINK: string = 'nearlink';
   static readonly BLOCKED: string = 'blocked';
+  /** 用户在传输开始前取消：不算失败，不记失败次数 */
+  static readonly CANCELLED: string = ToneErrorReason.CANCELLED;
   /** 蓝牙串口卡死：界面给「重启应用」按钮 */
   static readonly WEDGED: string = ToneErrorReason.WEDGED;
+  /** 耳机不回应连接：界面给「重试」与「重启应用」 */
+  static readonly STALLED: string = ToneErrorReason.STALLED;
   static readonly OTHER: string = 'other';
 }
 
@@ -302,7 +313,7 @@ export class CaseWriteService {
   // ---------------------------------------------------------------- 写入
 
   /** 写入耳机盒 */
-  public static async write(entry: ToneEntry, onProgress?: ToneProgress): Promise<WriteResult> {
+  public static async write(entry: ToneEntry, onProgress?: StepProgress): Promise<WriteResult> {
     const check: WriteCheck = CaseWriteService.check(entry);
     if (!check.ok) {
       Logger.warn(MODULE, `写入前置检查未通过 code=${check.code}：${check.message}`);
@@ -390,16 +401,32 @@ export class CaseWriteService {
     } catch (error) {
       const toneError: ToneError = CaseWriteService.asToneError(error as Object);
       const message: string = toneError.message.length > 0 ? toneError.message : I18n.t('write.builtinFailed');
-      const reason: string = toneError.reason.length > 0 ? toneError.reason : WriteReason.OTHER;
+      const mapped: string = CaseWriteService.reasonOf(toneError);
+      const reason: string = mapped.length > 0 ? mapped : WriteReason.OTHER;
       Logger.warn(MODULE, `切换内置音效失败 code=${toneError.code} reason=${reason}：${message}`);
       const code: number = reason === WriteReason.WEDGED ? WriteCode.LINK_WEDGED :
-        (toneError.code !== 0 ? toneError.code : WriteCode.WRITE_FAILED);
+        (reason === WriteReason.STALLED ? WriteCode.LINK_STALLED :
+          (toneError.code !== 0 ? toneError.code : WriteCode.WRITE_FAILED));
       return reject(code, message, reason,
         CaseWriteService.buildDiagnostic(null, deviceId, modelName, toneError));
     }
   }
 
   // ---------------------------------------------------------------- 失败翻译
+
+  /**
+   * 引擎归类 → 界面归类：
+   * 音频断不开按链路问题（保留重试）；耳机够不着（多半盒盖合着）按前置拦截，不计失败写入、不显示错误码。
+   */
+  private static reasonOf(toneError: ToneError): string {
+    if (toneError.reason === ToneErrorReason.AUDIO_HELD) {
+      return WriteReason.LINK;
+    }
+    if (toneError.reason === ToneErrorReason.UNREACHABLE) {
+      return WriteReason.BLOCKED;
+    }
+    return toneError.reason;
+  }
 
   private static asToneError(error: Object): ToneError {
     if (isToneError(error)) {
@@ -411,12 +438,18 @@ export class CaseWriteService {
 
   private static describeFailure(error: Object, entry: ToneEntry, deviceId: string, modelName: string): WriteResult {
     const toneError: ToneError = CaseWriteService.asToneError(error);
+    if (toneError.reason === ToneErrorReason.CANCELLED) {
+      Logger.info(MODULE, `用户取消写入「${entry.name}」`);
+      return reject(toneError.code, I18n.t('wp.cancelled'), WriteReason.CANCELLED);
+    }
     // 音频断不开归到链路问题：保留可执行的重试指引
-    let reason: string = toneError.reason === ToneErrorReason.AUDIO_HELD ? WriteReason.LINK : toneError.reason;
+    let reason: string = CaseWriteService.reasonOf(toneError);
     let code: number = toneError.code !== 0 ? toneError.code : WriteCode.WRITE_FAILED;
     let message: string = toneError.message.length > 0 ? toneError.message : I18n.f('write.failedWith', [`${code}`]);
     if (reason === WriteReason.WEDGED) {
       code = WriteCode.LINK_WEDGED;
+    } else if (reason === WriteReason.STALLED) {
+      code = WriteCode.LINK_STALLED;
     } else if (reason === WriteReason.UNSUPPORTED) {
       // 不支持的机型是终端结局：不引导重试，只引导反馈
       code = WriteCode.PROTOCOL_UNVERIFIED;
@@ -447,13 +480,15 @@ export class CaseWriteService {
   private static describeRestoreFailure(error: Object, deviceId: string, modelName: string): WriteResult {
     const toneError: ToneError = CaseWriteService.asToneError(error);
     // 音频通道断不开：界面上仍按链路问题给出重试入口
-    const reason: string = toneError.reason === ToneErrorReason.AUDIO_HELD ? WriteReason.LINK :
-      (toneError.reason.length > 0 ? toneError.reason : WriteReason.OTHER);
+    const mapped: string = CaseWriteService.reasonOf(toneError);
+    const reason: string = mapped.length > 0 ? mapped : WriteReason.OTHER;
     let code: number = toneError.code !== 0 ? toneError.code : WriteCode.WRITE_FAILED;
     let message: string = toneError.message.length > 0 ? toneError.message :
       I18n.f('write.restoreFailedWith', [`${code}`]);
     if (reason === WriteReason.WEDGED) {
       code = WriteCode.LINK_WEDGED;
+    } else if (reason === WriteReason.STALLED) {
+      code = WriteCode.LINK_STALLED;
     } else if (reason === WriteReason.UNSUPPORTED) {
       code = WriteCode.PROTOCOL_UNVERIFIED;
     } else if (code === -99) {

@@ -10,6 +10,38 @@ import { ToneStatus } from '../bluetooth/MbbProtocol';
 /** 进度回调：ratio 0~1，stage 为面向用户的阶段文案 */
 export type StageProgress = (ratio: number, stage: string) => void;
 
+/**
+ * 写入步骤：写入弹窗据此显示标题和步骤条。
+ * 由引擎按进度区间推出（与 ToneUploader 的进度划分一致），只有「等耳机收尾」由引擎显式标出。
+ */
+export class WriteStep {
+  static readonly WAIT: string = 'wait';
+  static readonly CONNECT: string = 'connect';
+  static readonly HANDSHAKE: string = 'handshake';
+  static readonly TRANSFER: string = 'transfer';
+  static readonly FLASH: string = 'flash';
+  static readonly APPLY: string = 'apply';
+
+  static of(ratio: number): string {
+    if (ratio < 0.04) {
+      return WriteStep.CONNECT;
+    }
+    if (ratio < 0.08) {
+      return WriteStep.HANDSHAKE;
+    }
+    if (ratio < 0.5) {
+      return WriteStep.TRANSFER;
+    }
+    if (ratio < 0.97) {
+      return WriteStep.FLASH;
+    }
+    return WriteStep.APPLY;
+  }
+}
+
+/** 带步骤的进度回调：给写入弹窗用 */
+export type StepProgress = (ratio: number, stage: string, step: string) => void;
+
 /** 诊断日志出口：由调用方决定落到哪里（debug 包才记报文级细节） */
 export type TraceSink = (line: string) => void;
 

@@ -10,6 +10,7 @@ import { PrivacyConsentService } from '../services/PrivacyConsentService';
 import { SettingsService } from '../services/SettingsService';
 import { ThemeService } from '../services/ThemeService';
 import { WriteGuard } from '../services/write/WriteGuard';
+import { WriteSpec } from '../services/write/WriteSpec';
 
 const MODULE: string = 'EntryAbility';
 
@@ -27,6 +28,10 @@ export default class EntryAbility extends UIAbility {
     LanguageService.apply();
     // 设置存储必须早于外观：ThemeService 要读取保存的外观模式，存储未就绪会一直读到默认深色
     SettingsService.init(this.context);
+    // 写后间隔测试：只有 debug 包读取覆盖值，正式包始终用默认 25 秒
+    if (AppEnv.isDebug()) {
+      WriteSpec.gapOverrideMs = SettingsService.getDebugFlashGapMs();
+    }
     // 应用外观：默认跟随系统，可在「我的 → 外观设置」切换深色/浅色/跟随系统；
     // setColorMode 同时决定系统弹窗、半模态与 HDS 底栏材质的深浅
     ThemeService.init(this.context);

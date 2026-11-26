@@ -16,8 +16,13 @@ import { NearLinkService, NearLinkSnapshot } from './NearLinkService';
 
 const MODULE: string = 'Bluetooth';
 const PERMISSION_BLUETOOTH: Permissions = 'ohos.permission.ACCESS_BLUETOOTH';
-/** 扫描自动停止时间 */
+
 const SCAN_TIMEOUT_MS: number = 15000;
+/**
+ * A2DP 状态回调同一状态常连发 3~5 次（如断开时 state=0 ×4）。这段时间内完全相同的回调只计数，
+ * 下一条不同的回调带上 dup=N。只影响日志，刷新照常触发。
+ */
+const A2DP_LOG_DEDUP_MS: number = 1500;
 
 export type BtChangeListener = (snapshot: BtSnapshot) => void;
 
@@ -40,6 +45,10 @@ export class BluetoothService {
   private static listenedFind: boolean = false;
   private static listenedBond: boolean = false;
   private static listenedConn: boolean = false;
+  /** A2DP 日志去重：上一条打印的「地址|状态|原因」、时刻，以及之后被合并的条数 */
+  private static a2dpLogKey: string = '';
+  private static a2dpLogAt: number = 0;
+  private static a2dpLogDup: number = 0;
   /** 事件回调去抖计时器：系统事件经常成组到达，合并成一次刷新 */
   private static refreshTimer: number = -1;
   /**
@@ -108,8 +117,7 @@ export class BluetoothService {
         // 耳机在系统里被连上/断开时同步刷新，否则页面会一直停在打开时的状态
         const profile: a2dp.A2dpSourceProfile = a2dp.createA2dpSrcProfile();
         profile.on('connectionStateChange', (data: baseProfile.StateChangeParam) => {
-          Logger.info(MODULE,
-            `A2DP 连接状态变化 ${FormatUtils.maskAddress(data.deviceId)} state=${data.state}`);
+          BluetoothService.logA2dpState(data);
           BluetoothService.refreshDebounced();
         });
         BluetoothService.listenedConn = true;
@@ -119,8 +127,42 @@ export class BluetoothService {
     }
   }
 
+  /**
+   * 记下 cause（baseProfile.DisconnectCause，API 12 起），看音频掉线/连回各是什么原因；
+   * 0=USER_DISCONNECT、1~3=需由键盘/鼠标/车机侧发起、4=TOO_MANY_CONNECTED_DEVICES、5=CONNECT_FAIL_INTERNAL（SDK baseProfile.d.ts），
+   * 用于排查「握手期间被连回 / 收尾期间耳机自己掉音频」，见 docs/write-engine.md 第 12 节。
+   */
+  private static logA2dpState(data: baseProfile.StateChangeParam): void {
+    const now: number = Date.now();
+    const key: string = `${data.deviceId}|${data.state}|${data.cause}`;
+    if (key === BluetoothService.a2dpLogKey && now - BluetoothService.a2dpLogAt < A2DP_LOG_DEDUP_MS) {
+      BluetoothService.a2dpLogDup++;
+      return;
+    }
+    const dup: string = BluetoothService.a2dpLogDup > 0 ? ` (前一条另有 dup=${BluetoothService.a2dpLogDup})` : '';
+    BluetoothService.a2dpLogKey = key;
+    BluetoothService.a2dpLogAt = now;
+    BluetoothService.a2dpLogDup = 0;
+    Logger.info(MODULE, `A2DP 连接状态变化 ${FormatUtils.maskAddress(data.deviceId)} state=${data.state} ` +
+      `cause=${data.cause}${dup}`);
+  }
+
   public static getSnapshot(): BtSnapshot {
     return BluetoothService.snapshot;
+  }
+
+  /** 设备显示名：当前输出设备名优先，取不到（音频已断开）就用配对表里同一地址的名字；都没有返回空串 */
+  public static nameOf(deviceId: string): string {
+    const snapshot: BtSnapshot = BluetoothService.snapshot;
+    if (snapshot.activeName.length > 0) {
+      return snapshot.activeName;
+    }
+    for (let i = 0; i < snapshot.pairedDevices.length; i++) {
+      if (BluetoothService.sameAddress(snapshot.pairedDevices[i].deviceId, deviceId)) {
+        return snapshot.pairedDevices[i].name;
+      }
+    }
+    return '';
   }
 
   /** 记录耳机自报型号：写入链路查到后供后续前置检查与日志复用 */
@@ -161,6 +203,8 @@ export class BluetoothService {
   public static async ensurePermission(): Promise<boolean> {
     const context: common.UIAbilityContext | undefined = BluetoothService.context;
     if (context === undefined) {
+      // 2026-11-26：init 漏存 context 时这里静默返回，界面只显示「需要蓝牙权限」，日志里什么都没有
+      Logger.warn(MODULE, '申请蓝牙权限：缺少 context（蓝牙服务未初始化），未弹授权框');
       return false;
     }
     if (BluetoothService.hasPermission()) {
@@ -193,6 +237,7 @@ export class BluetoothService {
   public static async ensurePermissionOnSetting(): Promise<boolean> {
     const context: common.UIAbilityContext | undefined = BluetoothService.context;
     if (context === undefined) {
+      Logger.warn(MODULE, '拉起权限设置：缺少 context（蓝牙服务未初始化）');
       return false;
     }
     try {
@@ -361,13 +406,18 @@ export class BluetoothService {
     }, delayMs);
   }
 
-  /** 写入成功后调用：进入保存窗口，立即刷新一次，窗口结束时再刷新一次 */
+  /**
+   * 进入保存窗口：立即刷新一次，窗口结束时再刷新一次（窗口只由这里的定时器结束）。
+   * 写入收完整包后由 WriteEngine 按沉降期剩余时长调用，与写入弹窗的等待倒计时同一个时钟；
+   * 命令类操作（恢复默认 / 切内置音 / 回滚）不写闪存，沿用固定的音频恢复延迟。
+   */
   public static markCaseSettling(deviceId: string, durationMs: number): void {
     if (deviceId.length === 0) {
       return;
     }
     BluetoothService.settlingId = deviceId;
     BluetoothService.settlingUntil = Date.now() + durationMs;
+    Logger.info(MODULE, `CASE_SETTLING ms=${durationMs}`);
     if (BluetoothService.settleTimer >= 0) {
       clearTimeout(BluetoothService.settleTimer);
     }
@@ -672,42 +722,6 @@ export class BluetoothService {
     } catch (error) {
       Logger.exception(MODULE, '配对失败', error as BusinessError);
       throw error as Error;
-    }
-  }
-
-  /**
-   * 关闭再打开手机蓝牙，用于恢复卡死的蓝牙串口（备用；首选是重启应用）。
-   *
-   * 2026-11-26 21:00 / 21:08 真机：串口卡死后关开一次蓝牙即恢复，但从点按到蓝牙重新打开要 8~9 秒，
-   * 再等耳机重连，合计约 20 秒；重启应用约 3 秒且耳机音频不断，所以只作备用。
-   * access.disableBluetooth / enableBluetooth（API 10，ACCESS_BLUETOOTH 权限）是否弹系统确认框
-   * 以系统行为为准；任一步失败返回 false，由界面引导用户去控制中心手动操作。
-   * 会断开手机上所有蓝牙设备，只能由用户点按钮触发。
-   */
-  public static async restartAdapter(): Promise<boolean> {
-    const wait = (ms: number): Promise<void> => new Promise<void>((resolve: () => void) => {
-      setTimeout(() => {
-        resolve();
-      }, ms);
-    });
-    try {
-      Logger.warn(MODULE, '用户确认重启蓝牙以恢复串口');
-      access.disableBluetooth();
-      const offBy: number = Date.now() + 8000;
-      while (Date.now() < offBy && access.getState() !== access.BluetoothState.STATE_OFF) {
-        await wait(200);
-      }
-      if (access.getState() !== access.BluetoothState.STATE_OFF) {
-        Logger.warn(MODULE, '重启蓝牙：等待关闭超时');
-        return false;
-      }
-      await wait(500);
-      access.enableBluetooth();
-      Logger.info(MODULE, '重启蓝牙：已重新打开');
-      return true;
-    } catch (error) {
-      Logger.warn(MODULE, `重启蓝牙失败 code=${(error as BusinessError).code}`);
-      return false;
     }
   }
 

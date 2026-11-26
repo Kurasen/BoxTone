@@ -1,8 +1,8 @@
 import { MbbSpec } from '../../common/constants/AppConstants';
 import { I18n } from '../../common/i18n/I18n';
 import { Logger } from '../../common/utils/Logger';
-import { CancelledError, ToneError, ToneErrorReason } from '../bluetooth/ToneTypes';
-import { AudioGateState, AudioLink } from './AudioLink';
+import { CancelledError, TONE_CODE_UNREACHABLE, ToneError, ToneErrorReason } from '../bluetooth/ToneTypes';
+import { AudioGateState, AudioLink, RestoreOutcome } from './AudioLink';
 import { DeviceTimeline } from './DeviceTimeline';
 import { SppChannel } from './SppChannel';
 import { SppErrors } from './SppErrors';
@@ -131,6 +131,9 @@ export class LinkConnector {
       Logger.info(MODULE, 'AUDIO_IDLE_BEFORE_CONNECT 音频未连接，先连回音频再建串口');
       await this.audio.restore(WriteSpec.AUDIO_RESTORE_WAIT_MS);
       this.throwIfCancelled();
+      if (this.audio.lastRestore === RestoreOutcome.TIMEOUT) {
+        throw this.unreachable('before_connect');
+      }
     }
 
     if (this.timeline.releaseHint && this.audio.isLinked()) {
@@ -149,7 +152,7 @@ export class LinkConnector {
       for (let mode = 0; mode < modes.length; mode++) {
         this.throwIfCancelled();
         if (Date.now() > deadline) {
-          throw sawBusyTimeout ? this.wedged('budget busy_timeout=true') : this.finalError(lastError, fastRejectsSeen);
+          throw sawBusyTimeout ? this.stalled('budget busy_timeout=true') : this.finalError(lastError, fastRejectsSeen);
         }
         if (round > 0 || mode > 0) {
           await sleep(Math.min(MbbSpec.CONNECT_RETRY_GAP_MS + round * 200, 1500));
@@ -191,7 +194,7 @@ export class LinkConnector {
               return adopted;
             }
             if (SppChannel.isHung()) {
-              throw this.wedged(`hung_connect secure=${secure} waited=${WriteSpec.HUNG_CONNECT_WAIT_MS}ms`);
+              throw this.stalled(`hung_connect secure=${secure} waited=${WriteSpec.HUNG_CONNECT_WAIT_MS}ms`);
             }
           }
           if (failure.code === SppErrors.NOT_ACCEPTED && tookMs < WriteSpec.FAST_REJECT_MS) {
@@ -217,7 +220,7 @@ export class LinkConnector {
             audioRelinks++;
             this.trace(`AUDIO_RELINK ${audioRelinks}`);
             if (audioRelinks >= 2 && sawBusyTimeout) {
-              throw this.wedged(`audio_relink=${audioRelinks} busy_timeout=true`);
+              throw this.stalled(`audio_relink=${audioRelinks} busy_timeout=true`);
             }
             if (audioRelinks >= 2 && LinkConnector.wedgedSince > 0 && fastRejectsSeen > 0) {
               throw this.wedged(`sticky audio_relink=${audioRelinks}`);
@@ -244,6 +247,8 @@ export class LinkConnector {
             Logger.info(MODULE, 'AUDIO_IDLE_REJECT 耳机拒绝且音频未连接，连回音频后重试');
             if (await this.audio.restore(WriteSpec.AUDIO_RESTORE_WAIT_MS)) {
               probeNext = await this.audio.release();
+            } else if (this.audio.lastRestore === RestoreOutcome.TIMEOUT) {
+              throw this.unreachable('after_reject');
             }
             continue;
           }
@@ -326,7 +331,7 @@ export class LinkConnector {
   }
 
   /**
-   * 耳机串口卡死：重试只会继续被拒，只有合盖重开（或开关一次手机蓝牙）能恢复。
+   * 本机串口卡死（连接请求在本机就被秒拒）：重试只会继续被拒，重启应用进程才能恢复。
    * 提前收手、给出这条唯一有效的指引，而不是让用户等满预算再看到「被其他应用占用」。
    */
   private wedged(detail: string): ToneError {
@@ -337,6 +342,41 @@ export class LinkConnector {
     const error: ToneError = new ToneError(I18n.t('toneErr.linkWedged'), SppErrors.NOT_ACCEPTED);
     error.reason = ToneErrorReason.WEDGED;
     error.diagnostic = `LINK_WEDGED ${detail}`;
+    return error;
+  }
+
+  /**
+   * 音频连不回来：耳机够不着，多半盒盖合着。不再试串口，直接请用户开盖后重试。
+   *
+   * 2026-11-26 两次「连回音频 5 秒超时后照样去连串口」：20:58:45 sppConnect 挂起，只能关开蓝牙恢复（10 节）；
+   * 23:18:26 盒盖合着，两条请求各挂起 3~4 秒后迟到失败，耗满预算被误判成卡死（3005，15 节）。
+   * 音频本来就断开时串口从没连上过（8.2 节），而挂起的 sppConnect 正是卡死的起点，所以宁可早停。
+   * 只认超时：系统拒绝连回（DENIED）判断不了耳机状态，照旧去试串口。
+   */
+  private unreachable(stage: string): ToneError {
+    Logger.warn(MODULE, `EARBUD_UNREACHABLE stage=${stage} 音频连不回来，不再尝试串口`);
+    const error: ToneError = new ToneError(I18n.t('toneErr.unreachable'), TONE_CODE_UNREACHABLE);
+    error.reason = ToneErrorReason.UNREACHABLE;
+    error.diagnostic = `EARBUD_UNREACHABLE stage=${stage}`;
+    return error;
+  }
+
+  /**
+   * 连接请求挂起、耳机一直不回应：不一定卡死。
+   *
+   * 2026-11-26 真机：23:43:44 hung_connect 判定后 16 秒，不重启直接写入成功（LINK_UNWEDGED，18 节）；
+   * 但 22:38:40 那次之后紧接着变成秒拒（真卡死），20:02 / 21:08 也要重启或关开蓝牙。
+   * 所以只说「没回应」、给重试；再试时若已变成秒拒，会在约 3 秒内判成 WEDGED，届时再引导重启应用。
+   * 同样记 wedgedSince：之后一轮里出现秒拒就沿用进程级卡死判定（finalError 的 sticky 分支）。
+   */
+  private stalled(detail: string): ToneError {
+    if (LinkConnector.wedgedSince === 0) {
+      LinkConnector.wedgedSince = Date.now();
+    }
+    Logger.warn(MODULE, `LINK_STALLED ${detail} ${SppChannel.ledger()}`);
+    const error: ToneError = new ToneError(I18n.t('toneErr.linkStalled'), 0);
+    error.reason = ToneErrorReason.STALLED;
+    error.diagnostic = `LINK_STALLED ${detail}`;
     return error;
   }
 

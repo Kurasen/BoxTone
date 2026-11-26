@@ -20,21 +20,16 @@ import { AudioConvertTaskService } from '../../services/audio/ConvertTask';
 import { AudioPlayService } from '../../services/AudioPlayService';
 import { AudioSourceService } from '../../services/AudioSourceService';
 import { BluetoothService } from '../../services/BluetoothService';
-import { CaseWriteService,
-  WriteCheck,
-  WriteCode,
-  WriteReason,
-  WriteResult
-} from '../../services/CaseWriteService';
+import { CaseWriteService, WriteCheck, WriteCode } from '../../services/CaseWriteService';
 import { ImportCancelledError, ImportControl, ImportProgressState } from '../../services/audio/ImportControl';
 import { AppSettings, SettingsService } from '../../services/SettingsService';
-import { RatingService } from '../../services/RatingService';
 import { PrivacyConsentService } from '../../services/PrivacyConsentService';
 import { ToneRepositoryService } from '../../services/ToneRepositoryService';
 import { BuiltinTone, BuiltinToneCatalog } from '../../services/BuiltinToneCatalog';
 import { BuiltinToneService } from '../../services/BuiltinToneService';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
-import { AppRestart } from '../../common/utils/AppRestart';
+import { WriteConfirm } from '../../common/utils/WriteConfirm';
+import { WriteTask } from '../../services/write/WriteTask';
 
 const MODULE: string = 'TonePage';
 /** 全段峰值缓存桶数：放大到 1 秒窗口时仍有足够细节 */
@@ -86,8 +81,6 @@ export struct TonePage {
   @State savedName: string = '';
   /** 生成后直接写入：进度与阶段，和音效库页保持同一套文案 */
   @State writing: boolean = false;
-  @State writeRatio: number = 0;
-  @State writeStage: string = '';
 
   /**
    * 转换结果缓存。
@@ -197,8 +190,8 @@ export struct TonePage {
     return current === undefined ? 0 : current.durationMs;
   }
 
-  private toast(message: string): void {
-    this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 });
+  private toast(message: string, duration: number = 2000): void {
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: duration });
   }
 
   // ---------------- 导入 ----------------
@@ -576,21 +569,30 @@ export struct TonePage {
   /** 生成并保存，随后直接进入写入流程：写入前仍会做一次设备检查与确认 */
   private async generateAndWrite(): Promise<void> {
     const current: SourceAudio | undefined = this.source;
-    if (current === undefined || this.busy || this.writing) {
+    if (current === undefined || this.busy || this.writing || WriteTask.isActive()) {
       return;
     }
     this.busy = true;
     try {
       const result: ConvertResult = await this.prepareResult(current, I18n.t('tone.generating'));
       // 写入同样复用：同一段音效反复点「生成并写入」，音效库里只留一条
-      const entry: ToneEntry = this.saveOrReuse(current, result).entry;
+      const saved: SavedTone = this.saveOrReuse(current, result);
+      const entry: ToneEntry = saved.entry;
       this.savedName = entry.name;
+      // 没写进去时告诉用户音效库里的情况：复用了已有条目就说「已存在」，与「仅保存到音效库」同一句
+      const savedToast: string = saved.reused ? I18n.t('tone.alreadySaved') :
+        I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]);
       await BluetoothService.refresh();
       const check: WriteCheck = CaseWriteService.check(entry);
       if (!check.ok) {
         if (check.code === WriteCode.NEARLINK_UNSUPPORTED) {
-          this.toast(I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]));
+          this.toast(savedToast);
           NearLinkAlert.show(this.getUIContext(), check.message);
+          return;
+        }
+        if (saved.reused) {
+          // 音效库没有变化，只需要说明为什么没写：底部一句话，不弹要点掉的对话框
+          this.toast(I18n.f('tone.notWrittenExisting', [check.message]), 3500);
           return;
         }
         this.getUIContext().showAlertDialog({
@@ -604,24 +606,10 @@ export struct TonePage {
         });
         return;
       }
-      const writeHint: string = I18n.t('lib.writeHint');
-      const hint: string = check.warn.length > 0 ? `${check.warn}\n${writeHint}` : writeHint;
-      this.getUIContext().showAlertDialog({
-        title: I18n.t('lib.writeTitle'),
-        message: I18n.f('lib.writeMessage', [hint]),
-        primaryButton: {
-          value: I18n.t('common.cancel'),
-          action: (): void => {
-            this.toast(I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]));
-          }
-        },
-        secondaryButton: {
-          value: I18n.t('lib.startWrite'),
-          fontColor: Palette.ACCENT,
-          action: (): void => {
-            this.runWrite(entry);
-          }
-        }
+      WriteConfirm.tone(this.getUIContext(), entry.name, check.warn, (): void => {
+        this.runWrite(entry);
+      }, (): void => {
+        this.toast(savedToast);
       });
     } catch (error) {
       Logger.exception(MODULE, '生成并写入失败', error as BusinessError);
@@ -632,117 +620,14 @@ export struct TonePage {
     }
   }
 
+  /** 进度和结局都在写入弹窗里；这里只记一个忙碌标记，禁用「更换」「生成」等按钮 */
   private async runWrite(entry: ToneEntry): Promise<void> {
     this.writing = true;
-    this.writeRatio = 0;
-    this.writeStage = I18n.t('lib.stageConnect');
     try {
-      const result: WriteResult = await CaseWriteService.write(entry,
-        (ratio: number, stage: string): void => {
-          this.writeRatio = Math.round(ratio * 100);
-          this.writeStage = stage;
-        });
-      if (result.ok) {
-        this.writeRatio = 100;
-        SettingsService.recordWriteSuccess();
-        this.getUIContext().showAlertDialog({
-          title: I18n.t('lib.writeDone'),
-          message: I18n.f('lib.writeDoneMessage', [result.message]),
-          confirm: {
-            value: I18n.t('common.ok'),
-            action: (): void => {
-              // 用户点掉「写入完成」之后再谈评分：两个弹窗叠在一起体验很差
-              RatingService.maybeAskAfterWrite(
-                this.getUIContext().getHostContext() as common.UIAbilityContext);
-            }
-          }
-        });
-      } else {
-        SettingsService.recordWriteFailure();
-        this.showWriteFailure(result);
-      }
-    } catch (error) {
-      Logger.exception(MODULE, '写入异常', error as BusinessError);
-      SettingsService.recordWriteFailure();
-      this.toast(I18n.t('lib.writeFailed'));
+      await WriteTask.writeTone(entry);
     } finally {
       this.writing = false;
-      this.writeStage = '';
-      this.writeRatio = 0;
-      // 直接写入后音效库的「盒内」标记与列表需要立即跟上
-      EventBus.emit(AppEvent.TONE_CHANGED, 1);
-      BluetoothService.refresh().then(() => {
-      }).catch((error: BusinessError) => {
-        Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);
-      });
     }
-  }
-
-  /** 写入失败：先给「现在该做什么」，错误码放最后供反馈定位 */
-
-  /**
-   * 蓝牙串口卡死。两种恢复办法都实测有效：
-   * - 重启应用（首选）：约 3 秒，耳机音频不断，回来就能写；秒拒、挂起两种形态都验证过；
-   * - 重启蓝牙（备用）：关开一次要 8~9 秒，之后还要等耳机重连，合计约 20 秒，只在重启应用无效时用。
-   * 恢复后由用户自己重新写入。
-   */
-  private showWedged(result: WriteResult): void {
-    this.getUIContext().showAlertDialog({
-      title: I18n.t('lib.writeIncomplete'),
-      message: `${result.message}\n\n${I18n.f('lib.errorCode', [`${result.code}`])}`,
-      primaryButton: {
-        value: I18n.t('lib.restartBluetooth'),
-        action: (): void => {
-          BluetoothService.restartAdapter().then((ok: boolean) => {
-            this.getUIContext().getPromptAction().showToast({
-              message: ok ? I18n.t('lib.btRestarted') : I18n.t('lib.btRestartFailed'),
-              duration: 3000
-            });
-          });
-        }
-      },
-      secondaryButton: {
-        value: I18n.t('lib.restartApp'),
-        fontColor: Palette.ACCENT,
-        action: (): void => {
-          const context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
-          if (!AppRestart.restart(context)) {
-            this.getUIContext().getPromptAction().showToast({ message: I18n.t('lib.restartFailed') });
-          }
-        }
-      }
-    });
-  }
-
-  private showWriteFailure(result: WriteResult): void {
-    if (result.reason === WriteReason.WEDGED) {
-      this.showWedged(result);
-      return;
-    }
-    const needReport: boolean = result.reason === WriteReason.UNSUPPORTED ||
-      result.reason === WriteReason.FORMAT;
-    const hintKey: string = WriteCode.hintKey(result.code);
-    const hint: string = hintKey.length > 0 ? I18n.t(hintKey) : '';
-    const codeLine: string = I18n.f('lib.errorCode', [`${result.code}`]);
-    const body: string = hint.length > 0
-      ? `${result.message}\n\n${hint}\n\n${codeLine}`
-      : `${result.message}\n\n${codeLine}`;
-    this.getUIContext().showAlertDialog({
-      title: needReport ? I18n.t('lib.unsupportedTitle') : I18n.t('lib.writeIncomplete'),
-      message: body,
-      primaryButton: {
-        value: I18n.t('common.ok'),
-        action: (): void => {
-        }
-      },
-      secondaryButton: {
-        value: I18n.t('lib.viewLog'),
-        fontColor: Palette.ACCENT,
-        action: (): void => {
-          EventBus.emit(AppEvent.OPEN_LOG, 1);
-        }
-      }
-    });
   }
 
   /** 缓存未命中时先亮出遮罩再算，避免点下去到出结果之间界面像死了一样 */
@@ -1159,29 +1044,6 @@ export struct TonePage {
   @Builder
   buildActions() {
     Column({ space: 10 }) {
-      if (this.writing) {
-        Column({ space: 6 }) {
-          Row() {
-            Text(this.writeStage.length > 0 ? this.writeStage : I18n.t('lib.writingStage'))
-              .fontSize(11)
-              .fontColor(Palette.ACCENT_TEXT)
-              .layoutWeight(1)
-            Text(`${this.writeRatio}%`)
-              .fontSize(11)
-              .fontColor(Palette.TEXT_TERTIARY)
-          }
-          .width('100%')
-
-          Progress({ value: this.writeRatio, total: 100, type: ProgressType.Linear })
-            .width('100%')
-            .height(3)
-            .color(Palette.ACCENT)
-            .backgroundColor(Palette.FILL_SOFT)
-        }
-        .width('100%')
-        .padding({ left: 4, right: 4 })
-      }
-
       PrimaryButton({
         btnLabel: I18n.t('tone.saveAndWriteButton'),
         btnEnabled: this.source !== undefined && !this.writing,

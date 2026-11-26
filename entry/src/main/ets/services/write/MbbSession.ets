@@ -348,7 +348,7 @@ export class MbbSession implements UploadPort {
     if (flashed) {
       const audioDown: boolean = !this.audio.isLinked();
       this.timeline.noteFlashed();
-      Logger.info(MODULE, `TONE_SETTLED settle=${WriteSpec.POST_FLASH_GAP_MS}ms audioDown=${audioDown}`);
+      Logger.info(MODULE, `TONE_SETTLED settle=${WriteSpec.postFlashGapMs()}ms audioDown=${audioDown}`);
     }
     this.setQuiet(false);
   }

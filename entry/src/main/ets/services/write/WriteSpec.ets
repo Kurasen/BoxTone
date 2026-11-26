@@ -43,6 +43,17 @@ export class WriteSpec {
    */
   static readonly POST_FLASH_GAP_MS: number = 25000;
 
+  /**
+   * 调试覆盖：只在 debug 包里由「我的 → 连点版本号」设置，用来测 25 秒能不能缩短。
+   * 0 表示用默认值。正式包启动时不会读取这个设置。
+   */
+  static gapOverrideMs: number = 0;
+
+  /** 实际生效的写后间隔 */
+  static postFlashGapMs(): number {
+    return WriteSpec.gapOverrideMs > 0 ? WriteSpec.gapOverrideMs : WriteSpec.POST_FLASH_GAP_MS;
+  }
+
   /** 2900099 在这么短的时间内就回来，说明是本机协议栈直接拒绝，没有走到耳机 */
   static readonly FAST_REJECT_MS: number = 150;
   /** 连续这么多次「秒拒」就判定串口卡死，不再耗满建链预算 */
@@ -57,6 +68,17 @@ export class WriteSpec {
    * 迟到成功就直接用这条串口；迟到失败照常重试；等满仍没回来才判定卡死。
    */
   static readonly HUNG_CONNECT_WAIT_MS: number = 10000;
+
+  /**
+   * 串口在松开音频这么久之后才连上，就不用它：关掉，按标准顺序重新建一次。
+   *
+   * 2026-11-26 真机，第一枪 sppConnect 挂起后迟到失败、再试才连上的三次：
+   * 21:47:02（距松开 15.7 秒）开始传输后一直没有窗口 → 回执超时；
+   * 22:35:27（14.6 秒）、22:38:06（15.4 秒）握手时音频已被系统连回，断开音频后第一包就 2901054。
+   * 三次第 1 轮全部作废，还各吃一次冷却，22:38 那次第 2 轮再挂起后卡死。
+   * 正常建链是 2~3 秒；20:13 那次挂起后 7.7 秒连上的照常写成功，所以取 10 秒。样本少，后续再调。
+   */
+  static readonly STALE_LINK_MS: number = 10000;
 
   /** 建链前音频不在时，等它重新连上的上限（盒盖合着时会走满） */
   static readonly AUDIO_RESTORE_WAIT_MS: number = 5000;

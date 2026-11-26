@@ -7,11 +7,13 @@ import { Palette } from '../common/constants/ThemeConstants';
 import { AppEvent, BusyState, EventBus, SimpleHandler, TextHandler } from '../common/utils/EventBus';
 import { Logger } from '../common/utils/Logger';
 import { AppBackdrop } from '../components/AppBackdrop';
+import { WritePanel } from '../components/WritePanel';
 import { BluetoothService } from '../services/BluetoothService';
 import { ImportControl } from '../services/audio/ImportControl';
 import { PrivacyConsentService } from '../services/PrivacyConsentService';
 import { PrivacyLinkService } from '../services/PrivacyLinkService';
 import { ThemeService } from '../services/ThemeService';
+import { WriteTask } from '../services/write/WriteTask';
 import { DevicePage } from './main/DevicePage';
 import { LibraryPage } from './main/LibraryPage';
 import { TonePage } from './main/TonePage';
@@ -289,6 +291,13 @@ struct Index {
     }
     // 全屏遮罩期间手势也吃掉，避免把正在进行的工作连同应用一起退掉
     if (this.busyText.length > 0) {
+      return true;
+    }
+    // 写入弹窗：进行中吃掉返回；已出结局时返回等于点「关闭」
+    if (WriteTask.isActive()) {
+      if (!WriteTask.isRunning()) {
+        WriteTask.dismiss();
+      }
       return true;
     }
     if (this.activeOverlay === 'changelog') {
@@ -569,6 +578,9 @@ struct Index {
         })
         .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
       }
+
+      // 写入弹窗：盖在页面、浮层和忙碌遮罩之上，写入期间整页不可操作（含底部页签）
+      WritePanel()
 
       // 启动衔接遮罩放在最上层：首帧与系统启动页同色，随后淡出露出应用外观。
       // 不拦截触摸，淡出期间系统隐私弹窗或用户点击都不受影响
