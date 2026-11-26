@@ -122,11 +122,7 @@ export struct LogPage {
     .width('100%')
     .height('100%')
     .padding({ top: this.topInset })
-    .backgroundColor(Palette.BG_TOP)
-    .linearGradient({
-      angle: 170,
-      colors: [[Palette.BG_TOP, 0.0], [Palette.BG_END, 1.0]]
-    })
+    // 背景由 Index 外层的 AppBackdrop 统一绘制
   }
 
   @Builder
@@ -164,10 +160,12 @@ export struct LogPage {
       ForEach(LOG_FILTERS, (option: LogFilterOption) => {
         Text(I18n.t(option.labelKey))
           .fontSize(12)
-          .fontColor(this.filterKey === option.key ? '#05080E' : Palette.TEXT_SECONDARY)
+          .fontWeight(this.filterKey === option.key ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(this.filterKey === option.key ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(999)
-          .backgroundColor(this.filterKey === option.key ? Palette.ACCENT : Palette.FILL_FAINT)
+          .backgroundColor(this.filterKey === option.key ? Palette.ACCENT : Palette.CHIP_IDLE)
+          .border({ width: 1, color: this.filterKey === option.key ? Palette.ACCENT : Palette.CHIP_IDLE_STROKE })
           .onClick(() => {
             this.filterKey = option.key;
           })

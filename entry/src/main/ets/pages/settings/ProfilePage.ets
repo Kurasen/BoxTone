@@ -675,26 +675,21 @@ struct ThemeChip {
   @Prop chipMode: ThemeMode = ThemeMode.DARK;
 
   build() {
-    Row({ space: 5 }) {
-      if (ThemeService.getMode() === this.chipMode) {
-        Circle()
-          .width(5)
-          .height(5)
-          .fill(Palette.ACCENT)
-      }
+    // 选项胶囊：选中实心强调色，与排序、筛选、内置音效一致
+    Row() {
       Text(this.chipLabel)
         .fontSize(12)
         .fontWeight(ThemeService.getMode() === this.chipMode ? FontWeight.Medium : FontWeight.Normal)
-        .fontColor(ThemeService.getMode() === this.chipMode ? Palette.ACCENT : Palette.TEXT_SECONDARY)
+        .fontColor(ThemeService.getMode() === this.chipMode ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
     }
     .layoutWeight(1)
     .height(38)
     .justifyContent(FlexAlign.Center)
-    .borderRadius(12)
-    .backgroundColor(ThemeService.getMode() === this.chipMode ? Palette.ACCENT_SOFT : Palette.BG_INPUT)
+    .borderRadius(19)
+    .backgroundColor(ThemeService.getMode() === this.chipMode ? Palette.ACCENT : Palette.CHIP_IDLE)
     .border({
       width: 1,
-      color: ThemeService.getMode() === this.chipMode ? Palette.ACCENT_LINE : Palette.STROKE_SOFT
+      color: ThemeService.getMode() === this.chipMode ? Palette.ACCENT : Palette.CHIP_IDLE_STROKE
     })
     .onClick(() => {
       ThemeService.setMode(this.chipMode);

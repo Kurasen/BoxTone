@@ -1,6 +1,7 @@
 import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
 import { FormatUtils } from '../common/utils/FormatUtils';
+import { PillButton, PillTone } from './PillButton';
 import { BtDevice, createEmptyDevice } from '../models/DeviceModel';
 
 /** 蓝牙设备行 */
@@ -23,7 +24,7 @@ export struct DeviceRow {
         Image($r('app.media.ic_tab_device'))
           .width(18)
           .height(18)
-          .fillColor(this.device.audio ? Palette.ACCENT : Palette.TEXT_TERTIARY)
+          .fillColor(this.device.audio ? Palette.ACCENT_TEXT : Palette.TEXT_TERTIARY)
       }
 
       Column({ space: 3 }) {
@@ -51,15 +52,13 @@ export struct DeviceRow {
       .alignItems(HorizontalAlign.Start)
 
       if (this.showAction && this.actionLabel.length > 0) {
-        Text(this.actionLabel)
-          .fontSize(12)
-          .fontColor(Palette.ACCENT_TEXT)
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .borderRadius(999)
-          .backgroundColor(Palette.ACCENT_SOFT)
-          .onClick(() => {
+        PillButton({
+          pillText: this.actionLabel,
+          pillTone: PillTone.ACCENT,
+          onTap: (): void => {
             this.onAction();
-          })
+          }
+        })
       }
     }
     .width('100%')

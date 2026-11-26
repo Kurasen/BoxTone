@@ -34,6 +34,12 @@ export class ThemeService {
    * 只在本进程第一次 init 时判定，由首页取走一次后清零。
    */
   private static launchVeilPending: boolean = false;
+  /**
+   * 主窗口：由 EntryAbility.onWindowStageCreate 登记。
+   * 不用 window.getLastWindow 现找：它取的是「当前最上层窗口」，窗口还没创建完、已经销毁，
+   * 或者上层是系统弹窗时会直接报 1300002（This window state is abnormal）。
+   */
+  private static mainWindow: window.Window | undefined = undefined;
 
   public static init(context: common.UIAbilityContext): void {
     // 本进程第一次 init 时还没调过 setColorMode，读到的才是系统真实深浅色；
@@ -150,21 +156,33 @@ export class ThemeService {
     AppStorage.setOrCreate<number>(AppStorageKey.THEME_EPOCH, (stored === undefined ? 0 : stored) + 1);
   }
 
-  /** 状态栏/导航栏图标颜色跟随外观：深色背景用白色图标，浅色背景用黑色 */
+  /** 主窗口创建完成（已设好全屏布局）后登记，并立即按当前外观设置一次系统栏 */
+  public static attachWindow(win: window.Window): void {
+    ThemeService.mainWindow = win;
+    ThemeService.updateSystemBars();
+  }
+
+  /** 窗口销毁时注销，之后的外观切换不再碰已失效的窗口对象 */
+  public static detachWindow(): void {
+    ThemeService.mainWindow = undefined;
+  }
+
+  /**
+   * 状态栏/导航栏图标颜色跟随外观：深色背景用白色图标，浅色背景用黑色。
+   * 窗口还没登记时直接跳过：attachWindow 会在窗口就绪后补设一次，不会漏。
+   */
   private static updateSystemBars(): void {
-    const context: common.UIAbilityContext | undefined = ThemeService.context;
-    if (context === undefined) {
+    const win: window.Window | undefined = ThemeService.mainWindow;
+    if (win === undefined) {
       return;
     }
-    window.getLastWindow(context).then((win: window.Window) => {
-      const bars: window.SystemBarProperties = {
-        statusBarColor: '#00000000',
-        statusBarContentColor: ThemeService.dark ? '#FFFFFF' : '#000000',
-        navigationBarColor: '#00000000',
-        navigationBarContentColor: ThemeService.dark ? '#FFFFFF' : '#000000'
-      };
-      return win.setWindowSystemBarProperties(bars);
-    }).catch((error: BusinessError) => {
+    const bars: window.SystemBarProperties = {
+      statusBarColor: '#00000000',
+      statusBarContentColor: ThemeService.dark ? '#FFFFFF' : '#000000',
+      navigationBarColor: '#00000000',
+      navigationBarContentColor: ThemeService.dark ? '#FFFFFF' : '#000000'
+    };
+    win.setWindowSystemBarProperties(bars).catch((error: BusinessError) => {
       Logger.warn(MODULE, `更新系统栏颜色失败 code=${error.code}`);
     });
   }

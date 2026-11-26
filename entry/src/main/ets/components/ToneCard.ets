@@ -1,5 +1,6 @@
 import { I18n } from '../common/i18n/I18n';
-import { Palette } from '../common/constants/ThemeConstants';
+import { Metric, Palette } from '../common/constants/ThemeConstants';
+import { ThemeService } from '../services/ThemeService';
 import { DateUtils } from '../common/utils/DateUtils';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { createEmptyTone, ToneEntry } from '../models/ToneModel';
@@ -44,17 +45,19 @@ export struct ToneCard {
           Circle()
             .width(40)
             .height(40)
-            .fill(this.selected ? Palette.ACCENT : (this.playing ? Palette.ACCENT_SOFT : Palette.FILL_FAINT))
+            // 播放控件规则：未播放无颜色，播放中实心天空蓝；批量选择时退回勾选框样式
+            .fill(this.selecting ? (this.selected ? Palette.ACCENT : Palette.FILL_SOFT) :
+              (this.playing ? Palette.ACCENT : Palette.FILL_SOFT))
           if (this.selecting) {
             Image($r('app.media.ic_check'))
               .width(15)
               .height(15)
-              .fillColor(this.selected ? '#05080E' : Palette.TEXT_TERTIARY)
+              .fillColor(this.selected ? Palette.ON_ACCENT : Palette.TEXT_TERTIARY)
           } else {
             Image(this.playing ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
               .width(16)
               .height(16)
-              .fillColor(this.playing ? Palette.ACCENT : Palette.TEXT_SECONDARY)
+              .fillColor(this.playing ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
           }
         }
         .onClick(() => {
@@ -156,9 +159,19 @@ export struct ToneCard {
     }
     .width('100%')
     .padding(14)
-    .borderRadius(20)
-    .backgroundColor(Palette.BG_CARD)
-    .border({ width: 1, color: this.expanded ? 'rgba(78, 216, 255, 0.28)' : Palette.STROKE_SOFT })
+    // 与 GlassCard 同一套外观：半透明底、亮边、浅色下柔和投影
+    .borderRadius(Metric.CARD_RADIUS)
+    .backgroundColor(Palette.CARD_GLASS)
+    .border({ width: 1, color: this.expanded ? Palette.ACCENT_LINE : Palette.GLASS_RIM })
+    .shadow(ThemeService.isDark() ? {
+      radius: 0,
+      color: 'rgba(0, 0, 0, 0)'
+    } : {
+      radius: 28,
+      color: Palette.GLASS_SHADOW,
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 }
 
@@ -178,18 +191,18 @@ struct WriteChip {
       .fontWeight(FontWeight.Medium)
       .maxLines(1)
       .textOverflow({ overflow: TextOverflow.Ellipsis })
-      .fontColor(this.chipLocked ? Palette.TEXT_TERTIARY : (this.chipBusy ? Palette.TEXT_TERTIARY : Palette.ACCENT))
+      .fontColor(this.chipLocked ? Palette.TEXT_TERTIARY : (this.chipBusy ? Palette.TEXT_TERTIARY : Palette.ACCENT_TEXT))
       // 不再 layoutWeight：Flex 里平分会让五个按钮挤成一行，改成按文字宽度自适应
       .height(34)
       .padding({ left: 16, right: 16 })
       .textAlign(TextAlign.Center)
-      .borderRadius(11)
+      .borderRadius(17)
       .backgroundColor(this.chipLocked ? Palette.BG_INPUT :
-        (this.chipBusy ? Palette.FILL_FAINT : Palette.ACCENT_SOFT))
+        (this.chipBusy ? Palette.FILL_FAINT : Palette.CHIP_IDLE))
       .border({
         width: 1,
         color: this.chipLocked ? Palette.BG_INPUT :
-          (this.chipBusy ? Palette.STROKE_SOFT : 'rgba(78, 216, 255, 0.32)')
+          (this.chipBusy ? Palette.STROKE_SOFT : Palette.CHIP_IDLE_STROKE)
       })
       .opacity(this.chipLocked ? 0.55 : 1)
       .enabled(!this.chipBusy && !this.chipLocked)
@@ -220,9 +233,9 @@ struct ActionChip {
       .height(34)
       .padding({ left: 16, right: 16 })
       .textAlign(TextAlign.Center)
-      .borderRadius(11)
-      .backgroundColor(Palette.FILL_SOFT)
-      .border({ width: 1, color: Palette.STROKE_SOFT })
+      .borderRadius(17)
+      .backgroundColor(Palette.CHIP_IDLE)
+      .border({ width: 1, color: Palette.CHIP_IDLE_STROKE })
       .opacity(this.chipLocked ? 0.45 : 1)
       .enabled(!this.chipLocked)
       .onClick(() => {

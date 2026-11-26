@@ -51,15 +51,8 @@ export default class EntryAbility extends UIAbility {
     windowStage.getMainWindow().then((mainWindow: window.Window) => {
       // 全屏布局，让背景渐变延伸到状态栏下方
       return mainWindow.setWindowLayoutFullScreen(true).then(() => {
-        // 状态栏图标颜色跟随外观：深色背景用白色图标，浅色背景用黑色
-        const lightIcons: boolean = !ThemeService.isDark();
-        const barProps: window.SystemBarProperties = {
-          statusBarColor: '#00000000',
-          statusBarContentColor: lightIcons ? '#000000' : '#FFFFFF',
-          navigationBarColor: '#00000000',
-          navigationBarContentColor: lightIcons ? '#000000' : '#FFFFFF'
-        };
-        return mainWindow.setWindowSystemBarProperties(barProps);
+        // 登记主窗口：系统栏图标颜色统一由 ThemeService 按当前外观设置，之后切换外观也用这个窗口
+        ThemeService.attachWindow(mainWindow);
       });
     }).catch((error: BusinessError) => {
       Logger.exception(MODULE, '设置沉浸式布局失败', error);
@@ -67,6 +60,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    ThemeService.detachWindow();
     Logger.info(MODULE, '窗口销毁');
   }
 

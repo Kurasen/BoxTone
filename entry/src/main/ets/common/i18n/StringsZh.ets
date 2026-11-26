@@ -206,7 +206,6 @@ export const ZH_STRINGS: Record<string, string> = {
   'card.write': '写入',
   'card.unavailable': '暂不可写',
   'card.export': '导出',
-  'card.share': '分享',
   'card.rename': '重命名',
   'card.delete': '删除',
   'card.deleteLocked': '写入中',

@@ -425,14 +425,18 @@ struct Index {
       }
 
       if (this.activeOverlay === 'log') {
-        LogPage({
-          topInset: this.topInset,
-          onClose: (): void => {
-            this.animateOverlay((): void => {
-              this.activeOverlay = '';
-            });
-          }
-        })
+        // 子页面与首页共用同一张背景：背景跟着页面一起滑入，页面本身不再画底色
+        Stack() {
+          AppBackdrop()
+          LogPage({
+            topInset: this.topInset,
+            onClose: (): void => {
+              this.animateOverlay((): void => {
+                this.activeOverlay = '';
+              });
+            }
+          })
+        }
           .width('100%')
           .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.END)
@@ -441,15 +445,19 @@ struct Index {
       }
 
       if (this.activeOverlay === 'feedback') {
-        FeedbackPage({
-          topInset: this.topInset,
-          step: $feedbackStep,
-          onClose: (): void => {
-            this.animateOverlay((): void => {
-              this.activeOverlay = '';
-            });
-          }
-        })
+        // 子页面与首页共用同一张背景：背景跟着页面一起滑入，页面本身不再画底色
+        Stack() {
+          AppBackdrop()
+          FeedbackPage({
+            topInset: this.topInset,
+            step: $feedbackStep,
+            onClose: (): void => {
+              this.animateOverlay((): void => {
+                this.activeOverlay = '';
+              });
+            }
+          })
+        }
           .width('100%')
           .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.END)
@@ -458,14 +466,18 @@ struct Index {
       }
 
       if (this.activeOverlay === 'support') {
-        SupportedDevicesPage({
-          topInset: this.topInset,
-          onClose: (): void => {
-            this.animateOverlay((): void => {
-              this.activeOverlay = '';
-            });
-          }
-        })
+        // 子页面与首页共用同一张背景：背景跟着页面一起滑入，页面本身不再画底色
+        Stack() {
+          AppBackdrop()
+          SupportedDevicesPage({
+            topInset: this.topInset,
+            onClose: (): void => {
+              this.animateOverlay((): void => {
+                this.activeOverlay = '';
+              });
+            }
+          })
+        }
           .width('100%')
           .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.END)
@@ -474,14 +486,18 @@ struct Index {
       }
 
       if (this.activeOverlay === 'changelog') {
-        ChangelogPage({
-          topInset: this.topInset,
-          onClose: (): void => {
-            this.animateOverlay((): void => {
-              this.activeOverlay = '';
-            });
-          }
-        })
+        // 子页面与首页共用同一张背景：背景跟着页面一起滑入，页面本身不再画底色
+        Stack() {
+          AppBackdrop()
+          ChangelogPage({
+            topInset: this.topInset,
+            onClose: (): void => {
+              this.animateOverlay((): void => {
+                this.activeOverlay = '';
+              });
+            }
+          })
+        }
           .width('100%')
           .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.END)
@@ -490,14 +506,18 @@ struct Index {
       }
 
       if (this.activeOverlay === 'backup') {
-        BackupPage({
-          topInset: this.topInset,
-          onClose: (): void => {
-            this.animateOverlay((): void => {
-              this.activeOverlay = '';
-            });
-          }
-        })
+        // 子页面与首页共用同一张背景：背景跟着页面一起滑入，页面本身不再画底色
+        Stack() {
+          AppBackdrop()
+          BackupPage({
+            topInset: this.topInset,
+            onClose: (): void => {
+              this.animateOverlay((): void => {
+                this.activeOverlay = '';
+              });
+            }
+          })
+        }
           .width('100%')
           .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.END)

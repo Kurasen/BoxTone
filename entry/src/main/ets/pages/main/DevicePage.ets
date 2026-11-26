@@ -7,6 +7,7 @@ import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { DeviceRow } from '../../components/DeviceRow';
 import { EmptyView } from '../../components/EmptyView';
 import { GhostButton } from '../../components/GhostButton';
+import { PillButton, PillTone } from '../../components/PillButton';
 import { GlassCard } from '../../components/GlassCard';
 import { SectionTitle } from '../../components/SectionTitle';
 import { StatPill } from '../../components/StatPill';
@@ -343,7 +344,7 @@ export struct DevicePage {
           Image($r('app.media.ic_tab_device'))
             .width(20)
             .height(20)
-            .fillColor(this.snapshot.activeName.length > 0 ? Palette.ACCENT : Palette.TEXT_TERTIARY)
+            .fillColor(this.snapshot.activeName.length > 0 ? Palette.ACCENT_TEXT : Palette.TEXT_TERTIARY)
         }
 
         Column({ space: 7 }) {
@@ -429,13 +430,14 @@ export struct DevicePage {
 
       Text(I18n.t('device.grant'))
         .fontSize(13)
-        .fontColor('#05080E')
+        .fontColor(Palette.ON_ACCENT)
         .fontWeight(FontWeight.Medium)
         .textAlign(TextAlign.Center)
         .width('100%')
         .height(38)
-        .borderRadius(12)
+        .borderRadius(19)
         .backgroundColor(Palette.ACCENT)
+        .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.97 })
         .margin({ top: 12 })
         .onClick(() => {
           this.requestPermission();
@@ -494,19 +496,17 @@ export struct DevicePage {
         .fontWeight(FontWeight.Medium)
         .fontColor(Palette.TEXT_PRIMARY)
         .layoutWeight(1)
-      Text(this.snapshot.scanning ? I18n.t('device.stopScan') : I18n.t('device.scan'))
-        .fontSize(12)
-        .fontColor(this.snapshot.scanning ? Palette.DANGER : Palette.ACCENT)
-        .padding({ left: 12, right: 12, top: 5, bottom: 5 })
-        .borderRadius(999)
-        .backgroundColor(this.snapshot.scanning ? Palette.DANGER_SOFT : Palette.ACCENT_SOFT)
-        .onClick(() => {
+      PillButton({
+        pillText: this.snapshot.scanning ? I18n.t('device.stopScan') : I18n.t('device.scan'),
+        pillTone: this.snapshot.scanning ? PillTone.DANGER : PillTone.ACCENT,
+        onTap: (): void => {
           if (this.snapshot.scanning) {
             BluetoothService.stopScan();
           } else {
             BluetoothService.startScan();
           }
-        })
+        }
+      })
     }
     .width('100%')
     .margin({ top: 4, bottom: 10 })

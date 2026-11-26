@@ -1,5 +1,3 @@
-import { Palette } from '../common/constants/ThemeConstants';
-
 /**
  * 波形可视化
  * 采用 Canvas 绘制，峰值数组由 AudioConvertService.buildPeaks 提供
@@ -52,9 +50,9 @@ export struct WaveformView {
     const visibleStart: number = Math.max(0, selStart);
     const visibleEnd: number = Math.min(w, selEnd);
     if (this.hasSelection && visibleEnd > visibleStart + 0.5) {
-      ctx.fillStyle = 'rgba(78, 216, 255, 0.10)';
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
       ctx.fillRect(visibleStart, 0, visibleEnd - visibleStart, h);
-      ctx.fillStyle = 'rgba(78, 216, 255, 0.55)';
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.60)';
       if (selStart >= 0 && selStart <= w) {
         ctx.fillRect(selStart, 0, 1.5, h);
       }
@@ -70,6 +68,13 @@ export struct WaveformView {
     if (count === 0) {
       return;
     }
+    // 选中段：中间实、上下渐淡，避免一整块满饱和的蓝压过卡片和按钮；
+    // 未选中段在有选区时再压暗一档，让选区更清楚
+    const selectedFill: CanvasGradient = ctx.createLinearGradient(0, 0, 0, h);
+    selectedFill.addColorStop(0.0, 'rgba(56, 189, 248, 0.35)');
+    selectedFill.addColorStop(0.5, 'rgba(56, 189, 248, 0.95)');
+    selectedFill.addColorStop(1.0, 'rgba(56, 189, 248, 0.35)');
+    const idleFill: string = this.hasSelection ? 'rgba(128, 142, 160, 0.26)' : 'rgba(128, 142, 160, 0.40)';
     const slot: number = w / count;
     const barWidth: number = Math.max(1, slot * 0.6);
     for (let i = 0; i < count; i++) {
@@ -82,7 +87,7 @@ export struct WaveformView {
       const centerRatio: number = viewStart + ((i * slot + slot / 2) / w) * viewSpan;
       const selected: boolean = this.hasSelection &&
         centerRatio >= selectFrom && centerRatio <= selectTo;
-      ctx.fillStyle = selected ? Palette.ACCENT : 'rgba(128, 142, 160, 0.40)';
+      ctx.fillStyle = selected ? selectedFill : idleFill;
       ctx.fillRect(x, (h - barHeight) / 2, barWidth, barHeight);
     }
   }

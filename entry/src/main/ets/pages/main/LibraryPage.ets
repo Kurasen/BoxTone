@@ -13,6 +13,7 @@ import { Logger } from '../../common/utils/Logger';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { EmptyView } from '../../components/EmptyView';
 import { GhostButton } from '../../components/GhostButton';
+import { PillButton, PillTone } from '../../components/PillButton';
 import { GlassCard } from '../../components/GlassCard';
 import { ToneCard } from '../../components/ToneCard';
 import { ToneEntry } from '../../models/ToneModel';
@@ -770,16 +771,14 @@ export struct LibraryPage {
       Blank()
       this.sortChip(I18n.t('lib.sortTime'), 'time')
       this.sortChip(I18n.t('lib.sortName'), 'name')
-      Text(I18n.t('lib.select'))
-        .fontSize(11)
-        .fontColor(this.writingId.length > 0 || this.restoring ? Palette.TEXT_TERTIARY : Palette.ACCENT_TEXT)
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-        .borderRadius(999)
-        .backgroundColor(Palette.ACCENT_SOFT)
-        .opacity(this.writingId.length > 0 || this.restoring ? 0.5 : 1)
-        .onClick(() => {
+      PillButton({
+        pillText: I18n.t('lib.select'),
+        pillTone: PillTone.ACCENT,
+        pillEnabled: !(this.writingId.length > 0 || this.restoring),
+        onTap: (): void => {
           this.enterSelecting();
-        })
+        }
+      })
     }
     .width('100%')
     .margin({ top: -4 })
@@ -793,34 +792,28 @@ export struct LibraryPage {
         .fontSize(10)
         .fontColor(Palette.TEXT_TERTIARY)
         .layoutWeight(1)
-      Text(this.visibleAllSelected() ? I18n.t('lib.unselectAll') : I18n.t('lib.selectAll'))
-        .fontSize(11)
-        .fontColor(Palette.TEXT_SECONDARY)
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-        .borderRadius(999)
-        .backgroundColor(Palette.FILL_FAINT)
-        .onClick(() => {
+      PillButton({
+        pillText: this.visibleAllSelected() ? I18n.t('lib.unselectAll') : I18n.t('lib.selectAll'),
+        pillTone: PillTone.NEUTRAL,
+        onTap: (): void => {
           this.toggleSelectAll();
-        })
-      Text(I18n.t('lib.deleteSelected'))
-        .fontSize(11)
-        .fontColor(this.selectedIds.length > 0 ? Palette.DANGER : Palette.TEXT_TERTIARY)
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-        .borderRadius(999)
-        .backgroundColor(Palette.FILL_FAINT)
-        .opacity(this.selectedIds.length > 0 ? 1 : 0.5)
-        .onClick(() => {
+        }
+      })
+      PillButton({
+        pillText: I18n.t('lib.deleteSelected'),
+        pillTone: PillTone.DANGER,
+        pillEnabled: this.selectedIds.length > 0,
+        onTap: (): void => {
           this.confirmBatchDelete();
-        })
-      Text(I18n.t('common.cancel'))
-        .fontSize(11)
-        .fontColor(Palette.TEXT_SECONDARY)
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-        .borderRadius(999)
-        .backgroundColor(Palette.BG_INPUT)
-        .onClick(() => {
+        }
+      })
+      PillButton({
+        pillText: I18n.t('common.cancel'),
+        pillTone: PillTone.NEUTRAL,
+        onTap: (): void => {
           this.exitSelecting();
-        })
+        }
+      })
     }
     .width('100%')
     .margin({ top: -4 })
@@ -828,12 +821,15 @@ export struct LibraryPage {
 
   @Builder
   sortChip(label: string, key: string) {
+    // 选项胶囊：选中实心，未选中淡白底 + 细边
     Text(label)
-      .fontSize(11)
-      .fontColor(this.sortMode === key ? '#05080E' : Palette.TEXT_SECONDARY)
+      .fontSize(12)
+      .fontWeight(this.sortMode === key ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(this.sortMode === key ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
       .borderRadius(999)
-      .backgroundColor(this.sortMode === key ? Palette.ACCENT : Palette.FILL_FAINT)
+      .backgroundColor(this.sortMode === key ? Palette.ACCENT : Palette.CHIP_IDLE)
+      .border({ width: 1, color: this.sortMode === key ? Palette.ACCENT : Palette.CHIP_IDLE_STROKE })
       .onClick(() => {
         this.sortMode = key;
       })
@@ -939,11 +935,12 @@ export struct LibraryPage {
                   })
                 Text(I18n.t('common.save'))
                   .fontSize(12)
-                  .fontColor('#05080E')
+                  .fontColor(Palette.ON_ACCENT)
+                  .fontWeight(FontWeight.Medium)
                   .height(40)
                   .padding({ left: 16, right: 16 })
                   .textAlign(TextAlign.Center)
-                  .borderRadius(11)
+                  .borderRadius(20)
                   .backgroundColor(Palette.ACCENT)
                   .onClick(() => {
                     this.commitRename(entry);

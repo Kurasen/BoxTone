@@ -10,6 +10,7 @@ import { AppEvent, EventBus } from '../../common/utils/EventBus';
 import { Logger } from '../../common/utils/Logger';
 import { EmptyView } from '../../components/EmptyView';
 import { GhostButton } from '../../components/GhostButton';
+import { PillButton, PillTone } from '../../components/PillButton';
 import { PrivacyLinkService } from '../../services/PrivacyLinkService';
 import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
@@ -244,11 +245,7 @@ export struct FeedbackPage {
       .width('100%')
       .height('100%')
       .padding({ top: this.topInset })
-      .backgroundColor(Palette.BG_TOP)
-      .linearGradient({
-        angle: 170,
-        colors: [[Palette.BG_TOP, 0.0], [Palette.BG_END, 1.0]]
-      })
+      // 背景由 Index 外层的 AppBackdrop 统一绘制
 
     }
     .width('100%')
@@ -354,15 +351,13 @@ export struct FeedbackPage {
                 .fontSize(13)
                 .fontColor(Palette.ACCENT_TEXT)
                 .layoutWeight(1)
-              Text(I18n.t('fb.copyEmail'))
-                .fontSize(11)
-                .fontColor(Palette.ACCENT_TEXT)
-                .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                .borderRadius(999)
-                .backgroundColor(Palette.ACCENT_SOFT)
-                .onClick(() => {
+              PillButton({
+                pillText: I18n.t('fb.copyEmail'),
+                pillTone: PillTone.ACCENT,
+                onTap: (): void => {
                   this.copyEmail();
-                })
+                }
+              })
             }
             .width('100%')
             .margin({ top: 4 })
@@ -391,10 +386,12 @@ export struct FeedbackPage {
           ForEach(FEEDBACK_TYPES, (option: FeedbackTypeOption, index: number) => {
             Text(I18n.t(option.labelKey))
               .fontSize(12)
-              .fontColor(this.typeIndex === index ? '#05080E' : Palette.TEXT_SECONDARY)
+              .fontWeight(this.typeIndex === index ? FontWeight.Medium : FontWeight.Normal)
+              .fontColor(this.typeIndex === index ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
               .padding({ left: 14, right: 14, top: 7, bottom: 7 })
               .borderRadius(999)
-              .backgroundColor(this.typeIndex === index ? Palette.ACCENT : Palette.FILL_FAINT)
+              .backgroundColor(this.typeIndex === index ? Palette.ACCENT : Palette.CHIP_IDLE)
+              .border({ width: 1, color: this.typeIndex === index ? Palette.ACCENT : Palette.CHIP_IDLE_STROKE })
               .onClick(() => {
                 this.typeIndex = index;
               })

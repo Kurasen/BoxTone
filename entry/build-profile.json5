@@ -3,7 +3,9 @@
   "buildOption": {
     "externalNativeOptions": {
       "path": "./src/main/cpp/CMakeLists.txt",
-      "arguments": "",
+      // 只有 libaudiodec 一个原生库：C++ 运行库静态链接进去，不再单独打包 1.2MB 的 libc++_shared.so
+      // （SDK 工具链默认 OHOS_STL=c++_shared）。以后若新增第二个原生库，要改回 c++_shared，避免两份运行库各自初始化
+      "arguments": "-DOHOS_STL=c++_static",
       "cppFlags": "",
       "abiFilters": [
         "arm64-v8a"
@@ -11,6 +13,20 @@
     }
   },
   "buildOptionSet": [
+    {
+      // debug 包额外编 x86_64，方便装到 x86_64 模拟器（param get const.product.cpu.abilist = x86_64）。
+      // release 包沿用上面的 arm64-v8a，上架包体积不受影响
+      "name": "debug",
+      "externalNativeOptions": {
+        "path": "./src/main/cpp/CMakeLists.txt",
+        "arguments": "-DOHOS_STL=c++_static",
+        "cppFlags": "",
+        "abiFilters": [
+          "arm64-v8a",
+          "x86_64"
+        ]
+      }
+    },
     {
       "name": "release",
       "arkOptions": {

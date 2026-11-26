@@ -252,11 +252,7 @@ export struct BackupPage {
     .width('100%')
     .height('100%')
     .padding({ top: this.topInset })
-    .backgroundColor(Palette.BG_TOP)
-    .linearGradient({
-      angle: 170,
-      colors: [[Palette.BG_TOP, 0.0], [Palette.BG_END, 1.0]]
-    })
+    // 背景由 Index 外层的 AppBackdrop 统一绘制
   }
 
   @Builder

@@ -201,7 +201,6 @@ export const EN_STRINGS: Record<string, string> = {
   'card.write': 'Write',
   'card.unavailable': 'Unavailable',
   'card.export': 'Export',
-  'card.share': 'Share',
   'card.rename': 'Rename',
   'card.delete': 'Delete',
   'card.deleteLocked': 'Writing…',

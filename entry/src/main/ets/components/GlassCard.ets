@@ -27,19 +27,18 @@ export struct GlassCard {
     .alignItems(HorizontalAlign.Start)
     .padding(this.cardPadding)
     .borderRadius(this.cardRadius)
-    .backgroundColor(this.cardBg.length > 0 ? this.cardBg : Palette.BG_CARD)
-    .border({ width: 1, color: this.cardStroke.length > 0 ? this.cardStroke : Palette.STROKE_SOFT })
-    // 浅色下白卡片贴着冷灰底，只靠描边会显得"糊"；加一层很窄的投影托起来。
-    // 半径压到 6：大半径会把边缘柔化，反而更像没擦干净。
-    // 深色纯黑底上投影不可见，直接给 0 省一次绘制。
+    // 默认用半透明底色，透出背景光斑；调用方指定 cardBg（如强调色提示卡）时用指定色
+    .backgroundColor(this.cardBg.length > 0 ? this.cardBg : Palette.CARD_GLASS)
+    // 浅色雾面：一圈亮白描边 + 大半径柔和投影，卡片像浮在雾面上；深色下保持细描边、不加投影
+    .border({ width: 1, color: this.cardStroke.length > 0 ? this.cardStroke : Palette.GLASS_RIM })
     .shadow(ThemeService.isDark() ? {
       radius: 0,
       color: 'rgba(0, 0, 0, 0)'
     } : {
-      radius: 6,
-      color: 'rgba(23, 43, 77, 0.055)',
+      radius: 28,
+      color: Palette.GLASS_SHADOW,
       offsetX: 0,
-      offsetY: 1.5
+      offsetY: 8
     })
   }
 }

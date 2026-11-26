@@ -8,6 +8,7 @@ import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
 import { AppEvent, BusyState, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { GhostButton } from '../../components/GhostButton';
+import { PillButton, PillTone } from '../../components/PillButton';
 import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { SectionTitle } from '../../components/SectionTitle';
@@ -798,7 +799,7 @@ export struct TonePage {
       .alignItems(HorizontalAlign.Center)
       .borderRadius(Metric.CARD_RADIUS)
       .backgroundColor(Palette.BG_INPUT)
-      .border({ width: 1, color: 'rgba(78, 216, 255, 0.24)', style: BorderStyle.Dashed })
+      .border({ width: 1, color: 'rgba(56, 189, 248, 0.24)', style: BorderStyle.Dashed })
       .onClick(() => {
         this.importAudio();
       })
@@ -833,15 +834,13 @@ export struct TonePage {
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
 
-          Text(I18n.t('tone.replace'))
-            .fontSize(11)
-            .fontColor(Palette.ACCENT_TEXT)
-            .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-            .borderRadius(999)
-            .backgroundColor(Palette.ACCENT_SOFT)
-            .onClick(() => {
+          PillButton({
+            pillText: I18n.t('tone.replace'),
+            pillTone: PillTone.ACCENT,
+            onTap: (): void => {
               this.importAudio();
-            })
+            }
+          })
         }
         .width('100%')
 
@@ -872,22 +871,22 @@ export struct TonePage {
   buildPresetSection() {
     SectionTitle({ sectionText: I18n.t('tone.presets'), sectionHint: I18n.t('tone.presetsHint') })
 
-    // 胶囊自动换行；当前载入的那条用强调色描边 + 淡底高亮
+    // 胶囊自动换行；当前载入的那条按「选项胶囊」规则用实心强调色
     Flex({ wrap: FlexWrap.Wrap }) {
       ForEach(BuiltinToneCatalog.all(), (tone: BuiltinTone) => {
         Column() {
           Text(BuiltinToneCatalog.label(tone, I18n.isEnglish()))
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
-            .fontColor(this.activeBuiltinId === tone.id ? Palette.ACCENT_TEXT : Palette.TEXT_PRIMARY)
+            .fontColor(this.activeBuiltinId === tone.id ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
         }
         .padding({ left: 14, right: 14, top: 10, bottom: 10 })
         .margin({ right: 8, bottom: 8 })
-        .borderRadius(16)
-        .backgroundColor(this.activeBuiltinId === tone.id ? Palette.ACCENT_SOFT : Palette.BG_CARD)
+        .borderRadius(999)
+        .backgroundColor(this.activeBuiltinId === tone.id ? Palette.ACCENT : Palette.CHIP_IDLE)
         .border({
           width: 1,
-          color: this.activeBuiltinId === tone.id ? Palette.ACCENT_LINE : Palette.STROKE_SOFT
+          color: this.activeBuiltinId === tone.id ? Palette.ACCENT : Palette.CHIP_IDLE_STROKE
         })
         .onClick(() => {
           this.useBuiltinTone(tone);
@@ -1348,18 +1347,21 @@ struct PreviewChip {
       Image(this.active ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
         .width(11)
         .height(11)
-        .fillColor(this.active ? '#05080E' : Palette.TEXT_SECONDARY)
+        .fillColor(this.active ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
       Text(this.busy ? I18n.t('common.processing') : this.chipLabel)
         .fontSize(12)
-        .fontColor(this.active ? '#05080E' : Palette.TEXT_SECONDARY)
+        .fontWeight(this.active ? FontWeight.Medium : FontWeight.Normal)
+        .fontColor(this.active ? Palette.ON_ACCENT : Palette.TEXT_SECONDARY)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .layoutWeight(1)
     .height(38)
     .justifyContent(FlexAlign.Center)
-    .borderRadius(12)
-    .backgroundColor(this.active ? Palette.ACCENT : Palette.FILL_FAINT)
+    .borderRadius(19)
+    // 播放控件规则：未播放无颜色，播放中实心天空蓝（与音效库的播放按钮一致）
+    .backgroundColor(this.active ? Palette.ACCENT : Palette.FILL_SOFT)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.97 })
     .onClick(() => {
       this.onTap();
     })
