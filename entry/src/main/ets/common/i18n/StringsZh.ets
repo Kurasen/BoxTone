@@ -472,7 +472,6 @@ export const ZH_STRINGS: Record<string, string> = {
 
   // 写入链路
   'write.inProgress': '正在写入，请等待当前任务完成',
-  'write.recovering': '正在恢复默认开盒音，请稍候',
   'write.emptyTone': '音效数据为空，请重新生成',
   'write.tooLong': '时长 {0} 超过充电盒上限 {1} 秒',
   'write.tooLarge': '文件 {0} 超过上限 {1}',
@@ -588,10 +587,7 @@ export const ZH_STRINGS: Record<string, string> = {
     '如果这不是华为耳机，本功能可能暂不支持',
   'toneErr.cancelled': '已取消',
   'toneErr.ackTimeout': '等待耳机回执超时，请保持双耳入盒、盒盖打开后重试',
-  'toneErr.linkDown': '蓝牙连接已中断，请重新连接耳机',
   'toneErr.timeout': '传输时间过长，请重新连接后重试',
-  'toneErr.flushTimeout': '数据已全部送达耳机，但没等到擦写完成。应用会在后台尝试切回默认开盒音；' +
-    '若开盖无声，请合盖再开盖。',
   'toneErr.flushAborted': '耳机在擦写阶段自己重启了，这条音效没写进去。当前串口约 {0}KB/s。' +
     '应用会在后台尝试切回默认开盒音；长音效的稳定上限约 2.8 秒。',
   'toneErr.formatRejected': '该机型不接受当前音效格式（16700Hz / 16bit / {0} 字节），' +

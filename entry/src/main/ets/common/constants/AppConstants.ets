@@ -367,21 +367,6 @@ export class MbbSpec {
   static readonly CONNECT_TOTAL_BUDGET_MS: number = 15000;
   /** 建链重试间隔（换通道模式时） */
   static readonly CONNECT_RETRY_GAP_MS: number = 500;
-  /**
-   * 同一种通道模式下两次尝试的间隔。
-   * 真机日志显示耳机要「被请求到第 6 次」才肯开串口（两轮写入都是第 6 次成功），
-   * 原来的 1300ms 让这 6 次白等到 14 秒；缩短到 700ms 能在 5~7 秒内走完同样的次数。
-   */
-  /**
-   * 每轮里同一种通道试几次。
-   *
-   * 原来是 2，理由是「音频刚断开时第一枪几乎必然被拒，立刻换加密通道会落进断链那条路」。
-   * 但现在音频是**先断开再连**的，第一枪失败只是 ACL 还没收敛：
-   * 真机日志里所有成功的连接都发生在第 2 次尝试（换一种通道），
-   * 而同一种通道连打两次反而会撞上 2900099（14:04 那轮第二条请求 10ms 内被拒）。
-   * 所以改成每种通道只试一次，失败立刻换另一种，让「第 2 次尝试」来得更早。
-   */
-  static readonly CONNECT_ATTEMPTS_PER_MODE: number = 1;
   /** 关掉串口后留给耳机收尾的时间 */
   static readonly SOCKET_SETTLE_MS: number = 1200;
   /**
@@ -394,19 +379,6 @@ export class MbbSpec {
   static readonly LINK_READY_TIMEOUT_MS: number = 600;
   /** 耳机收掉通道后的冷却时间 */
   static readonly LINK_COOLDOWN_MS: number = 15000;
-  /**
-   * 写完音效后的沉降期：这段时间耳机在擦闪存，不能开始新的传输。
-   * 注意它只限制「什么时候能再传」，不限制「通道要不要留」——
-   * 旧实现把两件事绑在一起（关通道 + 全局冷却），代价是每次都要重新建链。
-   */
-  static readonly SESSION_SETTLE_MS: number = 15000;
-  /**
-   * 沉降期内「音频自己连回来就提前结束」的最早时刻（从写完算起）。
-   * 音频回来不一定代表闪存写完：11-26 12:30 那轮写完 6 秒音频就回来了，
-   * 这时开始新传输，串口能连上却在 1 秒内 SPP IO error（2901054），之后耳机一直卡在这个状态，
-   * 只能合盖重开。同一天 12:12 那轮在第 11 秒提前结束则一切正常。
-   */
-  static readonly FLASH_SETTLE_MIN_MS: number = 10000;
   /**
    * 热会话保留时长。
    * 一次操作结束后串口不立刻关，留着给下一次复用：真机一次 sppConnect 约 3 秒
@@ -452,7 +424,7 @@ export class MbbSpec {
    *
    * 擦写进度每 ~82ms 一包；停在 62%~99% 不动、随后系统把 A2DP 连回来，
    * 是耳机在收尾阶段重启/放弃本轮写入的表现。静默预算给到 30 秒，
-   * 期间发现音频回连就主动压下去让擦写继续；真断链仍由 toneErr.linkDown 立即上抛。
+   * 期间发现音频回连就主动压下去让擦写继续；真断链由串口判死后立即上抛。
    */
   static readonly UPLOAD_FLUSH_TIMEOUT_MS: number = 30000;
   /**

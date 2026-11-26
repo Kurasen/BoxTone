@@ -463,7 +463,6 @@ export const EN_STRINGS: Record<string, string> = {
   'bt.readFailed': 'Failed to read Bluetooth status ({0})',
 
   'write.inProgress': 'A write is in progress. Wait for it to finish.',
-  'write.recovering': 'Restoring the default tone. Please wait.',
   'write.emptyTone': 'Tone data is empty. Generate it again.',
   'write.tooLong': 'Duration {0} exceeds the case limit of {1} s',
   'write.tooLarge': 'File {0} exceeds the {1} limit',
@@ -586,11 +585,7 @@ export const EN_STRINGS: Record<string, string> = {
     'for 5 seconds and reopen. This feature may not be supported on non-HUAWEI earbuds yet.',
   'toneErr.cancelled': 'Cancelled',
   'toneErr.ackTimeout': 'Timed out waiting for the earbuds to respond. Keep both earbuds in the case with the lid open and retry.',
-  'toneErr.linkDown': 'Bluetooth connection lost. Reconnect the earbuds.',
   'toneErr.timeout': 'Transfer took too long. Reconnect and retry.',
-  'toneErr.flushTimeout': 'All data reached the earbuds, but flashing did not finish. ' +
-    'The app will try to switch the earbuds back to the default tone in the background; ' +
-    'if opening the case is silent, close and reopen the lid.',
   'toneErr.flushAborted': 'The earbuds restarted while committing the flash write, so this tone was not stored. ' +
     'This link runs at about {0} KB/s. The app will try to switch back to the default tone in the background; ' +
     'the stable limit for long tones is about 2.8 seconds.',

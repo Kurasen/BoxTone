@@ -1,5 +1,4 @@
 import { common } from '@kit.AbilityKit';
-import { window } from '@kit.ArkUI';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
@@ -150,27 +149,11 @@ export struct LibraryPage {
     });
   }
 
-  /** 擦写阶段可能持续几十秒，熄屏后应用被挂起会掐断串口 */
-  private async setKeepScreenOn(on: boolean): Promise<void> {
-    try {
-      const context: common.UIAbilityContext = this.abilityContext();
-      const mainWindow: window.Window = await window.getLastWindow(context);
-      await mainWindow.setWindowKeepScreenOn(on);
-    } catch (error) {
-      Logger.warn(MODULE, `设置屏幕常亮失败 on=${on} code=${(error as BusinessError).code}`);
-    }
-  }
-
-  private abilityContext(): common.UIAbilityContext {
-    return this.getUIContext().getHostContext() as common.UIAbilityContext;
-  }
-
   private async runWrite(entry: ToneEntry): Promise<void> {
     this.writingId = entry.id;
     this.writeStage = I18n.t('lib.stageConnect');
     this.writeRatio = 0;
     Logger.info(MODULE, `开始写入「${entry.name}」`);
-    await this.setKeepScreenOn(true);
     try {
       const result: WriteResult = await CaseWriteService.write(entry,
         (ratio: number, stage: string): void => {
@@ -209,7 +192,6 @@ export struct LibraryPage {
       this.writeStage = '';
       this.writeRatio = 0;
       this.lastWrittenId = SettingsService.getLastWrittenTone();
-      await this.setKeepScreenOn(false);
       // 写入过程会断开音频通道，刷新一次让设备页的状态跟上
       BluetoothService.refresh().then(() => {
       }).catch((error: BusinessError) => {
@@ -257,7 +239,6 @@ export struct LibraryPage {
   private async runRestore(): Promise<void> {
     this.restoring = true;
     EventBus.emitText(AppEvent.BUSY_CHANGED, I18n.t('lib.restoreBusy'));
-    await this.setKeepScreenOn(true);
     Logger.info(MODULE, '开始恢复默认开盒音');
     try {
       const result: WriteResult = await CaseWriteService.restoreDefault();
@@ -302,7 +283,6 @@ export struct LibraryPage {
       this.restoring = false;
       this.lastWrittenId = SettingsService.getLastWrittenTone();
       EventBus.emitText(AppEvent.BUSY_CHANGED, '');
-      await this.setKeepScreenOn(false);
       BluetoothService.refresh().then(() => {
       }).catch((error: BusinessError) => {
         Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);

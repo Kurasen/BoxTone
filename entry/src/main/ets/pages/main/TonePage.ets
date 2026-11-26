@@ -1,5 +1,4 @@
 import { common } from '@kit.AbilityKit';
-import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
@@ -637,7 +636,6 @@ export struct TonePage {
     this.writing = true;
     this.writeRatio = 0;
     this.writeStage = I18n.t('lib.stageConnect');
-    await this.setKeepScreenOn(true);
     try {
       const result: WriteResult = await CaseWriteService.write(entry,
         (ratio: number, stage: string): void => {
@@ -673,7 +671,6 @@ export struct TonePage {
       this.writeRatio = 0;
       // 直接写入后音效库的「盒内」标记与列表需要立即跟上
       EventBus.emit(AppEvent.TONE_CHANGED, 1);
-      await this.setKeepScreenOn(false);
       BluetoothService.refresh().then(() => {
       }).catch((error: BusinessError) => {
         Logger.warn(MODULE, `刷新蓝牙状态失败 code=${error.code}`);
@@ -746,17 +743,6 @@ export struct TonePage {
         }
       }
     });
-  }
-
-  /** 擦写阶段可能持续几十秒，熄屏后应用被挂起会掐断串口 */
-  private async setKeepScreenOn(on: boolean): Promise<void> {
-    try {
-      const context: common.UIAbilityContext = this.abilityContext();
-      const mainWindow: window.Window = await window.getLastWindow(context);
-      await mainWindow.setWindowKeepScreenOn(on);
-    } catch (error) {
-      Logger.warn(MODULE, `设置屏幕常亮失败 on=${on} code=${(error as BusinessError).code}`);
-    }
   }
 
   /** 缓存未命中时先亮出遮罩再算，避免点下去到出结果之间界面像死了一样 */

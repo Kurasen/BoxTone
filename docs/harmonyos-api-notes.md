@@ -29,8 +29,10 @@
 **配置位置**：`entry/src/main/module.json5` 的 `abilities[]`
 
 ```json5
-"startWindowIcon": "$media:startIcon",
-"startWindowBackground": "$color:start_window_background",
+{
+  "startWindowIcon": "$media:startIcon",
+  "startWindowBackground": "$color:start_window_background"
+}
 ```
 
 | 要点 | 说明 |
