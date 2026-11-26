@@ -42,6 +42,14 @@ export class BluetoothService {
   private static listenedConn: boolean = false;
   /** 事件回调去抖计时器：系统事件经常成组到达，合并成一次刷新 */
   private static refreshTimer: number = -1;
+  /**
+   * 写完音效后的保存窗口。耳机这时在刷闪存，实际已经用不了，
+   * 但系统 A2DP 可能短暂报「已连接」、也可能不发任何事件，只靠事件刷新会一直停在旧状态。
+   * 窗口内界面统一显示「保存中」，窗口结束时主动刷新一次，拿到真实状态。
+   */
+  private static settlingId: string = '';
+  private static settlingUntil: number = 0;
+  private static settleTimer: number = -1;
 
   public static init(context: common.UIAbilityContext): void {
     if (BluetoothService.initialized) {
@@ -353,6 +361,58 @@ export class BluetoothService {
     }, delayMs);
   }
 
+  /** 写入成功后调用：进入保存窗口，立即刷新一次，窗口结束时再刷新一次 */
+  public static markCaseSettling(deviceId: string, durationMs: number): void {
+    if (deviceId.length === 0) {
+      return;
+    }
+    BluetoothService.settlingId = deviceId;
+    BluetoothService.settlingUntil = Date.now() + durationMs;
+    if (BluetoothService.settleTimer >= 0) {
+      clearTimeout(BluetoothService.settleTimer);
+    }
+    BluetoothService.settleTimer = setTimeout(() => {
+      BluetoothService.settleTimer = -1;
+      BluetoothService.endCaseSettling();
+    }, durationMs);
+    BluetoothService.refresh();
+  }
+
+  /** 结束保存窗口并按真实状态刷新：音频恢复流程开始时也会调用 */
+  public static endCaseSettling(): void {
+    if (BluetoothService.settleTimer >= 0) {
+      clearTimeout(BluetoothService.settleTimer);
+      BluetoothService.settleTimer = -1;
+    }
+    if (BluetoothService.settlingId.length === 0) {
+      return;
+    }
+    BluetoothService.settlingId = '';
+    BluetoothService.settlingUntil = 0;
+    BluetoothService.refresh();
+  }
+
+  /** 保存窗口剩余时长（毫秒）；不在窗口内返回 0 */
+  public static caseSettlingLeftMs(): number {
+    if (BluetoothService.settlingId.length === 0) {
+      return 0;
+    }
+    return Math.max(0, BluetoothService.settlingUntil - Date.now());
+  }
+
+  /** 保存窗口内的设备在配对列表里的位置；不在窗口内返回 -1 */
+  private static settlingIndex(paired: BtDevice[]): number {
+    if (BluetoothService.settlingId.length === 0 || Date.now() >= BluetoothService.settlingUntil) {
+      return -1;
+    }
+    for (let i = 0; i < paired.length; i++) {
+      if (BluetoothService.sameAddress(paired[i].deviceId, BluetoothService.settlingId)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   /** 刷新蓝牙状态与设备列表 */
   public static async refresh(): Promise<BtSnapshot> {
     const snapshot: BtSnapshot = createEmptySnapshot();
@@ -463,6 +523,16 @@ export class BluetoothService {
         snapshot.statusText = I18n.t('bt.pairedNotConnected');
       } else {
         snapshot.statusText = I18n.t('bt.notPaired');
+      }
+
+      // 保存窗口：不管系统这时报连没连，都按「保存中」展示，等窗口结束再按真实状态刷新
+      const settlingAt: number = BluetoothService.settlingIndex(paired);
+      if (settlingAt >= 0) {
+        paired[settlingAt].connected = false;
+        snapshot.settling = true;
+        snapshot.settlingId = paired[settlingAt].deviceId;
+        snapshot.activeName = paired[settlingAt].name;
+        snapshot.statusText = I18n.t('bt.caseSettling');
       }
 
       snapshot.nearbyDevices = BluetoothService.snapshot.nearbyDevices;

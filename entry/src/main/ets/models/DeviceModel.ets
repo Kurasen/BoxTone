@@ -47,6 +47,10 @@ export interface BtSnapshot {
   nearLinkName: string;
   /** 星闪连接设备对应的经典蓝牙地址：只有名称能匹配上已配对设备时才有值 */
   nearLinkBtId: string;
+  /** 刚写完音效、耳机正在刷闪存：这段时间系统报的连接状态不可信，界面显示「保存中」 */
+  settling: boolean;
+  /** 处于保存中的设备地址 */
+  settlingId: string;
 }
 
 export function createEmptySnapshot(): BtSnapshot {
@@ -63,7 +67,9 @@ export function createEmptySnapshot(): BtSnapshot {
     nearLinkSupported: false,
     nearLinkEnabled: false,
     nearLinkName: '',
-    nearLinkBtId: ''
+    nearLinkBtId: '',
+    settling: false,
+    settlingId: ''
   };
   return snapshot;
 }

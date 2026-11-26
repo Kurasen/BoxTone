@@ -503,6 +503,21 @@ export struct TonePage {
     return options;
   }
 
+  /**
+   * 音效库里已有内容完全相同的音效：直接复用那一条，不再存副本；否则新存一条。
+   * 按生成结果的内容比对，重启应用后、或者从别的入口生成出同样的音效，也一样能认出来。
+   */
+  private saveOrReuse(current: SourceAudio, result: ConvertResult): SavedTone {
+    const existing: ToneEntry | undefined = ToneRepositoryService.findSameContent(result.buffer);
+    if (existing !== undefined) {
+      Logger.info(MODULE, `内容与已有音效相同，复用「${existing.name}」`);
+      return { entry: existing, reused: true };
+    }
+    const entry: ToneEntry = ToneRepositoryService.save(this.currentName(), result, current.name);
+    EventBus.emit(AppEvent.TONE_CHANGED, 1);
+    return { entry: entry, reused: false };
+  }
+
   private currentName(): string {
     const current: SourceAudio | undefined = this.source;
     if (current === undefined) {
@@ -522,10 +537,11 @@ export struct TonePage {
     this.busy = true;
     try {
       const result: ConvertResult = await this.prepareResult(current, I18n.t('tone.generating'));
-      const entry: ToneEntry = ToneRepositoryService.save(this.currentName(), result, current.name);
+      const saved: SavedTone = this.saveOrReuse(current, result);
+      const entry: ToneEntry = saved.entry;
       this.savedName = entry.name;
-      EventBus.emit(AppEvent.TONE_CHANGED, 1);
-      this.toast(I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]));
+      this.toast(saved.reused ? I18n.f('tone.alreadySaved', [entry.name]) :
+        I18n.f('tone.saved', [entry.name, FormatUtils.bytes(result.byteLength)]));
     } catch (error) {
       Logger.exception(MODULE, '生成失败', error as BusinessError);
       this.toast(I18n.t('tone.generateFailed'));
@@ -566,9 +582,9 @@ export struct TonePage {
     this.busy = true;
     try {
       const result: ConvertResult = await this.prepareResult(current, I18n.t('tone.generating'));
-      const entry: ToneEntry = ToneRepositoryService.save(this.currentName(), result, current.name);
+      // 写入同样复用：同一段音效反复点「生成并写入」，音效库里只留一条
+      const entry: ToneEntry = this.saveOrReuse(current, result).entry;
       this.savedName = entry.name;
-      EventBus.emit(AppEvent.TONE_CHANGED, 1);
       await BluetoothService.refresh();
       const check: WriteCheck = CaseWriteService.check(entry);
       if (!check.ok) {
@@ -1470,3 +1486,8 @@ struct ToggleBlock {
   }
 }
 
+/** 生成结果落库：reused 表示参数未变、复用了已有条目 */
+interface SavedTone {
+  entry: ToneEntry;
+  reused: boolean;
+}

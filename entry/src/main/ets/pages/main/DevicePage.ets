@@ -266,13 +266,19 @@ export struct DevicePage {
     return activeId.toUpperCase() === device.deviceId.toUpperCase();
   }
 
+  /** 这台设备是否在写完音效后的保存窗口里 */
+  private isSettling(device: BtDevice): boolean {
+    return this.snapshot.settling && this.snapshot.settlingId.length > 0 &&
+      this.snapshot.settlingId.toUpperCase() === device.deviceId.toUpperCase();
+  }
+
   private rowDevice(device: BtDevice): BtDevice {
     const row: BtDevice = {
       deviceId: device.deviceId,
       name: device.name,
       paired: device.paired,
       audio: device.audio,
-      connected: this.isConnected(device),
+      connected: this.isConnected(device) && !this.isSettling(device),
       nearLink: device.nearLink
     };
     return row;
@@ -357,7 +363,7 @@ export struct DevicePage {
             .width('100%')
           StatPill({
             pillText: this.snapshot.statusText,
-            pillTone: this.snapshot.activeName.length > 0 ? 'success' : 'muted'
+            pillTone: this.snapshot.settling ? 'accent' : (this.snapshot.activeName.length > 0 ? 'success' : 'muted')
           })
         }
         .layoutWeight(1)
@@ -372,10 +378,12 @@ export struct DevicePage {
       Row() {
         MetricCell({
           cellLabel: I18n.t('device.channel'),
-          cellValue: this.snapshot.nearLinkName.length > 0 ? I18n.t('device.nearLink') :
-            (this.snapshot.activeName.length > 0 ? I18n.t('device.connected') : I18n.t('device.disconnectedShort')),
-          cellColor: this.snapshot.nearLinkName.length > 0 ? Palette.ACCENT :
-            (this.snapshot.activeName.length > 0 ? Palette.SUCCESS : Palette.TEXT_SECONDARY)
+          cellValue: this.snapshot.settling ? I18n.t('device.settlingShort') :
+            (this.snapshot.nearLinkName.length > 0 ? I18n.t('device.nearLink') :
+              (this.snapshot.activeName.length > 0 ? I18n.t('device.connected') : I18n.t('device.disconnectedShort'))),
+          cellColor: this.snapshot.settling ? Palette.ACCENT_TEXT :
+            (this.snapshot.nearLinkName.length > 0 ? Palette.ACCENT_TEXT :
+              (this.snapshot.activeName.length > 0 ? Palette.SUCCESS : Palette.TEXT_SECONDARY))
         })
         MetricCell({
           cellLabel: I18n.t('device.paired'),
@@ -465,9 +473,14 @@ export struct DevicePage {
             DeviceRow({
               // 连接状态只认快照里的 activeId，避免行数据自身残留旧值
               device: this.rowDevice(device),
-              actionLabel: this.busy ? I18n.t('device.busy') :
-                (this.isConnected(device) ? I18n.t('device.disconnect') : I18n.t('device.connect')),
+              actionLabel: this.isSettling(device) ? I18n.t('device.settlingShort') :
+                (this.busy ? I18n.t('device.busy') :
+                  (this.isConnected(device) ? I18n.t('device.disconnect') : I18n.t('device.connect'))),
               onAction: (): void => {
+                // 保存窗口内耳机在刷闪存，连接 / 断开都会打断它
+                if (this.isSettling(device)) {
+                  return;
+                }
                 if (this.isConnected(device)) {
                   this.disconnectDevice(device);
                 } else {
@@ -483,7 +496,7 @@ export struct DevicePage {
           }
           .width('100%')
         }, (device: BtDevice) =>
-          `${device.deviceId}-${device.name}-${this.isConnected(device) ? 'on' : 'off'}`)
+          `${device.deviceId}-${device.name}-${this.isConnected(device) ? 'on' : 'off'}-${this.isSettling(device) ? 's' : ''}`)
       }
     }
   }

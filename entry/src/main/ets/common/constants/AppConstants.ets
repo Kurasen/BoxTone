@@ -232,7 +232,9 @@ export class Changelog {
         'changelog.v121.i1',
         'changelog.v121.i2',
         'changelog.v121.i3',
-        'changelog.v121.i4'
+        'changelog.v121.i4',
+        'changelog.v121.i5',
+        'changelog.v121.i6'
       ]
     },
     {
@@ -398,6 +400,13 @@ export class MbbSpec {
    * 旧实现把两件事绑在一起（关通道 + 全局冷却），代价是每次都要重新建链。
    */
   static readonly SESSION_SETTLE_MS: number = 15000;
+  /**
+   * 沉降期内「音频自己连回来就提前结束」的最早时刻（从写完算起）。
+   * 音频回来不一定代表闪存写完：11-26 12:30 那轮写完 6 秒音频就回来了，
+   * 这时开始新传输，串口能连上却在 1 秒内 SPP IO error（2901054），之后耳机一直卡在这个状态，
+   * 只能合盖重开。同一天 12:12 那轮在第 11 秒提前结束则一切正常。
+   */
+  static readonly FLASH_SETTLE_MIN_MS: number = 10000;
   /**
    * 热会话保留时长。
    * 一次操作结束后串口不立刻关，留着给下一次复用：真机一次 sppConnect 约 3 秒

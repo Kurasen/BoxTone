@@ -50,6 +50,7 @@ export const EN_STRINGS: Record<string, string> = {
   'device.noPaired': 'No paired devices yet',
   'device.noPairedDesc': 'Open the case lid and pair in system Bluetooth settings, then come back here',
   'device.busy': 'Working',
+  'device.settlingShort': 'Saving',
   'device.disconnect': 'Disconnect',
   'device.connect': 'Connect',
   'device.nearby': 'Nearby',
@@ -83,6 +84,7 @@ export const EN_STRINGS: Record<string, string> = {
   'tone.defaultName': 'Opening tone',
   'tone.generating': 'Generating…',
   'tone.saved': 'Saved "{0}" {1}',
+  'tone.alreadySaved': 'An identical tone "{0}" is already in the library; not saved again',
   'tone.generateFailed': 'Generation failed. Check the log.',
   'tone.exported': 'Exported {0}',
   'tone.exportFailed': 'Export failed. Check the log.',
@@ -386,6 +388,8 @@ export const EN_STRINGS: Record<string, string> = {
   'changelog.v121.i2': 'Tone duration limit raised to 2.8 seconds',
   'changelog.v121.i3': 'Fixed writes starting immediately after closing the case without checking the connection',
   'changelog.v121.i4': 'Refined dark and light themes: purer backgrounds, clearer card layers and stronger text contrast',
+  'changelog.v121.i5': 'Automatic de-duplication: generating an identical tone reuses the existing entry instead of saving a copy',
+  'changelog.v121.i6': 'More reliable back-to-back writes: while the earbuds save a tone, the app shows "Saving" and the time left, so the save is not interrupted',
   'changelog.v120.note': 'Previous version',
   'changelog.v120.i2': 'Batch delete in the tone library; the tone being written is locked against deletion',
   'changelog.v120.i3': 'New Backup & Import page: back up or restore the whole library, and import .pcm / .raw files directly',
@@ -451,6 +455,7 @@ export const EN_STRINGS: Record<string, string> = {
   'bt.needPermission': 'Bluetooth permission needed',
   'bt.nearLinkConnected': 'Connected via NearLink',
   'bt.audioConnected': 'Audio link connected',
+  'bt.caseSettling': 'Earbuds are saving the tone; reconnecting shortly',
   'bt.nearLinkConnectedNoBt': 'Connected via NearLink (no classic Bluetooth pairing)',
   'bt.pairedNotConnected': 'Paired, not connected',
   'bt.notPaired': 'No earbuds paired',
@@ -464,6 +469,7 @@ export const EN_STRINGS: Record<string, string> = {
   'write.tooLarge': 'File {0} exceeds the {1} limit',
   'write.noPermission': 'Bluetooth permission is required to write to the earbuds',
   'write.btOff': 'Turn on Bluetooth first',
+  'write.caseSettling': 'The earbuds are still saving the previous tone. You can write again in about {0} s.',
   'write.noEarbud': 'No earbuds connected. Pair and connect them on the Devices page first; during writing, put both earbuds in the case and open the lid.',
   'write.fileMissing': 'The tone file was deleted. Generate it again.',
   'write.fileUnreadable': 'The tone file cannot be read. Generate it again.',
@@ -548,6 +554,8 @@ export const EN_STRINGS: Record<string, string> = {
   'toneErr.linkLost': 'Bluetooth serial communication was interrupted. Close and reopen the lid, then retry.',
   'toneErr.rejected': 'The earbuds rejected the serial connection. The channel may be held by AI Life; ' +
     'remove it from recents and retry.',
+  'toneErr.notReady': 'The earbuds did not accept the connection, probably because they were not ready yet. ' +
+    'Put both earbuds back in the case, close the lid for 3 seconds, reopen it, then write again.',
   'toneErr.audioHeld': 'The serial connection was refused while the earbud audio link stayed connected ' +
     '(the system does not let this app disconnect it). Close the case for 5 seconds and open it again, ' +
     'or disconnect the earbuds in system Bluetooth settings and retry.',

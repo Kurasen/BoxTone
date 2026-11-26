@@ -246,6 +246,43 @@ export class ToneRepositoryService {
     return entry;
   }
 
+  /**
+   * 找内容和这段音效完全一样的已有条目：先按字节数筛，再逐字节比对。
+   * 按内容而不是按生成参数判断：重启之后、换了来源文件名、老版本存下的条目都能认出来，
+   * 也不用往 index.json 里加新字段。音效最大约 93KB、同长度的条目很少，比对开销可以忽略。
+   */
+  public static findSameContent(buffer: ArrayBuffer): ToneEntry | undefined {
+    const target: Uint8Array = new Uint8Array(buffer);
+    for (let i = 0; i < ToneRepositoryService.items.length; i++) {
+      const entry: ToneEntry = ToneRepositoryService.items[i];
+      if (entry.byteLength !== target.length) {
+        continue;
+      }
+      try {
+        const existing: Uint8Array = new Uint8Array(ToneRepositoryService.readBuffer(entry));
+        if (ToneRepositoryService.sameBytes(existing, target)) {
+          return entry;
+        }
+      } catch (error) {
+        // 文件缺失或读取失败：当作没有，交给调用方新存一条
+        Logger.warn(MODULE, `比对音效内容时读取失败 ${entry.fileName}`);
+      }
+    }
+    return undefined;
+  }
+
+  private static sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /** 读取音效二进制 */
   public static readBuffer(entry: ToneEntry): ArrayBuffer {
     const path: string = ToneRepositoryService.pathOf(entry);

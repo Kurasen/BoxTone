@@ -208,8 +208,10 @@ export class ToneClient {
     }
     this.trace(`FLASH_SETTLE wait=${left}ms`);
     const until: number = Date.now() + left;
+    // 写完后至少等满 FLASH_SETTLE_MIN_MS 才允许「音频已恢复」提前放行
+    const earliestSkip: number = ToneClient.settleUntil - MbbSpec.SESSION_SETTLE_MS + MbbSpec.FLASH_SETTLE_MIN_MS;
     while (Date.now() < until && !this.closed) {
-      if (ToneClient.settleAudioWasDown && this.audioLinked(address)) {
+      if (Date.now() >= earliestSkip && ToneClient.settleAudioWasDown && this.audioLinked(address)) {
         this.trace(`FLASH_SETTLE_SKIP 音频通道已恢复，提前 ${until - Date.now()}ms`);
         return;
       }
@@ -715,6 +717,17 @@ export class ToneClient {
         : I18n.t('toneErr.notAccepted'), 2900099);
       notAccepted.reason = ToneErrorReason.LINK;
       return notAccepted;
+    }
+    /**
+     * 两种通道都回 -1，而且音频不是被别人占着（已由本应用断开，或本来就没连）：
+     * 真机上这多半是耳机刚开盖还没准备好，合盖再开盖后马上就能连上（11-26 11:33 那轮 7 秒后即成功）。
+     * 这时报「被智慧音频占用」会误导用户去关一个根本没在用的应用。
+     * 不支持识别的非华为耳机仍保留「可能不支持」的中性提示；reason 不设为 LINK，避免自动整包重传。
+     */
+    if (lastError.code === -1 && !this.neutralHints && this.audioGate !== 'kept') {
+      const notReady: ToneError = new ToneError(I18n.t('toneErr.notReady'), -1);
+      notReady.diagnostic = `AUDIO_GATE=${this.audioGate} last_code=-1 both_modes_rejected`;
+      return notReady;
     }
     return lastError;
   }

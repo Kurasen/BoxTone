@@ -187,6 +187,21 @@ export class CaseWriteService {
     return CaseWriteService.checkLink();
   }
 
+  /**
+   * 找不到可写入的耳机。
+   * 刚写完一条时耳机在刷闪存、A2DP 会断开一阵，这时报「未连接耳机，去设备页配对」会让用户以为掉线了，
+   * 而设备页同时显示的是「保存中」。保存窗口内改成告诉用户还要等多久。
+   * 只改提示、不额外拦截：音频提前连回来时 deviceId 能取到，照常放行（这时闪存已经写完）。
+   */
+  private static noEarbudFail(): WriteCheck {
+    const leftMs: number = BluetoothService.caseSettlingLeftMs();
+    if (leftMs > 0) {
+      return CaseWriteService.checkFail(WriteCode.NO_EARBUD,
+        I18n.f('write.caseSettling', [`${Math.max(1, Math.ceil(leftMs / 1000))}`]));
+    }
+    return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.noEarbud'));
+  }
+
   /** 设备链路检查：权限、蓝牙开关、当前输出设备、星闪拦截 */
   private static checkLink(): WriteCheck {
     if (CaseWriteService.writing || CaseWriteService.recovering) {
@@ -217,14 +232,14 @@ export class CaseWriteService {
         // 否则写完一条、合上盖子（耳机断连）后直接再点写入，这里会拿旧 id 放行，
         // 用户要干等一整轮建链才被告知没连上——这正是「先判断连接再判断能否写入」的落点。
         if (!BluetoothService.isAudioConnected(CaseWriteService.lastDeviceId)) {
-          return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.noEarbud'));
+          return CaseWriteService.noEarbudFail();
         }
         deviceId = CaseWriteService.lastDeviceId;
         Logger.info(MODULE, `前置检查沿用上一次的设备 ${FormatUtils.maskAddress(deviceId)}`);
       }
     }
     if (deviceId.length === 0) {
-      return CaseWriteService.checkFail(WriteCode.NO_EARBUD, I18n.t('write.noEarbud'));
+      return CaseWriteService.noEarbudFail();
     }
     // 星闪开关开启时，写入期间耳机可能自动切回星闪，先要求关闭开关
     if (snapshot.nearLinkEnabled) {
@@ -771,11 +786,18 @@ export class CaseWriteService {
     }
   }
 
-  /** 写入过程中断开了音频通道，成功后延迟重连，尽力恢复听歌状态 */
+  /**
+   * 写入过程中断开了音频通道，成功后延迟重连，尽力恢复听歌状态。
+   * 不在写完时主动断开耳机：写入前音频已经断开、串口会话写完即关，剩下的只是耳机或系统自己连回来的音频，
+   * 主动断开会和这里的恢复流程打架（API 26 以下还断不了，系统自连的连接也常回 2900099）。
+   * 问题在界面状态没跟上，所以只把设备标成「保存中」，恢复时再按真实状态刷新。
+   */
   private static scheduleAudioRestore(deviceId: string): void {
     CaseWriteService.cancelPendingRestore();
+    BluetoothService.markCaseSettling(deviceId, AUDIO_RESTORE_DELAY_MS);
     CaseWriteService.restoreTimer = setTimeout(() => {
       CaseWriteService.restoreTimer = -1;
+      BluetoothService.endCaseSettling();
       if (CaseWriteService.writing) {
         Logger.info(MODULE, '有新的写入在进行，跳过音频恢复');
         return;
@@ -788,6 +810,8 @@ export class CaseWriteService {
       BluetoothService.connect(deviceId).then(() => {
         Logger.info(MODULE, `已恢复音频通道 ${FormatUtils.maskAddress(deviceId)} ` +
           `session=${ToneClient.hasSession() ? 'held' : 'closed'}`);
+        // 连接请求发出后，耳机真正连上还要一两秒；系统不一定补发事件，这里再兜底刷新一次
+        BluetoothService.refreshDebounced(2500);
       }).catch((error: BusinessError) => {
         Logger.info(MODULE, `恢复音频通道失败（不影响音效）code=${error.code} ` +
           `session=${ToneClient.hasSession() ? 'held' : 'closed'}`);
