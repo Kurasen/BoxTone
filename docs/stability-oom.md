@@ -225,3 +225,52 @@ release 包同样记录，不含用户数据。接口全部按本地 SDK `@ohos.
 1. **验证**（不改代码就能做）：main 旧包跑 `./tools/mem-repro.sh 30 4 8 settings`（切后台改成打开系统蓝牙页），预期堆每轮上涨、RSS 明显增长。
 2. **修复**（`refactor/write-engine`）：`onDeviceFound` 只在本应用扫描期间（`snapshot.scanning`）接收结果，其余计数后丢弃（日志 `DEVICE_FOUND_IGNORED`）；保留上限 50；设备页附近设备改用 `List + LazyForEach`。
 3. 本分支 `4f09a2e3` 漏提交了 `MemProbe.ets`、`tools/mem-repro.sh`、`docs/stability-oom.md`，单独 checkout 这个提交编译会失败，需补提交。
+
+### 7.5 验证与修复（11-27 10:04~10:10）
+
+**main 旧包 `mem-repro.sh 30 4 8 settings`：没涨。** 30 轮 ArkTS 堆 11.6 → 7.8 → 8.3MB、总 PSS 74.5 → 70.3MB。
+这轮的日志只有 hidumper 数字，看不出系统蓝牙页到底有没有打开、扫描结果有没有推过来，所以既不能证实也不能推翻 7.2。可能的原因：
+
+1. `aa start -U bluetooth_entry` 没进到蓝牙页（命令写法在本地 SDK 里没查到文档）；
+2. 周围设备少、或这台手机上虚拟地址每次都一样，按地址去重兜住了，列表只涨到周围设备数就停；
+3. 旧包当时停的不是设备页、或没授蓝牙权限（没权限不会订阅发现事件）。
+
+现场每次回前台新增 37~85 行，远多于截图里系统蓝牙页显示的 8 台左右设备，**虚拟地址每次扫描都换**的推断（7.2 第 3 条）比较站得住，但仍然没有验证。
+
+**本分支修复**（`BluetoothService.onDeviceFound`）：
+
+| 项 | 做法 |
+|:--|:--|
+| 根因 | 只在 `snapshot.scanning`（本应用 startScan → stopScan 之间）时收；其余丢弃，`DEVICE_FOUND_IGNORED total= distinct=` 第一条立即记，之后 30 秒汇总一条 |
+| 兜底 | 保留 `NEARBY_MAX = 50` |
+| 诊断 | 每次扫描结束 `SCAN_SUMMARY found= distinct= kept=`；distinct 明显多于周围实际设备数 = 虚拟地址每次在换 |
+| 不做 | 附近设备改 `List + LazyForEach`：上限 50 行，一次性构建的代价可以接受，不值得为此引入 IDataSource |
+
+`mem-repro.sh` 额外抓 `DEVICE_FOUND_IGNORED / SCAN_SUMMARY` 和本应用进程里的 `OnScanModeChanged`（mode: 4 = 系统蓝牙页把手机设成了可被发现，用来确认确实进了蓝牙页）。
+
+**判读**（本分支 `mem-repro.sh 30 4 8 settings`）：
+
+| 结果 | 含义 |
+|:--|:--|
+| 有 `mode: 4`，也有 `DEVICE_FOUND_IGNORED`、total 每轮涨 | 7.2 成立，修复正好挡住根因 |
+| 有 `mode: 4`，没有 `DEVICE_FOUND_IGNORED` | 系统页的扫描不会推给本应用，7.2 第 2 条不成立，需要另找新增行的来源 |
+| 没有 `mode: 4` | 脚本没进到蓝牙页，先手动进一次确认 |
+
+### 7.6 本分支验证（11-27 10:16~10:23，`mem-repro.sh 30 4 8 settings`）
+
+| 项 | 结果 |
+|:--|:--|
+| 进到系统蓝牙页 | 是：本进程 `OnScanModeChanged mode: 4` 共 90 条（人工也确认停在蓝牙页） |
+| 系统页的扫描结果推给本应用 | **是**：本应用全程没扫描，仍收到 `DEVICE_FOUND_IGNORED total=45 distinct=2`（6 分钟，第一条 10:21:19）→ **7.2 第 2 条证实** |
+| 内存 | JS 堆 9.9~11.5MB、PSS 76~81MB，各组件 `live` 全程不变，`DeviceRow:2`（只有已配对的两行） |
+
+**为什么 6.6 / 7.5 的旧包没涨**：家里只有 2 台设备，而且这台手机上同一台设备每次拿到的虚拟地址相同（distinct=2），
+旧代码按地址去重就兜住了，列表最多涨到 2 行。测试机房周围设备多（截图里系统蓝牙页同名设备成排出现），每次回前台新增 37~85 行、
+50 分钟 1.2 万行，说明那里每次扫描都是新地址（7.2 第 3 条）。**这个条件在家里复现不了**，旧包涨不涨取决于环境，新包不受环境影响。
+
+结论：根因链中「系统页扫描推给本应用」已证实，「地址每次都换」由现场数据推出；修复在入口处丢弃非本应用扫描的结果，外加 50 行上限，两个条件任意一个不成立都不会再无限增长。
+
+其他：
+
+- `MEM_LEAK GlassCard ×2`（10:17:03，脚本启动前的那次切后台）：上一轮是 `DeviceRow ×1`，都是设备页里被 `if` 移除的一次性节点（权限卡、空态切换），数量不随轮数增长，不是这次问题；留作后续排查（手动「立即采样并检查泄漏」看是否最终回收）。
+- `mem-repro.sh`：hilog 那路改为 `>>` 追加写，修复 HIDUMPER 行被覆盖。

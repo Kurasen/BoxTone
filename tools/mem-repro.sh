@@ -6,6 +6,8 @@
 # 崩溃点在回前台的 OnShow。App 内部模拟不了「切到别的应用再回来」，这里用 hdc 驱动：
 #   回桌面（Home 键）→ 等 BG 秒 → aa start 拉回前台 → 等 FG 秒，循环 N 次。
 # 同时把 hilog 里的 MemProbe 行（MEM_SAMPLE / MEM_DUP / MEM_LEAK）存到 dist/mem-repro-时间.log。
+# 另记两类：DEVICE_FOUND_IGNORED / SCAN_SUMMARY（蓝牙发现结果统计）；OnScanModeChanged ... mode: 4
+# （系统蓝牙设置页打开时手机进入可被发现模式——settings 模式下没有这行，说明根本没进到蓝牙页）。
 #
 # 用法：
 #   ./tools/mem-repro.sh            默认 100 轮，前台 4 秒、后台 2 秒（约 10 分钟）
@@ -62,9 +64,12 @@ press_home() {
 mkdir -p dist
 OUT="dist/mem-repro-$(date +%Y%m%d-%H%M%S).log"
 echo "日志写到 $OUT（只保留 MemProbe 行）"
+# 两个写入方都必须用追加（O_APPEND）：之前 hilog 这路用 >，它按自己的偏移写，
+# 会把循环里 >> 追加的 HIDUMPER 行覆盖掉（11-27 10:16 那轮 10、20 轮的记录就是这样丢的）
+: > "$OUT"
 
 # 后台持续抓 hilog；退出时一并结束
-"$HDC" shell hilog 2>/dev/null | tr -d '\r' | grep --line-buffered -E 'MemProbe|STRESS_|jscrash|OutOfMemory' > "$OUT" &
+"$HDC" shell hilog 2>/dev/null | tr -d '\r' | grep --line-buffered -E 'MemProbe|STRESS_|DEVICE_FOUND_IGNORED|SCAN_SUMMARY|audiokit.*OnScanModeChanged|jscrash|OutOfMemory' >> "$OUT" &
 LOG_PID=$!
 trap 'kill $LOG_PID 2>/dev/null; echo; echo "结束，日志：$OUT"; exit 0' INT TERM EXIT
 

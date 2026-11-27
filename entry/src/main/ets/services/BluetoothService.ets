@@ -25,6 +25,10 @@ const SCAN_TIMEOUT_MS: number = 15000;
 const NEARBY_NOTIFY_MS: number = 400;
 /** 附近设备列表上限：只是给用户挑一台去配对，再多没有意义，也避免列表无限增长 */
 const NEARBY_MAX: number = 50;
+/** 非本应用扫描的发现结果：汇总日志的最小间隔 */
+const IGNORED_LOG_GAP_MS: number = 30000;
+/** 统计不同地址数时最多记多少个，只用来看量级 */
+const DISTINCT_TRACK_MAX: number = 2000;
 /**
  * A2DP 状态回调同一状态常连发 3~5 次（如断开时 state=0 ×4）。这段时间内完全相同的回调只计数，
  * 下一条不同的回调带上 dup=N。只影响日志，刷新照常触发。
@@ -62,6 +66,16 @@ export class BluetoothService {
   private static scanTimer: number = -1;
   /** 扫描结果合批通知 */
   private static nearbyNotifyTimer: number = -1;
+  /**
+   * 发现结果统计（只记数量，不记地址）。
+   * found / distinct 是本应用一次扫描期间的；ignored* 是本应用没在扫描时收到的（系统蓝牙设置页、其他应用发起的扫描）。
+   * distinct 明显大于周围实际设备数，说明同一台设备每次拿到的是不同的虚拟地址，按地址去重失效。
+   */
+  private static scanFound: number = 0;
+  private static scanIds: Set<string> = new Set<string>();
+  private static ignoredFound: number = 0;
+  private static ignoredIds: Set<string> = new Set<string>();
+  private static ignoredLoggedAt: number = 0;
   /**
    * 写完音效后的保存窗口。耳机这时在刷闪存，实际已经用不了，
    * 但系统 A2DP 可能短暂报「已连接」、也可能不发任何事件，只靠事件刷新会一直停在旧状态。
@@ -672,7 +686,24 @@ export class BluetoothService {
     return device;
   }
 
+  /**
+   * 设备发现回调。
+   *
+   * 只收本应用发起的扫描（startScan → stopScan 之间）的结果。11-26 上架测试 OOM 的根因
+   * （docs/stability-oom.md 第 7 节）：测试反复进出「系统设置 → 蓝牙」，那里的扫描结果同样推到这个订阅，
+   * 旧代码来者不拒、列表又没上限，50 分钟攒了约 1.2 万行设备行，JS 堆打满。
+   * 本地 SDK（@ohos.bluetooth.connection.d.ts）：没有 GET_BLUETOOTH_PEERS_MAC 时给的是虚拟地址，
+   * 不能指望按地址去重兜住。
+   */
   private static onDeviceFound(deviceId: string): void {
+    if (!BluetoothService.snapshot.scanning) {
+      BluetoothService.noteIgnoredFound(deviceId);
+      return;
+    }
+    BluetoothService.scanFound++;
+    if (BluetoothService.scanIds.size < DISTINCT_TRACK_MAX) {
+      BluetoothService.scanIds.add(deviceId);
+    }
     const nearby: BtDevice[] = BluetoothService.snapshot.nearbyDevices;
     if (nearby.length >= NEARBY_MAX) {
       return;
@@ -690,6 +721,21 @@ export class BluetoothService {
     next.nearbyDevices.push(BluetoothService.describeDevice(deviceId, false));
     BluetoothService.snapshot = next;
     BluetoothService.scheduleNearbyNotify();
+  }
+
+  /** 记一笔「不是自己扫描」的发现结果：第一条立即记，之后最多 30 秒汇总一条 */
+  private static noteIgnoredFound(deviceId: string): void {
+    BluetoothService.ignoredFound++;
+    if (BluetoothService.ignoredIds.size < DISTINCT_TRACK_MAX) {
+      BluetoothService.ignoredIds.add(deviceId);
+    }
+    const now: number = Date.now();
+    if (BluetoothService.ignoredFound > 1 && now - BluetoothService.ignoredLoggedAt < IGNORED_LOG_GAP_MS) {
+      return;
+    }
+    BluetoothService.ignoredLoggedAt = now;
+    Logger.info(MODULE, `DEVICE_FOUND_IGNORED total=${BluetoothService.ignoredFound} ` +
+      `distinct=${BluetoothService.ignoredIds.size}（非本应用扫描的结果，已丢弃）`);
   }
 
   private static scheduleNearbyNotify(): void {
@@ -723,6 +769,8 @@ export class BluetoothService {
     }
     BluetoothService.cancelNearbyNotify();
     BluetoothService.cancelScanTimer();
+    BluetoothService.scanFound = 0;
+    BluetoothService.scanIds.clear();
     const next: BtSnapshot = cloneSnapshot(BluetoothService.snapshot);
     next.nearbyDevices = [];
     next.scanning = true;
@@ -754,6 +802,8 @@ export class BluetoothService {
     const next: BtSnapshot = cloneSnapshot(BluetoothService.snapshot);
     next.scanning = false;
     BluetoothService.snapshot = next;
+    Logger.info(MODULE, `SCAN_SUMMARY found=${BluetoothService.scanFound} distinct=${BluetoothService.scanIds.size} ` +
+      `kept=${next.nearbyDevices.length} max=${NEARBY_MAX}`);
     try {
       connection.stopBluetoothDiscovery();
       Logger.info(MODULE, '停止扫描');
