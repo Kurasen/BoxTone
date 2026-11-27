@@ -4,7 +4,6 @@ import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { ToneSpec } from '../../common/constants/AppConstants';
 import { FormatUtils } from '../../common/utils/FormatUtils';
-import { AppEnv } from '../../common/utils/AppEnv';
 import { Logger } from '../../common/utils/Logger';
 import { MemProbe } from '../../common/utils/MemProbe';
 import { AppEvent, BusyState, EventBus, SimpleHandler } from '../../common/utils/EventBus';
@@ -62,9 +61,6 @@ export struct TonePage {
   private preloadStopped: boolean = false;
   /** 隐私放行事件的监听器：同意前不预热，等事件到了再开始 */
   private privacyHandler: SimpleHandler | undefined = undefined;
-  /** 仅 debug 包：内存压测（自动切换内置音效） */
-  private stressHandler: SimpleHandler | undefined = undefined;
-  private stressRunning: boolean = false;
   private waveWidth: number = 0;
   private pinchStartViewMs: number = 0;
   private pinchStartSpanMs: number = 0;
@@ -113,56 +109,7 @@ export struct TonePage {
     // 切 tab 会走 aboutToDisappear→aboutToAppear，回来时要重新允许预热
     this.preloadStopped = false;
     this.scheduleBuiltinPreload();
-    if (AppEnv.isDebug()) {
-      this.stressHandler = (rounds: number): void => {
-        this.runToneStress(rounds);
-      };
-      EventBus.on(AppEvent.DEBUG_STRESS_TONES, this.stressHandler);
-    }
   }
-
-  /**
-   * 内存压测：循环点内置音效 rounds 次（重建波形、峰值、48kHz 试听缓冲），每 10 次点一下「原声」试听，
-   * 每 20 次强制采样。对应上架测试截图里「音效页反复点内置音效」那一段。
-   */
-  private async runToneStress(rounds: number): Promise<void> {
-    if (this.stressRunning || this.busy || this.writing) {
-      return;
-    }
-    this.stressRunning = true;
-    const tones: BuiltinTone[] = BuiltinToneCatalog.all();
-    Logger.info(MODULE, `STRESS_TONES start rounds=${rounds}`);
-    MemProbe.report('stress-tones-start');
-    try {
-      for (let i = 1; i <= rounds && this.stressRunning; i++) {
-        await this.useBuiltinTone(tones[i % tones.length], true);
-        if (i % 10 === 0) {
-          // 不等播完：试听播一小段就被打断，走的正是「播放中被新操作取代」那条路径
-          this.playSource();
-          await TonePage.stressDelay(400);
-          await AudioPlayService.stop();
-          this.playingSource = false;
-        }
-        await TonePage.stressDelay(150);
-        if (i % 20 === 0) {
-          MemProbe.sample(`stress-tones-${i}`, true);
-        }
-      }
-    } finally {
-      this.stressRunning = false;
-      Logger.info(MODULE, 'STRESS_TONES end');
-      setTimeout((): void => {
-        MemProbe.report('stress-tones-end');
-      }, 1000);
-    }
-  }
-
-  private static stressDelay(ms: number): Promise<void> {
-    return new Promise<void>((resolve: () => void) => {
-      setTimeout(resolve, ms);
-    });
-  }
-
 
   /**
    * 空闲时逐个预热内置音效，点开时直接命中缓存，不再现读现解。
@@ -217,11 +164,6 @@ export struct TonePage {
   aboutToDisappear(): void {
     this.preloadStopped = true;
     this.releasePrivacyHandler();
-    this.stressRunning = false;
-    if (this.stressHandler !== undefined) {
-      EventBus.off(AppEvent.DEBUG_STRESS_TONES, this.stressHandler);
-      this.stressHandler = undefined;
-    }
     this.stopImportProgress();
     if (this.preparing) {
       ImportControl.cancel();
@@ -422,8 +364,7 @@ export struct TonePage {
     Logger.info(MODULE, `音源已就绪：${imported.name}，峰值 ${this.fullPeaks.length} 段`);
   }
 
-  /** @param quiet 压测时不弹「已载入」提示 */
-  private async useBuiltinTone(tone: BuiltinTone, quiet: boolean = false): Promise<void> {
+  private async useBuiltinTone(tone: BuiltinTone): Promise<void> {
     this.busy = true;
     try {
       const label: string = BuiltinToneCatalog.label(tone, I18n.isEnglish());
@@ -443,9 +384,7 @@ export struct TonePage {
       this.activeBuiltinId = tone.id;
       // 提前把 48kHz 试听缓冲算好，点「原声」时不用再等升采样
       AudioPlayService.prewarmSourcePcm(pcm);
-      if (!quiet) {
-        this.toast(I18n.f('tone.ready', [label]));
-      }
+      this.toast(I18n.f('tone.ready', [label]));
     } catch (error) {
       Logger.exception(MODULE, `载入内置音效失败 ${tone.id}`, error as BusinessError);
       this.toast(I18n.t('tone.builtinFailed'));

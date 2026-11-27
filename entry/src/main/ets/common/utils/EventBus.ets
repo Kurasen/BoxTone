@@ -23,10 +23,6 @@ export class AppEvent {
   static readonly OPEN_BACKUP: number = 3011;
   /** 隐私闸门放行（已同意 / 确认无从征询）：需要读文件、连设备的重活等这个事件再做 */
   static readonly PRIVACY_CLEARED: number = 3012;
-  /** 仅 debug 包：内存压测——自动切页签，payload 为轮数（见 docs/stability-oom.md） */
-  static readonly DEBUG_STRESS_TABS: number = 3013;
-  /** 仅 debug 包：内存压测——自动切换内置音效，payload 为轮数 */
-  static readonly DEBUG_STRESS_TONES: number = 3014;
 }
 
 export type SimpleHandler = (payload: number) => void;

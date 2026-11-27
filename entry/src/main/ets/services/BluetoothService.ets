@@ -11,7 +11,9 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { BtDevice, BtSnapshot, cloneSnapshot, createEmptySnapshot } from '../models/DeviceModel';
 import { I18n } from '../common/i18n/I18n';
 import { FormatUtils } from '../common/utils/FormatUtils';
+import { AppEnv } from '../common/utils/AppEnv';
 import { Logger } from '../common/utils/Logger';
+import { MemProbe } from '../common/utils/MemProbe';
 import { NearLinkService, NearLinkSnapshot } from './NearLinkService';
 
 const MODULE: string = 'Bluetooth';
@@ -27,6 +29,11 @@ const NEARBY_NOTIFY_MS: number = 400;
 const NEARBY_MAX: number = 50;
 /** 非本应用扫描的发现结果：汇总日志的最小间隔 */
 const IGNORED_LOG_GAP_MS: number = 30000;
+/**
+ * release 包里放宽到 5 分钟：上架测试那种「反复进出系统蓝牙页」的场景，30 秒一条 50 分钟就是 100 条，
+ * 会挤掉日志中心（600 条）里写入引擎的诊断日志
+ */
+const IGNORED_LOG_GAP_RELEASE_MS: number = 300000;
 /** 统计不同地址数时最多记多少个，只用来看量级 */
 const DISTINCT_TRACK_MAX: number = 2000;
 /**
@@ -690,7 +697,7 @@ export class BluetoothService {
    * 设备发现回调。
    *
    * 只收本应用发起的扫描（startScan → stopScan 之间）的结果。11-26 上架测试 OOM 的根因
-   * （docs/stability-oom.md 第 7 节）：测试反复进出「系统设置 → 蓝牙」，那里的扫描结果同样推到这个订阅，
+   * （docs/stability-oom.md 第 2 节）：测试反复进出「系统设置 → 蓝牙」，那里的扫描结果同样推到这个订阅，
    * 旧代码来者不拒、列表又没上限，50 分钟攒了约 1.2 万行设备行，JS 堆打满。
    * 本地 SDK（@ohos.bluetooth.connection.d.ts）：没有 GET_BLUETOOTH_PEERS_MAC 时给的是虚拟地址，
    * 不能指望按地址去重兜住。
@@ -730,12 +737,74 @@ export class BluetoothService {
       BluetoothService.ignoredIds.add(deviceId);
     }
     const now: number = Date.now();
-    if (BluetoothService.ignoredFound > 1 && now - BluetoothService.ignoredLoggedAt < IGNORED_LOG_GAP_MS) {
+    const gap: number = AppEnv.isDebug() ? IGNORED_LOG_GAP_MS : IGNORED_LOG_GAP_RELEASE_MS;
+    if (BluetoothService.ignoredFound > 1 && now - BluetoothService.ignoredLoggedAt < gap) {
       return;
     }
     BluetoothService.ignoredLoggedAt = now;
     Logger.info(MODULE, `DEVICE_FOUND_IGNORED total=${BluetoothService.ignoredFound} ` +
-      `distinct=${BluetoothService.ignoredIds.size}（非本应用扫描的结果，已丢弃）`);
+      `distinct=${BluetoothService.ignoredIds.size}（距上一条；非本应用扫描的结果，已丢弃）`);
+    // 只统计到下一条日志为止，不常驻
+    BluetoothService.ignoredIds.clear();
+  }
+
+  // ---------------- 仅 debug 包：模拟测试机房（docs/stability-oom.md 第 5 节，结果见附录 A9） ----------------
+  //
+  // 家里只有两三台设备，且每次扫描拿到的虚拟地址相同（docs 附录 A7.6，distinct=2），旧逻辑靠地址去重就兜住了，复现不出现场。
+  // 这里用随机地址直接喂发现回调，模拟「周围几十台设备 + 每次扫描都换虚拟地址」。地址随机生成，不对应真实设备。
+
+  /** 防线 1：本应用没在扫描时（相当于系统蓝牙页在扫），喂 count 个随机地址，期望全部丢弃 */
+  public static debugSimulateForeignScan(count: number): void {
+    if (!AppEnv.isDebug()) {
+      return;
+    }
+    if (BluetoothService.snapshot.scanning) {
+      Logger.warn(MODULE, 'SIM_FOREIGN 跳过：本应用正在扫描，结果会被正常收下，等扫描结束再试');
+      return;
+    }
+    const before: number = BluetoothService.ignoredFound;
+    for (let i = 0; i < count; i++) {
+      BluetoothService.onDeviceFound(BluetoothService.randomAddress());
+    }
+    Logger.info(MODULE, `SIM_FOREIGN fed=${count} ignored=${BluetoothService.ignoredFound - before} ` +
+      `nearby=${BluetoothService.snapshot.nearbyDevices.length}（期望 ignored=fed、nearby 不变）`);
+    MemProbe.report('sim-foreign');
+  }
+
+  /** 防线 2：本应用扫描期间涌入 count 个随机地址，期望列表停在 NEARBY_MAX，2 秒后停扫出 SCAN_SUMMARY */
+  public static async debugSimulateOwnScan(count: number): Promise<void> {
+    if (!AppEnv.isDebug()) {
+      return;
+    }
+    BluetoothService.startScan();
+    if (!BluetoothService.snapshot.scanning) {
+      Logger.warn(MODULE, 'SIM_OWN 跳过：扫描没有启动（蓝牙未开或无权限）');
+      return;
+    }
+    for (let i = 0; i < count; i++) {
+      BluetoothService.onDeviceFound(BluetoothService.randomAddress());
+    }
+    Logger.info(MODULE, `SIM_OWN fed=${count} nearby=${BluetoothService.snapshot.nearbyDevices.length}` +
+      `（期望 nearby=${NEARBY_MAX}，另加扫描期间真实发现的设备也计在上限内）`);
+    await BluetoothService.debugDelay(2000);
+    BluetoothService.stopScan();
+    await BluetoothService.debugDelay(1500);
+    MemProbe.report('sim-own');
+  }
+
+  /** 随机生成一个 MAC 格式的地址，不对应任何真实设备 */
+  private static randomAddress(): string {
+    const parts: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      parts.push(Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0'));
+    }
+    return parts.join(':');
+  }
+
+  private static debugDelay(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, ms);
+    });
   }
 
   private static scheduleNearbyNotify(): void {
@@ -804,6 +873,8 @@ export class BluetoothService {
     BluetoothService.snapshot = next;
     Logger.info(MODULE, `SCAN_SUMMARY found=${BluetoothService.scanFound} distinct=${BluetoothService.scanIds.size} ` +
       `kept=${next.nearbyDevices.length} max=${NEARBY_MAX}`);
+    // 地址集合只服务于这一条汇总，扫描结束即释放
+    BluetoothService.scanIds.clear();
     try {
       connection.stopBluetoothDiscovery();
       Logger.info(MODULE, '停止扫描');

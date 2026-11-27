@@ -8,6 +8,7 @@ import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
 import { MemProbe } from '../../common/utils/MemProbe';
 import { RatingService } from '../../services/RatingService';
+import { BluetoothService } from '../../services/BluetoothService';
 import { AppEnv } from '../../common/utils/AppEnv';
 import { GlassCard } from '../../components/GlassCard';
 import { SectionTitle } from '../../components/SectionTitle';
@@ -103,19 +104,19 @@ export struct ProfilePage {
         this.showRatingTest();
       }
     }];
-    // 内存压测（docs/stability-oom.md 第 5 节）：结果看日志中心里的 MEM_SAMPLE / MEM_LEAK
+    // 模拟测试机房（回归用，docs/stability-oom.md 第 5 节）：随机地址喂蓝牙发现回调，验证两道防线
     sheets.push({
-      title: '内存压测：自动切页签 200 次（约 70 秒）',
+      title: '模拟机房①：系统页扫描推送 500 台（应全部丢弃）',
       action: (): void => {
-        this.toast('开始切页签压测，结束前别操作');
-        EventBus.emit(AppEvent.DEBUG_STRESS_TABS, 200);
+        BluetoothService.debugSimulateForeignScan(500);
+        this.toast('已推送，到日志中心看 SIM_FOREIGN');
       }
     });
     sheets.push({
-      title: '内存压测：切换内置音效 100 次（在音效页执行）',
+      title: '模拟机房②：本应用扫描中涌入 500 台（应停在 50 台）',
       action: (): void => {
-        this.toast('开始内置音效压测');
-        EventBus.emit(AppEvent.DEBUG_STRESS_TONES, 100);
+        this.toast('约 4 秒后出结果，看 SIM_OWN / SCAN_SUMMARY');
+        BluetoothService.debugSimulateOwnScan(500);
       }
     });
     sheets.push({

@@ -1,5 +1,4 @@
 import { Metric, Palette } from '../common/constants/ThemeConstants';
-import { MemProbe } from '../common/utils/MemProbe';
 import { ThemeService } from '../services/ThemeService';
 
 /**
@@ -15,14 +14,6 @@ export struct GlassCard {
   /** 留空时按当前外观取默认值：字段默认值只在构造时求值，切换外观不会刷新 */
   @Prop cardBg: string = '';
   @Prop cardStroke: string = '';
-
-  aboutToAppear(): void {
-    MemProbe.mount('GlassCard', 120, false);
-  }
-
-  aboutToDisappear(): void {
-    MemProbe.unmount('GlassCard', false, this);
-  }
 
   @Builder
   emptyBuilder() {

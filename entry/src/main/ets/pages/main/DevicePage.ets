@@ -25,6 +25,13 @@ export struct DevicePage {
   @StorageProp('themeEpoch') themeEpoch: number = 0;
   @State snapshot: BtSnapshot = createEmptySnapshot();
   @State busy: boolean = false;
+  /**
+   * 是否已拿到过一次真实的蓝牙状态。
+   * 初始快照 authorized=false，之前首帧就会渲染「需要蓝牙权限」卡，refresh 回来再移除：
+   * 已授权的用户每次冷启动都看到它闪一下，也多建、多销毁一张 GlassCard（11-27 复查里报过的未回收实例之一）。
+   * 没拿到真实状态前不画权限卡。
+   */
+  @State loaded: boolean = false;
   private listener: BtChangeListener | undefined = undefined;
   private liveTimer: number = -1;
   private pollingLive: boolean = false;
@@ -37,6 +44,7 @@ export struct DevicePage {
     MemProbe.mount('DevicePage');
     const handler: BtChangeListener = (next: BtSnapshot): void => {
       this.snapshot = next;
+      this.loaded = true;
       this.warnNearLinkOnce();
     };
     this.listener = handler;
@@ -129,6 +137,8 @@ export struct DevicePage {
       this.warnNearLinkOnce();
     } catch (error) {
       Logger.exception(MODULE, '刷新失败', error as BusinessError);
+    } finally {
+      this.loaded = true;
     }
   }
 
@@ -293,7 +303,7 @@ export struct DevicePage {
         this.buildHeader()
         this.buildStatusCard()
 
-        if (!this.snapshot.authorized) {
+        if (this.loaded && !this.snapshot.authorized) {
           this.buildPermissionCard()
         }
 

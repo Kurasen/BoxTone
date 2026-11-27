@@ -14,13 +14,13 @@ export struct DeviceRow {
   @Prop showAction: boolean = true;
   onAction: () => void = () => {
   };
-
   aboutToAppear(): void {
-    MemProbe.mount('DeviceRow', 200, false);
+    // 哨兵：已配对设备 + 附近设备（上限 50）正常远到不了 100，超过说明列表又失控了（docs/stability-oom.md）
+    MemProbe.mount('DeviceRow', 100, false);
   }
 
   aboutToDisappear(): void {
-    MemProbe.unmount('DeviceRow', false, this);
+    MemProbe.unmount('DeviceRow', false, this, `${this.device.paired ? 'paired' : 'nearby'}${this.device.connected ? ',on' : ''}`);
   }
 
   build() {
