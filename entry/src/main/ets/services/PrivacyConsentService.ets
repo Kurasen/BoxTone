@@ -44,9 +44,10 @@ interface PrivacyStatePayload {
  * 3. onPageShow → settle()：窗口就绪后拉起系统弹窗，同意即放行；
  * 4. 放行是业务初始化的唯一入口（markCleared → AppBootstrap.init），拒绝则退出应用。
  *
- * 关于「本地包为什么没有弹窗」：隐私托管由云侧识别应用，只有从应用市场安装（含邀请测试）
- * 的包才会弹。hdc 侧载的 debug / release 包一律报 1006700003，属正常现象，
- * 因此侧载包放行、市场包从严（见 mustEnforce）。
+ * 关于「本地包为什么有时没有弹窗」：隐私托管由云侧按应用身份（签名 profile 里的 appIdentifier）识别。
+ * DevEco 自动签名装到本机的包身份对不上，一律报 1006700003；身份对得上、但不是从应用市场装的包
+ * （例如云调试设备）首次启动也可能报 1006700003，第二次启动才弹。这些都是侧载包，放行；
+ * 市场包从严（见 mustEnforce）。实测记录见 docs/harmonyos-api-notes.md 第 9.1 节。
  */
 export class PrivacyConsentService {
   private static context: common.UIAbilityContext | undefined = undefined;
@@ -110,7 +111,8 @@ export class PrivacyConsentService {
 
   /**
    * 重试页的「重试」：清掉阻断标记重新征询。
-   * 市场包报 1006700003 多半是签名/托管配置没被识别，重试通常无效但可让用户自己再试一次；
+   * 市场包报 1006700003 可能是托管配置还没拉下来（云调试设备实测首次启动如此，之后再试能好），
+   * 也可能是签名没被识别（重试无效）；
    * 系统内部错误（1006700001/2）重试则大概率能恢复。
    */
   public static retry(): Promise<boolean> {
@@ -215,7 +217,7 @@ export class PrivacyConsentService {
   /**
    * 是否必须征询：只有「从应用市场安装」的包才强制。
    *
-   * 隐私托管由云侧按应用识别，hdc 侧载包一律拿不到配置（1006700003）——
+   * 隐私托管由云侧按应用识别，侧载包经常拿不到配置（1006700003，见 docs/harmonyos-api-notes.md 9.1）——
    * 一刀切「拉不起来就阻断」会让本地包彻底不可用。
    * 反过来，市场包报 1006700003 说明签名证书或托管配置没被识别，
    * 常见于升级后偶现，属于必须拦截的合规漏洞。

@@ -15,7 +15,9 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
-        "icon": "$media:app_icon",
+        // 桌面图标用分层图标（浅色版，见 resources/base/media/layered_image.json，素材 = store/icon/layered/A_light/）；
+        // app.json5 的 icon 仍是单层 app_icon：入口 UIAbility 配了 icon 时系统以这里为准
+        "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",

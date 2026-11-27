@@ -52,8 +52,9 @@ const START_ICON_PX: string = '216px';
 /** startIcon.png 的圆角半径（边长的 22.5%），描边要沿图标圆角走 */
 const START_ICON_RADIUS_PX: string = '49px';
 /**
- * 图标是深色圆角方块：底色渐变到纯黑时方块会「融进」背景，只剩中间的亮条，
- * 看起来图标突然缩了一圈。换色时同步给图标描一圈淡边，深色底上也能保住轮廓
+ * 深色图标在底色渐变到纯黑时会「融进」背景，只剩中间的亮条，看起来图标突然缩了一圈，
+ * 所以换色时同步给图标描一圈淡边。现用浅色图标（白底），这圈淡边叠在白色上看不出，
+ * 留着是为了换回深色图标时不用再改
  */
 const START_ICON_STROKE_DARK: string = 'rgba(255, 255, 255, 0.16)';
 const START_ICON_STROKE_NONE: string = 'rgba(255, 255, 255, 0)';

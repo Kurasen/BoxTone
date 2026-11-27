@@ -226,15 +226,16 @@ export interface ChangelogEntry {
 export class Changelog {
   static readonly ENTRIES: ChangelogEntry[] = [
     {
-      version: 'v1.2.1',
-      noteKey: 'changelog.v121.note',
+      version: 'v1.3.0',
+      noteKey: 'changelog.v130.note',
       itemKeys: [
-        'changelog.v121.i1',
-        'changelog.v121.i2',
-        'changelog.v121.i3',
-        'changelog.v121.i4',
-        'changelog.v121.i5',
-        'changelog.v121.i6'
+        'changelog.v130.i4',
+        'changelog.v130.i1',
+        'changelog.v130.i2',
+        'changelog.v130.i3',
+        'changelog.v130.i5',
+        'changelog.v130.i6',
+        'changelog.v130.i7'
       ]
     },
     {

@@ -246,6 +246,23 @@ const options: socket.SppOptions = {
 - 同意前只初始化基础能力（日志、设置、外观）。蓝牙、音效库、反馈这些业务服务由 `AppBootstrap.init` 在用户同意后统一启动。
 - 不能自己画"同意"按钮，同意只能由系统弹窗给出。服务不可用时只给"重试 / 查看声明 / 退出"。
 
+### 9.1 测试时弹不弹窗（11-27 实测）
+
+隐私托管由云侧按**应用身份**识别，也就是签名 profile 里的 `appIdentifier`。身份对不上，或者这台设备还没拉到托管配置时，接口都报 `1006700003`（未接入）。这时代码看安装来源：`unknown`（侧载）放行，市场安装进重试页。
+
+| 安装方式 | 签名身份 | 实测表现 |
+|:--|:--|:--|
+| DevEco 直接把 release 包装到本机 | DevEco 自动重签，身份变了（`appIdentifier=…3541`、`distributionType=none`） | 每次都报 1006700003 → 放行，**永远不弹** |
+| debug 包（`signing/debug/` 手动调试证书） | 与 AGC 一致（`…6855`） | 首次启动就弹 |
+| 云调试设备上安装正式签名包 | 与 AGC 一致（`…6855`、`app_gallery`） | **首次**报 1006700003 → 放行不弹；划掉重开才弹 |
+| 应用市场安装（含邀请测试） | 与 AGC 一致 | 官方说明首次启动由系统自动弹窗（未实测） |
+
+- **本机要测隐私弹窗**，用 debug 包或 `./tools/dev.sh build release debug`，不要用 DevEco 自动签名直接运行 release 包。
+- **云调试设备首次不弹不是代码问题**。看起来是托管配置在首次启动之后才异步拉到本机，这一点是推断。不要据此给侧载包加等待重试：试过的方案已撤回。
+- **市场包首次万一也报 1006700003**，`mustEnforce()` 为 true，会进重试页而不是放行。最差是用户点一次重试或重开应用，不会出现未同意就进入业务。
+- 签名指纹对照：发布证书 `6DE3848E…C55293`，调试证书 `A6A5F557…87E4`，两者 `appIdentifier` 都是 `6917621682523596855`。
+- **排查方法**：`PrivacyConsentService` 的流程日志用的是 `Logger.dev`，release 包不输出。排查时临时改成 `Logger.info`，再在启动时打印 `getBundleInfoForSelfSync(GET_BUNDLE_INFO_WITH_APPLICATION | GET_BUNDLE_INFO_WITH_SIGNATURE_INFO)` 里的 `appIdentifier`、`fingerprint`、`appDistributionType`、`installSource`，对比上表就能判断是哪一种。排查完改回去。
+
 ---
 
 ## 10. Release 混淆
