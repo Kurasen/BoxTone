@@ -27,6 +27,11 @@ export class AudioPlayService {
   private static player: media.AVPlayer | undefined = undefined;
   private static playerFile: fs.File | undefined = undefined;
   private static renderer: audio.AudioRenderer | undefined = undefined;
+  /**
+   * 正在创建中的渲染器：两次试听交错时，第二次直接等这一个，
+   * 否则两边都看到 renderer 为空、各建一个，后者覆盖前者，前一个 AudioRenderer 永远不会被 release。
+   */
+  private static rendererPending: Promise<audio.AudioRenderer> | undefined = undefined;
   private static playing: boolean = false;
   /** 播放代号：新的播放/停止会让上一轮写入循环自行退出 */
   private static generation: number = 0;
@@ -92,24 +97,49 @@ export class AudioPlayService {
     }
   }
 
-  /** 播放音频文件 */
+  /**
+   * 播放音频文件。
+   *
+   * createAVPlayer 是异步的：等待期间用户可能又点了一次试听或停止。
+   * 之前没有核对代号，新的一轮会把 player / playerFile 覆盖掉，旧的 AVPlayer 与文件句柄从此没人释放
+   * （原生内存，monkey 连点「原声」就会触发）。现在每轮有自己的代号，被抢先的一轮自己收拾干净。
+   */
   public static async playFile(path: string, onEnd: () => void): Promise<void> {
     await AudioPlayService.stop();
+    AudioPlayService.generation++;
+    const token: number = AudioPlayService.generation;
     await AudioPlayService.beginSession();
+    if (token !== AudioPlayService.generation) {
+      return;
+    }
     AudioPlayService.playing = true;
+    let file: fs.File | undefined = undefined;
+    let player: media.AVPlayer | undefined = undefined;
+    /** 交给 AudioPlayService 托管之后，释放归 stop() 管 */
+    let handedOver: boolean = false;
     try {
-      const file: fs.File = fs.openSync(path, fs.OpenMode.READ_ONLY);
-      const player: media.AVPlayer = await media.createAVPlayer();
-      AudioPlayService.player = player;
+      file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+      player = await media.createAVPlayer();
+      if (token !== AudioPlayService.generation) {
+        Logger.info(MODULE, '源文件播放已被新的操作取代，释放本轮播放器');
+        AudioPlayService.disposePlayer(player, file);
+        return;
+      }
+      const current: media.AVPlayer = player;
+      AudioPlayService.player = current;
       AudioPlayService.playerFile = file;
+      handedOver = true;
 
-      player.on('stateChange', (state: media.AVPlayerState) => {
+      current.on('stateChange', (state: media.AVPlayerState) => {
+        if (token !== AudioPlayService.generation) {
+          return;
+        }
         if (state === 'initialized') {
-          player.prepare().catch((error: BusinessError) => {
+          current.prepare().catch((error: BusinessError) => {
             Logger.exception(MODULE, 'prepare 失败', error);
           });
         } else if (state === 'prepared') {
-          player.play().catch((error: BusinessError) => {
+          current.play().catch((error: BusinessError) => {
             Logger.exception(MODULE, '播放失败', error);
           });
         } else if (state === 'completed') {
@@ -119,7 +149,10 @@ export class AudioPlayService {
           });
         }
       });
-      player.on('error', (error: BusinessError) => {
+      current.on('error', (error: BusinessError) => {
+        if (token !== AudioPlayService.generation) {
+          return;
+        }
         Logger.exception(MODULE, 'AVPlayer 异常', error);
         AudioPlayService.playing = false;
         AudioPlayService.endSession().then(() => {
@@ -127,13 +160,37 @@ export class AudioPlayService {
         });
       });
 
-      player.url = `fd://${file.fd}`;
+      current.url = `fd://${file.fd}`;
       Logger.info(MODULE, `开始播放源文件 ${path}`);
     } catch (error) {
-      AudioPlayService.playing = false;
-      await AudioPlayService.endSession();
+      // 还没交给 AudioPlayService 托管的资源在这里释放：openSync 成功、createAVPlayer 失败时文件句柄也要关
+      if (!handedOver) {
+        AudioPlayService.disposePlayer(player, file);
+      }
+      if (token === AudioPlayService.generation) {
+        AudioPlayService.playing = false;
+        await AudioPlayService.endSession();
+      }
       Logger.exception(MODULE, '打开音频失败', error as BusinessError);
       throw error as Error;
+    }
+  }
+
+  /** 释放一套未被托管（或已被取代）的播放器与文件句柄 */
+  private static disposePlayer(player: media.AVPlayer | undefined, file: fs.File | undefined): void {
+    if (player !== undefined) {
+      player.off('stateChange');
+      player.off('error');
+      player.release().catch((error: BusinessError) => {
+        Logger.warn(MODULE, `释放被取代的播放器失败 code=${error.code}`);
+      });
+    }
+    if (file !== undefined) {
+      try {
+        fs.closeSync(file);
+      } catch (error) {
+        Logger.warn(MODULE, `关闭被取代的文件失败 code=${(error as BusinessError).code}`);
+      }
     }
   }
 
@@ -334,6 +391,16 @@ export class AudioPlayService {
     if (existing !== undefined) {
       return existing;
     }
+    const pending: Promise<audio.AudioRenderer> | undefined = AudioPlayService.rendererPending;
+    if (pending !== undefined) {
+      return pending;
+    }
+    const creating: Promise<audio.AudioRenderer> = AudioPlayService.createRenderer();
+    AudioPlayService.rendererPending = creating;
+    return creating;
+  }
+
+  private static async createRenderer(): Promise<audio.AudioRenderer> {
     const options: audio.AudioRendererOptions = {
       streamInfo: {
         samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_48000,
@@ -346,9 +413,13 @@ export class AudioPlayService {
         rendererFlags: 0
       }
     };
-    const created: audio.AudioRenderer = await audio.createAudioRenderer(options);
-    AudioPlayService.renderer = created;
-    return created;
+    try {
+      const created: audio.AudioRenderer = await audio.createAudioRenderer(options);
+      AudioPlayService.renderer = created;
+      return created;
+    } finally {
+      AudioPlayService.rendererPending = undefined;
+    }
   }
 
   /**
@@ -414,6 +485,8 @@ export class AudioPlayService {
       const player: media.AVPlayer = AudioPlayService.player;
       AudioPlayService.player = undefined;
       try {
+        player.off('stateChange');
+        player.off('error');
         await player.release();
       } catch (error) {
         Logger.exception(MODULE, '释放播放器失败', error as BusinessError);

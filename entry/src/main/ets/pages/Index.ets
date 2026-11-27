@@ -5,7 +5,9 @@ import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { I18n } from '../common/i18n/I18n';
 import { Palette } from '../common/constants/ThemeConstants';
 import { AppEvent, BusyState, EventBus, SimpleHandler, TextHandler } from '../common/utils/EventBus';
+import { AppEnv } from '../common/utils/AppEnv';
 import { Logger } from '../common/utils/Logger';
+import { MemProbe } from '../common/utils/MemProbe';
 import { AppBackdrop } from '../components/AppBackdrop';
 import { WritePanel } from '../components/WritePanel';
 import { BluetoothService } from '../services/BluetoothService';
@@ -56,6 +58,17 @@ const START_ICON_RADIUS_PX: string = '49px';
  */
 const START_ICON_STROKE_DARK: string = 'rgba(255, 255, 255, 0.16)';
 const START_ICON_STROKE_NONE: string = 'rgba(255, 255, 255, 0)';
+
+/** 压测每一步之间的间隔：给页签切换动画（220ms）和页面构建留出时间 */
+const STRESS_STEP_MS: number = 350;
+/** 压测时每隔多少步强制采样一次内存 */
+const STRESS_SAMPLE_EVERY: number = 20;
+
+function stressDelay(ms: number): Promise<void> {
+  return new Promise<void>((resolve: () => void) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 /**
  * 主框架
@@ -113,8 +126,12 @@ struct Index {
   private backupHandler: SimpleHandler | undefined = undefined;
   private busyHandler: TextHandler | undefined = undefined;
   private busyProgressHandler: TextHandler | undefined = undefined;
+  /** 仅 debug 包：内存压测（自动切页签） */
+  private stressHandler: SimpleHandler | undefined = undefined;
+  private stressRunning: boolean = false;
 
   aboutToAppear(): void {
+    MemProbe.mount('Index');
     this.measureInsets();
     this.resolveTabMaterialLevel();
     this.logHandler = (): void => {
@@ -171,6 +188,45 @@ struct Index {
       }
     };
     EventBus.onText(AppEvent.BUSY_PROGRESS, this.busyProgressHandler);
+    if (AppEnv.isDebug()) {
+      this.stressHandler = (rounds: number): void => {
+        this.runTabStress(rounds);
+      };
+      EventBus.on(AppEvent.DEBUG_STRESS_TABS, this.stressHandler);
+    }
+  }
+
+  /**
+   * 内存压测：按 0→1→2→3 循环切页签 rounds 次，每 20 步强制采样一次，结束时检查泄漏。
+   * 用来回答「HdsTabs 切页签会不会销毁重建子页」——看 MEM_SAMPLE 里各页面的 created 是否随步数增长。
+   * 页签栏有切换动画，步长 350ms；Index 销毁时停止。
+   */
+  private async runTabStress(rounds: number): Promise<void> {
+    if (this.stressRunning) {
+      return;
+    }
+    this.stressRunning = true;
+    const total: number = Math.max(4, rounds);
+    const startIndex: number = this.activeIndex;
+    Logger.info(MODULE, `STRESS_TABS start rounds=${total}`);
+    MemProbe.report('stress-tabs-start');
+    try {
+      for (let i = 1; i <= total && this.stressRunning; i++) {
+        this.tabsController.changeIndex(i % 4);
+        await stressDelay(STRESS_STEP_MS);
+        if (i % STRESS_SAMPLE_EVERY === 0) {
+          MemProbe.sample(`stress-tabs-${i}`, true);
+        }
+      }
+    } finally {
+      this.stressRunning = false;
+      this.tabsController.changeIndex(startIndex);
+      Logger.info(MODULE, 'STRESS_TABS end');
+      // 等最后一次切换落地再查泄漏
+      setTimeout((): void => {
+        MemProbe.report('stress-tabs-end');
+      }, 1000);
+    }
   }
 
   /**
@@ -222,6 +278,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    MemProbe.unmount('Index', true, this);
     if (this.logHandler !== undefined) {
       EventBus.off(AppEvent.OPEN_LOG, this.logHandler);
       this.logHandler = undefined;
@@ -249,6 +306,11 @@ struct Index {
     if (this.busyProgressHandler !== undefined) {
       EventBus.off(AppEvent.BUSY_PROGRESS, this.busyProgressHandler);
       this.busyProgressHandler = undefined;
+    }
+    this.stressRunning = false;
+    if (this.stressHandler !== undefined) {
+      EventBus.off(AppEvent.DEBUG_STRESS_TABS, this.stressHandler);
+      this.stressHandler = undefined;
     }
   }
 
@@ -404,7 +466,11 @@ struct Index {
           .animationDuration(220)
           .onAttach(() => {
             try {
-              this.tabsController.preloadItems([0, 1, 2, 3]);
+              // preloadItems 返回 Promise（SDK tabs.d.ts，HdsTabsController 继承自 TabsController），
+              // 异步失败 try/catch 接不住，必须挂 catch，否则就是一条未处理的 rejection
+              this.tabsController.preloadItems([0, 1, 2, 3]).catch((error: BusinessError) => {
+                Logger.warn(MODULE, `预加载页签失败 code=${error.code}`);
+              });
             } catch (error) {
               Logger.exception(MODULE, '预加载页签失败', error as BusinessError);
             }

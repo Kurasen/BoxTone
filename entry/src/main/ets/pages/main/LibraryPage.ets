@@ -9,6 +9,7 @@ import { DateUtils } from '../../common/utils/DateUtils';
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
+import { MemProbe } from '../../common/utils/MemProbe';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { WriteConfirm } from '../../common/utils/WriteConfirm';
 import { EmptyView } from '../../components/EmptyView';
@@ -51,6 +52,7 @@ export struct LibraryPage {
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
+    MemProbe.mount('LibraryPage');
     // 同意前音效库还没初始化，list() 返回空，渲染的是空态；放行时再刷一次真实数据
     this.reload();
     this.changeHandler = (): void => {
@@ -66,6 +68,7 @@ export struct LibraryPage {
   }
 
   aboutToDisappear(): void {
+    MemProbe.unmount('LibraryPage', true, this);
     if (this.changeHandler !== undefined) {
       EventBus.off(AppEvent.TONE_CHANGED, this.changeHandler);
       EventBus.off(AppEvent.PRIVACY_CLEARED, this.changeHandler);

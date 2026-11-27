@@ -1,4 +1,5 @@
 import { LogLevel } from '../../common/constants/AppConstants';
+import { MemProbe } from '../../common/utils/MemProbe';
 import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DateUtils } from '../../common/utils/DateUtils';
@@ -23,6 +24,7 @@ export struct LogPage {
   private listener: LogChangeListener | undefined = undefined;
 
   aboutToAppear(): void {
+    MemProbe.mount('LogPage');
     const service: LogService = LogService.getInstance();
     this.entries = service.getEntries();
     const handler: LogChangeListener = (next: LogEntry[]): void => {
@@ -33,6 +35,7 @@ export struct LogPage {
   }
 
   aboutToDisappear(): void {
+    MemProbe.unmount('LogPage', true, this);
     if (this.listener !== undefined) {
       LogService.getInstance().offChange(this.listener);
       this.listener = undefined;

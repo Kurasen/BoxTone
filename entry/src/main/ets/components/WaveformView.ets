@@ -1,3 +1,5 @@
+import { MemProbe } from '../common/utils/MemProbe';
+
 /**
  * 波形可视化
  * 采用 Canvas 绘制，峰值数组由 AudioConvertService.buildPeaks 提供
@@ -17,6 +19,14 @@ export struct WaveformView {
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private painter: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
   private isReady: boolean = false;
+
+  aboutToAppear(): void {
+    MemProbe.mount('WaveformView', 1, false);
+  }
+
+  aboutToDisappear(): void {
+    MemProbe.unmount('WaveformView', false, this);
+  }
 
   private onDataChange(): void {
     this.render();

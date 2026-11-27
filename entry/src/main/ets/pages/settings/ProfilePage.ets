@@ -6,6 +6,7 @@ import { DeviceSupport, DeviceSupportLevel, SupportInfo, ToneSpec } from '../../
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
+import { MemProbe } from '../../common/utils/MemProbe';
 import { RatingService } from '../../services/RatingService';
 import { AppEnv } from '../../common/utils/AppEnv';
 import { GlassCard } from '../../components/GlassCard';
@@ -44,6 +45,7 @@ export struct ProfilePage {
   private changeHandler: SimpleHandler | undefined = undefined;
 
   aboutToAppear(): void {
+    MemProbe.mount('ProfilePage');
     // 同意前统计读到的是 0（业务服务未初始化）；放行时再刷一次真实数据
     this.refresh();
     this.readVersion();
@@ -55,6 +57,7 @@ export struct ProfilePage {
   }
 
   aboutToDisappear(): void {
+    MemProbe.unmount('ProfilePage', true, this);
     if (this.changeHandler !== undefined) {
       EventBus.off(AppEvent.TONE_CHANGED, this.changeHandler);
       EventBus.off(AppEvent.PRIVACY_CLEARED, this.changeHandler);
@@ -100,6 +103,28 @@ export struct ProfilePage {
         this.showRatingTest();
       }
     }];
+    // 内存压测（docs/stability-oom.md 第 5 节）：结果看日志中心里的 MEM_SAMPLE / MEM_LEAK
+    sheets.push({
+      title: '内存压测：自动切页签 200 次（约 70 秒）',
+      action: (): void => {
+        this.toast('开始切页签压测，结束前别操作');
+        EventBus.emit(AppEvent.DEBUG_STRESS_TABS, 200);
+      }
+    });
+    sheets.push({
+      title: '内存压测：切换内置音效 100 次（在音效页执行）',
+      action: (): void => {
+        this.toast('开始内置音效压测');
+        EventBus.emit(AppEvent.DEBUG_STRESS_TONES, 100);
+      }
+    });
+    sheets.push({
+      title: '内存：立即采样并检查泄漏',
+      action: (): void => {
+        MemProbe.report('manual');
+        this.toast('已记录，到日志中心查看 MEM_SAMPLE');
+      }
+    });
     for (let i = 0; i < gaps.length; i++) {
       const ms: number = gaps[i];
       sheets.push({

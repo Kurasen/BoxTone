@@ -5,6 +5,7 @@ import { I18n } from '../../common/i18n/I18n';
 import { AppEvent, EventBus } from '../../common/utils/EventBus';
 import { FormatUtils } from '../../common/utils/FormatUtils';
 import { Logger } from '../../common/utils/Logger';
+import { MemProbe } from '../../common/utils/MemProbe';
 import { GhostButton } from '../../components/GhostButton';
 import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
@@ -33,10 +34,12 @@ export struct BackupPage {
   @State note: string = '';
 
   aboutToAppear(): void {
+    MemProbe.mount('BackupPage');
     this.refresh();
   }
 
   aboutToDisappear(): void {
+    MemProbe.unmount('BackupPage', true, this);
     // 页面被销毁时别把全屏遮罩留在主界面上
     EventBus.emitText(AppEvent.BUSY_CHANGED, '');
     EventBus.resetBusy();

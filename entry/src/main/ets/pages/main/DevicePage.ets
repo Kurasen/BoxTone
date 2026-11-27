@@ -3,6 +3,7 @@ import { I18n } from '../../common/i18n/I18n';
 import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { AppEvent, EventBus, SimpleHandler } from '../../common/utils/EventBus';
 import { Logger } from '../../common/utils/Logger';
+import { MemProbe } from '../../common/utils/MemProbe';
 import { NearLinkAlert } from '../../common/utils/NearLinkAlert';
 import { DeviceRow } from '../../components/DeviceRow';
 import { EmptyView } from '../../components/EmptyView';
@@ -33,6 +34,7 @@ export struct DevicePage {
   private nearLinkNotified: string = '';
 
   aboutToAppear(): void {
+    MemProbe.mount('DevicePage');
     const handler: BtChangeListener = (next: BtSnapshot): void => {
       this.snapshot = next;
       this.warnNearLinkOnce();
@@ -105,6 +107,7 @@ export struct DevicePage {
   }
 
   aboutToDisappear(): void {
+    MemProbe.unmount('DevicePage', true, this);
     this.stopLiveRefresh();
     if (this.listener !== undefined) {
       BluetoothService.offChange(this.listener);

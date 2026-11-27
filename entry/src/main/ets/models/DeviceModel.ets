@@ -74,6 +74,32 @@ export function createEmptySnapshot(): BtSnapshot {
   return snapshot;
 }
 
+/**
+ * 浅拷贝一份快照（设备数组也换成新数组，设备对象本身共用）。
+ * 快照会被页面直接赋给 @State：原地改字段再把同一个引用推过去，框架既可能检测不到变化，
+ * 也会让页面状态和服务内部状态共用同一个对象。凡是要改快照再通知页面的地方，都先拷贝一份。
+ */
+export function cloneSnapshot(source: BtSnapshot): BtSnapshot {
+  const snapshot: BtSnapshot = {
+    supported: source.supported,
+    enabled: source.enabled,
+    authorized: source.authorized,
+    pairedDevices: source.pairedDevices.slice(),
+    nearbyDevices: source.nearbyDevices.slice(),
+    scanning: source.scanning,
+    activeName: source.activeName,
+    activeId: source.activeId,
+    statusText: source.statusText,
+    nearLinkSupported: source.nearLinkSupported,
+    nearLinkEnabled: source.nearLinkEnabled,
+    nearLinkName: source.nearLinkName,
+    nearLinkBtId: source.nearLinkBtId,
+    settling: source.settling,
+    settlingId: source.settlingId
+  };
+  return snapshot;
+}
+
 export function createEmptyDevice(): BtDevice {
   const device: BtDevice = {
     deviceId: '',

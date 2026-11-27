@@ -8,6 +8,7 @@ import { Metric, Palette } from '../../common/constants/ThemeConstants';
 import { DateUtils } from '../../common/utils/DateUtils';
 import { AppEvent, EventBus } from '../../common/utils/EventBus';
 import { Logger } from '../../common/utils/Logger';
+import { MemProbe } from '../../common/utils/MemProbe';
 import { EmptyView } from '../../components/EmptyView';
 import { GhostButton } from '../../components/GhostButton';
 import { PillButton, PillTone } from '../../components/PillButton';
@@ -41,10 +42,12 @@ export struct FeedbackPage {
   @State records: FeedbackRecord[] = [];
 
   aboutToAppear(): void {
+    MemProbe.mount('FeedbackPage');
     this.records = FeedbackService.list();
   }
 
   aboutToDisappear(): void {
+    MemProbe.unmount('FeedbackPage', true, this);
     // 页面销毁时把未提交的截图副本一起清掉，避免长期占着 cacheDir
     FeedbackService.discardImages(this.imagePaths);
     this.imagePaths = [];

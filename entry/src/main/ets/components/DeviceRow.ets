@@ -1,4 +1,5 @@
 import { I18n } from '../common/i18n/I18n';
+import { MemProbe } from '../common/utils/MemProbe';
 import { Palette } from '../common/constants/ThemeConstants';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { PillButton, PillTone } from './PillButton';
@@ -13,6 +14,14 @@ export struct DeviceRow {
   @Prop showAction: boolean = true;
   onAction: () => void = () => {
   };
+
+  aboutToAppear(): void {
+    MemProbe.mount('DeviceRow', 200, false);
+  }
+
+  aboutToDisappear(): void {
+    MemProbe.unmount('DeviceRow', false, this);
+  }
 
   build() {
     Row({ space: 12 }) {

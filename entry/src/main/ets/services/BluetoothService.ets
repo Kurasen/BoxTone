@@ -8,7 +8,7 @@ import {
 } from '@kit.AbilityKit';
 import { a2dp, access, baseProfile, connection, constant } from '@kit.ConnectivityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { BtDevice, BtSnapshot, createEmptySnapshot } from '../models/DeviceModel';
+import { BtDevice, BtSnapshot, cloneSnapshot, createEmptySnapshot } from '../models/DeviceModel';
 import { I18n } from '../common/i18n/I18n';
 import { FormatUtils } from '../common/utils/FormatUtils';
 import { Logger } from '../common/utils/Logger';
@@ -18,6 +18,13 @@ const MODULE: string = 'Bluetooth';
 const PERMISSION_BLUETOOTH: Permissions = 'ohos.permission.ACCESS_BLUETOOTH';
 
 const SCAN_TIMEOUT_MS: number = 15000;
+/**
+ * 扫描结果合批通知的间隔。设备多的环境（测试机房、办公室）15 秒能报上百台，
+ * 之前每台都立刻通知，设备页整页重算一遍、每行 @Prop 深拷贝一次，短时间内堆出大量临时对象。
+ */
+const NEARBY_NOTIFY_MS: number = 400;
+/** 附近设备列表上限：只是给用户挑一台去配对，再多没有意义，也避免列表无限增长 */
+const NEARBY_MAX: number = 50;
 /**
  * A2DP 状态回调同一状态常连发 3~5 次（如断开时 state=0 ×4）。这段时间内完全相同的回调只计数，
  * 下一条不同的回调带上 dup=N。只影响日志，刷新照常触发。
@@ -51,6 +58,10 @@ export class BluetoothService {
   private static a2dpLogDup: number = 0;
   /** 事件回调去抖计时器：系统事件经常成组到达，合并成一次刷新 */
   private static refreshTimer: number = -1;
+  /** 扫描超时：重新开始扫描时要清掉上一轮的，否则旧定时器会把新一轮提前停掉 */
+  private static scanTimer: number = -1;
+  /** 扫描结果合批通知 */
+  private static nearbyNotifyTimer: number = -1;
   /**
    * 写完音效后的保存窗口。耳机这时在刷闪存，实际已经用不了，
    * 但系统 A2DP 可能短暂报「已连接」、也可能不发任何事件，只靠事件刷新会一直停在旧状态。
@@ -663,6 +674,9 @@ export class BluetoothService {
 
   private static onDeviceFound(deviceId: string): void {
     const nearby: BtDevice[] = BluetoothService.snapshot.nearbyDevices;
+    if (nearby.length >= NEARBY_MAX) {
+      return;
+    }
     for (let i = 0; i < nearby.length; i++) {
       if (nearby[i].deviceId === deviceId) {
         return;
@@ -671,9 +685,35 @@ export class BluetoothService {
     if (BluetoothService.hiddenDevices.indexOf(deviceId) >= 0) {
       return;
     }
-    nearby.push(BluetoothService.describeDevice(deviceId, false));
-    BluetoothService.snapshot.nearbyDevices = nearby;
-    BluetoothService.notify();
+    // 换一份新快照再通知：页面手里的旧快照保持不变，变化由引用替换体现
+    const next: BtSnapshot = cloneSnapshot(BluetoothService.snapshot);
+    next.nearbyDevices.push(BluetoothService.describeDevice(deviceId, false));
+    BluetoothService.snapshot = next;
+    BluetoothService.scheduleNearbyNotify();
+  }
+
+  private static scheduleNearbyNotify(): void {
+    if (BluetoothService.nearbyNotifyTimer >= 0) {
+      return;
+    }
+    BluetoothService.nearbyNotifyTimer = setTimeout(() => {
+      BluetoothService.nearbyNotifyTimer = -1;
+      BluetoothService.notify();
+    }, NEARBY_NOTIFY_MS);
+  }
+
+  private static cancelNearbyNotify(): void {
+    if (BluetoothService.nearbyNotifyTimer >= 0) {
+      clearTimeout(BluetoothService.nearbyNotifyTimer);
+      BluetoothService.nearbyNotifyTimer = -1;
+    }
+  }
+
+  private static cancelScanTimer(): void {
+    if (BluetoothService.scanTimer >= 0) {
+      clearTimeout(BluetoothService.scanTimer);
+      BluetoothService.scanTimer = -1;
+    }
   }
 
   /** 开始扫描附近设备 */
@@ -681,17 +721,24 @@ export class BluetoothService {
     if (BluetoothService.snapshot.scanning) {
       return;
     }
-    BluetoothService.snapshot.nearbyDevices = [];
-    BluetoothService.snapshot.scanning = true;
+    BluetoothService.cancelNearbyNotify();
+    BluetoothService.cancelScanTimer();
+    const next: BtSnapshot = cloneSnapshot(BluetoothService.snapshot);
+    next.nearbyDevices = [];
+    next.scanning = true;
+    BluetoothService.snapshot = next;
     BluetoothService.notify();
     try {
       connection.startBluetoothDiscovery();
       Logger.info(MODULE, '开始扫描附近设备');
-      setTimeout(() => {
+      BluetoothService.scanTimer = setTimeout(() => {
+        BluetoothService.scanTimer = -1;
         BluetoothService.stopScan();
       }, SCAN_TIMEOUT_MS);
     } catch (error) {
-      BluetoothService.snapshot.scanning = false;
+      const failed: BtSnapshot = cloneSnapshot(BluetoothService.snapshot);
+      failed.scanning = false;
+      BluetoothService.snapshot = failed;
       BluetoothService.notify();
       Logger.exception(MODULE, '启动扫描失败', error as BusinessError);
     }
@@ -701,7 +748,12 @@ export class BluetoothService {
     if (!BluetoothService.snapshot.scanning) {
       return;
     }
-    BluetoothService.snapshot.scanning = false;
+    BluetoothService.cancelScanTimer();
+    // 停止时把攒着的扫描结果和「已停止」一次推给页面
+    BluetoothService.cancelNearbyNotify();
+    const next: BtSnapshot = cloneSnapshot(BluetoothService.snapshot);
+    next.scanning = false;
+    BluetoothService.snapshot = next;
     try {
       connection.stopBluetoothDiscovery();
       Logger.info(MODULE, '停止扫描');

@@ -3,6 +3,7 @@ import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppEnv } from '../common/utils/AppEnv';
 import { Logger } from '../common/utils/Logger';
+import { MemProbe } from '../common/utils/MemProbe';
 import { LogService } from '../services/LogService';
 import { BluetoothService } from '../services/BluetoothService';
 import { LanguageService } from '../services/LanguageService';
@@ -22,6 +23,9 @@ export default class EntryAbility extends UIAbility {
     // 日志中心紧随其后：隐私状态查询、签署事件都发生在业务服务之前，
     // 晚于此刻初始化会导致这些早期日志只写 hilog、进不了日志中心，release 包排查困难
     LogService.getInstance().init(this.context);
+    // 内存打点：debug 包开 jsLeakWatcher；记一条启动基线，之后在前后台切换时采样（见 docs/stability-oom.md）
+    MemProbe.init();
+    MemProbe.sample('create', true);
     // 写入保护（短时任务 + 屏幕常亮）需要 UIAbility 上下文；只登记，不申请任何东西
     WriteGuard.attach(this.context);
     // 应用语言：按设备地区自动选择简体中文 / English（每次启动判定，幂等）
@@ -81,11 +85,14 @@ export default class EntryAbility extends UIAbility {
   onBackground(): void {
     // 写入中退到后台：短时任务保住进程，这里只记一笔，便于对照断链日志
     WriteGuard.setForeground(false);
+    MemProbe.sample('bg');
+    MemProbe.checkLeaks();
     LogService.getInstance().flush();
   }
 
   onForeground(): void {
     WriteGuard.setForeground(true);
+    MemProbe.sample('fg');
     // 后台期间蓝牙/星闪状态可能变化且没有事件补发：回前台立即拉一次。
     // 隐私放行前不读取蓝牙状态（refresh 会补注册监听并读取已配对设备）
     if (PrivacyConsentService.isCleared()) {
